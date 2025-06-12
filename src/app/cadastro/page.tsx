@@ -1,125 +1,234 @@
-// src/app/cadastro/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { createBrowserSupabaseClient } from '@supabase/auth-helpers-nextjs/client'
+import { useRouter } from 'next/navigation'
+import { PokemonSelect } from '@/components/PokemonSelect'
 
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+type FormData = {
+    friendCode: string
+    nome: string
+    liga: 'Great' | 'Master'
+    pokemon: string[]
+}
 
 export default function CadastroPage() {
-    const [nome, setNome] = useState('')
-    const [friendCode, setFriendCode] = useState('')
-    const [liga, setLiga] = useState('Great')
-    const [pokemon, setPokemon] = useState<string[]>(['', '', '', '', '', ''])
-    const [pokemonList, setPokemonList] = useState<string[]>([])
-    const [mensagem, setMensagem] = useState('')
+    const router = useRouter()
+    const [formData, setFormData] = useState<FormData>({
+        friendCode: '',
+        nome: '',
+        liga: 'Great',
+        pokemon: ['', '', '', '', '', '']
+    })
+    const [pokemonList, setPokemonList] = useState<{ name: string, id: number }[]>([])
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const [message, setMessage] = useState({ text: '', type: '' })
 
-    // Lista dos 1010 Pokémon (nome simplificado para demonstração)
+    // Carrega lista de Pokémon
     useEffect(() => {
-        fetch('https://pokeapi.co/api/v2/pokemon?limit=1010')
-            .then(res => res.json())
-            .then(data => {
-                const nomes = data.results.map((p: any) => capitalize(p.name))
-                setPokemonList(nomes)
-            })
+        const fetchPokemon = async () => {
+            try {
+                const response = await fetch('https://pokeapi.co/api/v2/pokemon?limit=1010')
+                const data = await response.json()
+                const formattedList = data.results.map((p: any, index: number) => ({
+                    name: formatPokemonName(p.name),
+                    id: index + 1
+                }))
+                setPokemonList(formattedList)
+            } catch (error) {
+                console.error('Erro ao carregar Pokémon:', error)
+            }
+        }
+
+        fetchPokemon()
     }, [])
 
-    const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1)
+    const formatPokemonName = (name: string) => {
+        return name.split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ')
+    }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
+        setIsSubmitting(true)
+        setMessage({ text: '', type: '' })
 
-        if (!friendCode || !nome || pokemon.includes('')) {
-            setMensagem('Preencha todos os campos!')
+        // Validação
+        if (!formData.friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
+            setMessage({ text: 'Friend Code inválido (formato: 1234 5678 9012)', type: 'error' })
+            setIsSubmitting(false)
             return
         }
 
-        const { error: userError } = await supabase.from('usuarios').insert({
-            id: friendCode,
-            nome,
-            liga
-        })
-
-        if (userError) {
-            setMensagem('Erro ao cadastrar usuário: ' + userError.message)
+        if (formData.pokemon.some(p => !p)) {
+            setMessage({ text: 'Selecione todos os 6 Pokémon', type: 'error' })
+            setIsSubmitting(false)
             return
         }
 
-        const { error: teamError } = await supabase.from('equipes').insert({
-            usuario_id: friendCode,
-            pokemon1: pokemon[0],
-            pokemon2: pokemon[1],
-            pokemon3: pokemon[2],
-            pokemon4: pokemon[3],
-            pokemon5: pokemon[4],
-            pokemon6: pokemon[5],
-        })
+        const supabase = createBrowserSupabaseClient()
 
-        if (teamError) {
-            setMensagem('Usuário criado, mas erro ao salvar equipe: ' + teamError.message)
-            return
+        try {
+            // Cadastra usuário
+            const { error: userError } = await supabase.from('usuarios').insert({
+                id: formData.friendCode.replace(/\s/g, ''),
+                nome: formData.nome,
+                liga: formData.liga
+            })
+
+            if (userError) throw userError
+
+            // Cadastra equipe
+            const { error: teamError } = await supabase.from('equipes').insert({
+                usuario_id: formData.friendCode,
+                pokemon1: formData.pokemon[0],
+                pokemon2: formData.pokemon[1],
+                pokemon3: formData.pokemon[2],
+                pokemon4: formData.pokemon[3],
+                pokemon5: formData.pokemon[4],
+                pokemon6: formData.pokemon[5],
+            })
+
+            if (teamError) throw teamError
+
+            setMessage({
+                text: 'Cadastro realizado com sucesso! Redirecionando...',
+                type: 'success'
+            })
+
+            // Redireciona após 2 segundos
+            setTimeout(() => router.push('/'), 2000)
+        } catch (error: any) {
+            setMessage({
+                text: error.message.includes('duplicate key')
+                    ? 'Este Friend Code já está cadastrado'
+                    : `Erro: ${error.message}`,
+                type: 'error'
+            })
+        } finally {
+            setIsSubmitting(false)
         }
-
-        setMensagem('Cadastro realizado com sucesso!')
-        setNome('')
-        setFriendCode('')
-        setPokemon(['', '', '', '', '', ''])
     }
 
     return (
-        <main className="p-6 max-w-xl mx-auto">
-            <h1 className="text-3xl font-bold mb-4">Cadastro de Jogador</h1>
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <input
-                    type="text"
-                    placeholder="Friend Code"
-                    value={friendCode}
-                    onChange={(e) => setFriendCode(e.target.value)}
-                    className="w-full p-2 border rounded"
-                />
-                <input
-                    type="text"
-                    placeholder="Nome"
-                    value={nome}
-                    onChange={(e) => setNome(e.target.value)}
-                    className="w-full p-2 border rounded"
-                />
-                <select
-                    value={liga}
-                    onChange={(e) => setLiga(e.target.value)}
-                    className="w-full p-2 border rounded"
-                >
-                    <option value="Great">Great League</option>
-                    <option value="Master">Master League</option>
-                </select>
+        <div className="min-h-screen bg-gradient-to-b from-blue-50 to-blue-100 py-12 px-4 sm:px-6 lg:px-8">
+            <div className="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl">
+                <div className="bg-yellow-500 p-4">
+                    <h1 className="text-2xl font-bold text-center text-white">
+                        Cadastro de Treinador
+                    </h1>
+                    <p className="text-yellow-100 text-center text-sm mt-1">
+                        Região Oceânica de Niterói
+                    </p>
+                </div>
 
-                {pokemon.map((pkm, idx) => (
-                    <select
-                        key={idx}
-                        value={pkm}
-                        onChange={(e) => {
-                            const novoTime = [...pokemon]
-                            novoTime[idx] = e.target.value
-                            setPokemon(novoTime)
-                        }}
-                        className="w-full p-2 border rounded"
-                    >
-                        <option value="">Escolha o Pokémon {idx + 1}</option>
-                        {pokemonList.map(name => (
-                            <option key={name} value={name}>{name}</option>
-                        ))}
-                    </select>
-                ))}
+                <form onSubmit={handleSubmit} className="p-8 space-y-6">
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                            Friend Code
+                        </label>
+                        <input
+                            type="text"
+                            placeholder="1234 5678 9012"
+                            value={formData.friendCode}
+                            onChange={(e) => setFormData({
+                                ...formData,
+                                friendCode: e.target.value.replace(/[^\d\s]/g, '')
+                            })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
+                            maxLength={14}
+                            required
+                        />
+                    </div>
 
-                <button type="submit" className="bg-yellow-600 text-white px-4 py-2 rounded">
-                    Cadastrar
-                </button>
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                            Nome do Treinador
+                        </label>
+                        <input
+                            type="text"
+                            placeholder="Ash Ketchum"
+                            value={formData.nome}
+                            onChange={(e) => setFormData({
+                                ...formData,
+                                nome: e.target.value
+                            })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
+                            required
+                        />
+                    </div>
 
-                {mensagem && <p className="mt-4 text-sm text-red-700">{mensagem}</p>}
-            </form>
-        </main>
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                            Liga
+                        </label>
+                        <select
+                            value={formData.liga}
+                            onChange={(e) => setFormData({
+                                ...formData,
+                                liga: e.target.value as 'Great' | 'Master'
+                            })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
+                        >
+                            <option value="Great">Great League (até 1500 CP)</option>
+                            <option value="Master">Master League (sem limite de CP)</option>
+                        </select>
+                    </div>
+
+                    <div className="space-y-4">
+                        <h3 className="text-lg font-medium text-gray-900">
+                            Seu Time Pokémon
+                        </h3>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            {formData.pokemon.map((pkm, idx) => (
+                                <div key={idx} className="space-y-1">
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Pokémon {idx + 1}
+                                    </label>
+                                    <PokemonSelect
+                                        value={pkm}
+                                        onChange={(value) => {
+                                            const newTeam = [...formData.pokemon]
+                                            newTeam[idx] = value
+                                            setFormData({ ...formData, pokemon: newTeam })
+                                        }}
+                                        pokemonList={pokemonList}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <button
+                            type="submit"
+                            disabled={isSubmitting}
+                            className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''
+                                }`}
+                        >
+                            {isSubmitting ? (
+                                <>
+                                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Cadastrando...
+                                </>
+                            ) : 'Cadastrar'}
+                        </button>
+                    </div>
+
+                    {message.text && (
+                        <div className={`rounded-md p-4 ${message.type === 'error'
+                                ? 'bg-red-50 text-red-800'
+                                : 'bg-green-50 text-green-800'
+                            }`}>
+                            <p className="text-sm">{message.text}</p>
+                        </div>
+                    )}
+                </form>
+            </div>
+        </div>
     )
 }
