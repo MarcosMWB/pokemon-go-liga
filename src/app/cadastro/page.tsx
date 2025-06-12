@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createBrowserSupabaseClient } from '@supabase/auth-helpers-nextjs/client'
 import { useRouter } from 'next/navigation'
 import { PokemonSelect } from '@/components/PokemonSelect'
+import { createClient } from '@/utils/supabase/client'
 
 type FormData = {
     friendCode: string
@@ -24,7 +24,6 @@ export default function CadastroPage() {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [message, setMessage] = useState({ text: '', type: '' })
 
-    // Carrega lista de Pokémon
     useEffect(() => {
         const fetchPokemon = async () => {
             try {
@@ -54,7 +53,6 @@ export default function CadastroPage() {
         setIsSubmitting(true)
         setMessage({ text: '', type: '' })
 
-        // Validação
         if (!formData.friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
             setMessage({ text: 'Friend Code inválido (formato: 1234 5678 9012)', type: 'error' })
             setIsSubmitting(false)
@@ -67,10 +65,9 @@ export default function CadastroPage() {
             return
         }
 
-        const supabase = createBrowserSupabaseClient()
+        const supabase = createClient()
 
         try {
-            // Cadastra usuário
             const { error: userError } = await supabase.from('usuarios').insert({
                 id: formData.friendCode.replace(/\s/g, ''),
                 nome: formData.nome,
@@ -79,7 +76,6 @@ export default function CadastroPage() {
 
             if (userError) throw userError
 
-            // Cadastra equipe
             const { error: teamError } = await supabase.from('equipes').insert({
                 usuario_id: formData.friendCode,
                 pokemon1: formData.pokemon[0],
@@ -97,7 +93,6 @@ export default function CadastroPage() {
                 type: 'success'
             })
 
-            // Redireciona após 2 segundos
             setTimeout(() => router.push('/'), 2000)
         } catch (error: any) {
             setMessage({
