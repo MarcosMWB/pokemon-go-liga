@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { createServerSideClient } from '@/utils/supabase/server'
 
-export default async function PerfilPage({ params }: { params: { id: string } }) {
+export default async function PerfilPage({ params }: any) {
     const supabase = createServerSideClient()
     const { id } = params
 
