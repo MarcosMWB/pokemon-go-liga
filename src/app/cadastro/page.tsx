@@ -3,11 +3,14 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
+import bcrypt from 'bcryptjs'
 
 export default function CadastroPage() {
     const router = useRouter()
     const [friendCode, setFriendCode] = useState('')
     const [nome, setNome] = useState('')
+    const [email, setEmail] = useState('')
+    const [senha, setSenha] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [message, setMessage] = useState({ text: '', type: '' })
 
@@ -22,12 +25,22 @@ export default function CadastroPage() {
             return
         }
 
+        if (!email.includes('@') || senha.length < 6) {
+            setMessage({ text: 'E-mail ou senha inválidos', type: 'error' })
+            setIsSubmitting(false)
+            return
+        }
+
         const supabase = createClient()
 
         try {
+            const senha_hash = bcrypt.hashSync(senha, 10)
+
             const { error } = await supabase.from('usuarios').insert({
                 id: friendCode.replace(/\s/g, ''),
-                nome
+                nome,
+                email,
+                senha_hash
             })
 
             if (error) throw error
@@ -39,7 +52,7 @@ export default function CadastroPage() {
             const err = error as Error
             setMessage({
                 text: err.message.includes('duplicate key')
-                    ? 'Este Friend Code já está cadastrado'
+                    ? 'Este Friend Code ou e-mail já está cadastrado'
                     : `Erro: ${err.message}`,
                 type: 'error'
             })
@@ -64,49 +77,62 @@ export default function CadastroPage() {
                             placeholder="1234 5678 9012"
                             value={friendCode}
                             onChange={(e) => setFriendCode(e.target.value.replace(/[^\d\s]/g, ''))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
                             maxLength={14}
                             required
                         />
                     </div>
 
                     <div className="space-y-2">
-                        <label className="block text-sm font-medium text-gray-700">Nome do Treinador</label>
+                        <label className="block text-sm font-medium text-gray-700">Nome</label>
                         <input
                             type="text"
                             placeholder="Ash Ketchum"
                             value={nome}
                             onChange={(e) => setNome(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
                             required
                         />
                     </div>
 
-                    <div>
-                        <button
-                            type="submit"
-                            disabled={isSubmitting}
-                            className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''
-                                }`}
-                        >
-                            {isSubmitting ? (
-                                <>
-                                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    Cadastrando...
-                                </>
-                            ) : 'Cadastrar'}
-                        </button>
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">E-mail</label>
+                        <input
+                            type="email"
+                            placeholder="email@exemplo.com"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                            required
+                        />
                     </div>
 
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">Senha</label>
+                        <input
+                            type="password"
+                            placeholder="******"
+                            value={senha}
+                            onChange={(e) => setSenha(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                            required
+                        />
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md"
+                    >
+                        {isSubmitting ? 'Cadastrando...' : 'Cadastrar'}
+                    </button>
+
                     {message.text && (
-                        <div className={`rounded-md p-4 ${message.type === 'error'
-                            ? 'bg-red-50 text-red-800'
-                            : 'bg-green-50 text-green-800'
+                        <div className={`mt-4 text-sm rounded-md p-3 ${message.type === 'error'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-green-100 text-green-800'
                             }`}>
-                            <p className="text-sm">{message.text}</p>
+                            {message.text}
                         </div>
                     )}
                 </form>

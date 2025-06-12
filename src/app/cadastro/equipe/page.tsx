@@ -8,8 +8,9 @@ import { PokemonSelect } from '@/components/PokemonSelect'
 export default function CadastroEquipePage() {
     const router = useRouter()
     const searchParams = useSearchParams()
+    const ligaParam = searchParams.get('liga') as 'Great' | 'Master' | null
     const userId = searchParams.get('user')
-    const [liga, setLiga] = useState<'Great' | 'Master'>('Great')
+    const [liga, setLiga] = useState<'Great' | 'Master'>(ligaParam || 'Great')
     const [pokemonList, setPokemonList] = useState<{ name: string, id: number }[]>([])
     const [team, setTeam] = useState(['', '', '', '', '', ''])
     const [isSubmitting, setIsSubmitting] = useState(false)
@@ -30,6 +31,27 @@ export default function CadastroEquipePage() {
 
     const formatName = (name: string) =>
         name.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ')
+
+    useEffect(() => {
+        const verificarDuplicado = async () => {
+            if (!userId || !ligaParam) return
+
+            const supabase = createClient()
+            const { data } = await supabase
+                .from('participacoes')
+                .select('id')
+                .eq('usuario_id', userId)
+                .eq('ligas.nome', ligaParam)
+                .maybeSingle()
+
+            if (data) {
+                alert(`Você já cadastrou equipe na liga ${ligaParam}.`)
+                router.push(`/perfil/${userId}`)
+            }
+        }
+        verificarDuplicado()
+    }, [userId, ligaParam])
+
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -78,7 +100,7 @@ export default function CadastroEquipePage() {
 
             if (pErr) throw pErr
 
-            const pokemonsToInsert = team.map(name => ({
+            const pokemonToInsert = team.map(name => ({
                 participacao_id: participacao.id,
                 nome: name
             }))
@@ -109,12 +131,13 @@ export default function CadastroEquipePage() {
                         <label className="block text-sm font-medium text-gray-700">Liga</label>
                         <select
                             value={liga}
-                            onChange={(e) => setLiga(e.target.value as 'Great' | 'Master')}
-                            className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-md"
+                            disabled
+                            className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-100 cursor-not-allowed"
                         >
                             <option value="Great">Great League</option>
                             <option value="Master">Master League</option>
                         </select>
+
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

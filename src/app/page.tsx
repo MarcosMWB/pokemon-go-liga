@@ -1,4 +1,3 @@
-// src/app/page.tsx
 'use client'
 
 import Link from 'next/link'
@@ -14,11 +13,20 @@ export default function Home() {
                 Cadastre seu time, desafie ginásios e conquiste as insígnias
                 para disputar o torneio dos campeões!
             </p>
-            <Link href="/cadastro">
-                <button className="bg-blue-700 text-white px-6 py-3 rounded-xl shadow hover:bg-blue-800 transition">
-                    Cadastrar Jogador
-                </button>
-            </Link>
+
+            <div className="flex gap-4">
+                <Link href="/cadastro">
+                    <button className="bg-blue-700 text-white px-6 py-3 rounded-xl shadow hover:bg-blue-800 transition">
+                        Cadastrar Jogador
+                    </button>
+                </Link>
+
+                <Link href="/login">
+                    <button className="bg-white text-blue-800 border border-blue-700 px-6 py-3 rounded-xl shadow hover:bg-blue-100 transition">
+                        Fazer Login
+                    </button>
+                </Link>
+            </div>
         </main>
     )
 }
