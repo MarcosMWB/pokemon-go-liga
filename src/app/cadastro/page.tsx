@@ -94,7 +94,8 @@ export default function CadastroPage() {
             })
 
             setTimeout(() => router.push('/'), 2000)
-        } catch (error: any) {
+        } catch (error) {
+            const err = error as Error
             setMessage({
                 text: error.message.includes('duplicate key')
                     ? 'Este Friend Code já está cadastrado'
