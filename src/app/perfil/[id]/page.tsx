@@ -6,12 +6,9 @@ type PageProps = {
     params: { id: string }
 }
 
-export default function PerfilPage({ params }: PageProps) {
-    return <Perfil id={params.id} />
-}
-
-async function Perfil({ id }: { id: string }) {
+export default async function PerfilPage({ params }: PageProps) {
     const supabase = createServerSideClient()
+    const { id } = params
 
     const { data: usuario } = await supabase
         .from('usuarios')
