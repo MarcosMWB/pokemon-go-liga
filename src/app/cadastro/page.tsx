@@ -13,7 +13,7 @@ export default function CadastroPage() {
     const [nome, setNome] = useState('')
     const [friendCode, setFriendCode] = useState('')
     const [liga, setLiga] = useState('Great')
-    const [pokemons, setPokemons] = useState<string[]>(['', '', '', '', '', ''])
+    const [pokemon, setPokemon] = useState<string[]>(['', '', '', '', '', ''])
     const [pokemonList, setPokemonList] = useState<string[]>([])
     const [mensagem, setMensagem] = useState('')
 
@@ -32,7 +32,7 @@ export default function CadastroPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
 
-        if (!friendCode || !nome || pokemons.includes('')) {
+        if (!friendCode || !nome || pokemon.includes('')) {
             setMensagem('Preencha todos os campos!')
             return
         }
@@ -50,12 +50,12 @@ export default function CadastroPage() {
 
         const { error: teamError } = await supabase.from('equipes').insert({
             usuario_id: friendCode,
-            pokemon1: pokemons[0],
-            pokemon2: pokemons[1],
-            pokemon3: pokemons[2],
-            pokemon4: pokemons[3],
-            pokemon5: pokemons[4],
-            pokemon6: pokemons[5],
+            pokemon1: pokemon[0],
+            pokemon2: pokemon[1],
+            pokemon3: pokemon[2],
+            pokemon4: pokemon[3],
+            pokemon5: pokemon[4],
+            pokemon6: pokemon[5],
         })
 
         if (teamError) {
@@ -66,7 +66,7 @@ export default function CadastroPage() {
         setMensagem('Cadastro realizado com sucesso!')
         setNome('')
         setFriendCode('')
-        setPokemons(['', '', '', '', '', ''])
+        setPokemon(['', '', '', '', '', ''])
     }
 
     return (
@@ -96,14 +96,14 @@ export default function CadastroPage() {
                     <option value="Master">Master League</option>
                 </select>
 
-                {pokemons.map((pkm, idx) => (
+                {pokemon.map((pkm, idx) => (
                     <select
                         key={idx}
                         value={pkm}
                         onChange={(e) => {
-                            const novoTime = [...pokemons]
+                            const novoTime = [...pokemon]
                             novoTime[idx] = e.target.value
-                            setPokemons(novoTime)
+                            setPokemon(novoTime)
                         }}
                         className="w-full p-2 border rounded"
                     >
