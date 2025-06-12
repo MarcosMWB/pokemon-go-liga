@@ -10,7 +10,7 @@ export default function CadastroEquipePage() {
     const searchParams = useSearchParams()
     const ligaParam = searchParams.get('liga') as 'Great' | 'Master' | null
     const userId = searchParams.get('user')
-    const [liga] = useState<'Great' | 'Master'>(ligaParam || 'Great')
+    const liga = ligaParam || 'Great'
     const [pokemonList, setPokemonList] = useState<{ name: string, id: number }[]>([])
     const [team, setTeam] = useState(['', '', '', '', '', ''])
     const [isSubmitting, setIsSubmitting] = useState(false)
