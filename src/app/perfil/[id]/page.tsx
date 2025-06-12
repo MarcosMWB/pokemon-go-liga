@@ -2,7 +2,14 @@ import Link from 'next/link'
 import { createServerSideClient } from '@/utils/supabase/server'
 import { notFound } from 'next/navigation'
 
-export default async function PerfilPage({ params }: { params: { id: string } }) {
+import { type Metadata } from 'next'
+
+type PageProps = {
+    params: { id: string }
+}
+
+export default async function PerfilPage({ params }: PageProps) {
+
     const supabase = createServerSideClient()
     const { id } = params
 
