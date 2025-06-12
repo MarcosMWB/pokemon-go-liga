@@ -29,7 +29,7 @@ export default function CadastroPage() {
             try {
                 const response = await fetch('https://pokeapi.co/api/v2/pokemon?limit=1010')
                 const data = await response.json()
-                const formattedList = data.results.map((p: any, index: number) => ({
+                const formattedList = data.results.map((p: { name: string }, index: number) => ({
                     name: formatPokemonName(p.name),
                     id: index + 1
                 }))
