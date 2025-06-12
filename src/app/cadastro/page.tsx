@@ -97,9 +97,9 @@ export default function CadastroPage() {
         } catch (error) {
             const err = error as Error
             setMessage({
-                text: error.message.includes('duplicate key')
+                text: err.message.includes('duplicate key')
                     ? 'Este Friend Code já está cadastrado'
-                    : `Erro: ${error.message}`,
+                    : `Erro: ${err.message}`,
                 type: 'error'
             })
         } finally {
