@@ -2,9 +2,9 @@ import Link from 'next/link'
 import { createServerSideClient } from '@/utils/supabase/server'
 import { notFound } from 'next/navigation'
 
-export default async function PerfilPage({ params }: { params: { id: string } }) {
+export default async function PerfilPage(props: any) {
     const supabase = createServerSideClient()
-    const { id } = params
+    const { id } = props.params
 
     const { data: usuario } = await supabase
         .from('usuarios')
@@ -30,13 +30,13 @@ export default async function PerfilPage({ params }: { params: { id: string } })
                 </h1>
 
                 {participacoes && participacoes.length > 0 ? (
-                    participacoes.map((p, i) => (
+                    participacoes.map((p: any, i: number) => (
                         <div key={i} className="mb-6 border-t pt-4">
                             <h2 className="text-lg font-semibold text-blue-700">
                                 Liga: {p.ligas?.nome || 'Desconhecida'}
                             </h2>
                             <ul className="list-disc list-inside text-gray-700 mt-2">
-                                {p.pokemon?.map((poke, j) => (
+                                {p.pokemon?.map((poke: any, j: number) => (
                                     <li key={j}>{poke.nome}</li>
                                 ))}
                             </ul>
@@ -51,7 +51,7 @@ export default async function PerfilPage({ params }: { params: { id: string } })
                         <h2 className="text-lg font-semibold text-blue-700">
                             Cadastrar Equipe:
                         </h2>
-                        {ligasFaltando.map((liga) => (
+                        {ligasFaltando.map((liga: string) => (
                             <Link
                                 key={liga}
                                 href={`/cadastro/equipe?user=${id}&liga=${liga}`}
