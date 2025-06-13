@@ -43,9 +43,8 @@ export default function PageContent() {
     }
 
     const handleSubmit = async () => {
-        if (!userId || !liga) return
-
         setLoading(true)
+
         const { error } = await supabase
             .from('participacoes')
             .insert({
@@ -55,6 +54,7 @@ export default function PageContent() {
             })
 
         setLoading(false)
+
         if (!error) router.push(`/perfil/${userId}`)
     }
 
