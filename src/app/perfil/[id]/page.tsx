@@ -3,7 +3,7 @@ import { createServerSideClient } from '@/utils/supabase/server'
 import { notFound } from 'next/navigation'
 
 export default async function PerfilPage(props: any) {
-    const supabase = createServerSideClient()
+    const supabase = await createServerSideClient()
     const { id } = props.params
 
     const { data: usuario } = await supabase
@@ -20,12 +20,10 @@ export default async function PerfilPage(props: any) {
         .eq('usuario_id', id)
 
     type Participacao = {
-        ligas?: {
-            nome: string
-        }
+        ligas?: { nome: string }[]
     }
 
-    const ligasRegistradas = (participacoes as Participacao[])?.map(p => p.ligas?.nome) || []
+    const ligasRegistradas = (participacoes as Participacao[])?.map(p => p.ligas?.[0]?.nome) || []
     const ligasFaltando = ['Great', 'Master'].filter(l => !ligasRegistradas.includes(l))
 
     return (
