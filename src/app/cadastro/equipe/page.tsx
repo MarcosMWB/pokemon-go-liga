@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { PokemonSelect } from '@/components/PokemonSelect'
 
