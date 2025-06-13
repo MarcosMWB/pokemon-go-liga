@@ -18,9 +18,7 @@ export default function PageContent() {
     const liga = searchParams.get('liga')
 
     useEffect(() => {
-        if (!userId || !liga) {
-            router.push('/')
-        }
+        if (!userId || !liga) router.push('/')
     }, [userId, liga, router])
 
     useEffect(() => {
@@ -40,7 +38,13 @@ export default function PageContent() {
     const formatName = (name: string) =>
         name.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ')
 
+    const handleRemove = (name: string) => {
+        setSelectedPokemons(prev => prev.filter(p => p !== name))
+    }
+
     const handleSubmit = async () => {
+        if (!userId || !liga) return
+
         setLoading(true)
         const { error } = await supabase
             .from('participacoes')
@@ -65,10 +69,33 @@ export default function PageContent() {
                     pokemonList={pokemonList}
                 />
 
+                {selectedPokemons.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                        <p className="text-sm text-gray-700">Pokémon selecionados ({selectedPokemons.length}/6):</p>
+                        <ul className="grid grid-cols-2 gap-2">
+                            {selectedPokemons.map((p) => (
+                                <li key={p} className="flex justify-between items-center bg-yellow-100 px-3 py-1 rounded">
+                                    <span>{p}</span>
+                                    <button
+                                        onClick={() => handleRemove(p)}
+                                        className="text-red-600 font-bold hover:underline"
+                                    >
+                                        Remover
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
+                {selectedPokemons.length >= 6 && (
+                    <p className="mt-2 text-sm text-red-500">Limite de 6 Pokémon atingido.</p>
+                )}
+
                 <button
                     onClick={handleSubmit}
                     disabled={loading || selectedPokemons.length === 0}
-                    className="mt-6 w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded"
+                    className="mt-6 w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded disabled:opacity-50"
                 >
                     {loading ? 'Salvando...' : 'Salvar Equipe'}
                 </button>
