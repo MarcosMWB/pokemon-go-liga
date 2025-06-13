@@ -19,7 +19,13 @@ export default async function PerfilPage(props: any) {
         .select('id, liga_id, ligas(nome), pokemon: pokemon(nome)')
         .eq('usuario_id', id)
 
-    const ligasRegistradas = participacoes?.map(p => p.ligas?.nome) || []
+    type Participacao = {
+        ligas?: {
+            nome: string
+        }
+    }
+
+    const ligasRegistradas = (participacoes as Participacao[])?.map(p => p.ligas?.nome) || []
     const ligasFaltando = ['Great', 'Master'].filter(l => !ligasRegistradas.includes(l))
 
     return (
