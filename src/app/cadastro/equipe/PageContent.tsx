@@ -45,18 +45,36 @@ export default function PageContent() {
     const handleSubmit = async () => {
         setLoading(true)
 
-        const { error } = await supabase
+        const { data: participacao, error } = await supabase
             .from('participacoes')
             .insert({
                 usuario_id: userId,
                 liga_id: liga,
-                pokemon: selectedPokemons.map((nome) => ({ nome }))
+                equipe_registrada: true
             })
+            .select('id')
+            .single()
+
+        if (error || !participacao) {
+            setLoading(false)
+            console.error(error)
+            return
+        }
+
+        const { error: pokemonError } = await supabase
+            .from('pokemon')
+            .insert(
+                selectedPokemons.map(nome => ({
+                    participacao_id: participacao.id,
+                    nome
+                }))
+            )
 
         setLoading(false)
 
-        if (!error) router.push(`/perfil/${userId}`)
+        if (!pokemonError) router.push(`/perfil/${userId}`)
     }
+
 
     return (
         <div className="min-h-screen bg-blue-50 py-10 px-4">
