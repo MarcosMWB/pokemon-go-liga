@@ -45,19 +45,40 @@ export default function PageContent() {
     const handleSubmit = async () => {
         setLoading(true)
 
+        // Buscar temporada ativa
+        const { data: temporada, error: temporadaError } = await supabase
+            .from('temporadas')
+            .select('id')
+            .eq('ativa', true)
+            .single()
+
+        if (temporadaError || !temporada) {
+            console.error('Erro ao buscar temporada ativa:', temporadaError)
+            setLoading(false)
+            return
+        }
+
+        const ligaIdNumber = Number(liga)
+        if (isNaN(ligaIdNumber)) {
+            console.error('liga_id inválido:', liga)
+            setLoading(false)
+            return
+        }
+
         const { data: participacao, error } = await supabase
             .from('participacoes')
             .insert({
                 usuario_id: userId,
-                liga_id: liga,
+                liga_id: ligaIdNumber,
+                temporada_id: temporada.id,
                 equipe_registrada: true
             })
             .select('id')
             .single()
 
         if (error || !participacao) {
+            console.error('Erro ao inserir participação:', error)
             setLoading(false)
-            console.error(error)
             return
         }
 
@@ -70,10 +91,16 @@ export default function PageContent() {
                 }))
             )
 
-        setLoading(false)
+        if (pokemonError) {
+            console.error('Erro ao inserir Pokémon:', pokemonError)
+            setLoading(false)
+            return
+        }
 
-        if (!pokemonError) router.push(`/perfil/${userId}`)
+        setLoading(false)
+        router.push(`/perfil/${userId}`)
     }
+
 
 
     return (
