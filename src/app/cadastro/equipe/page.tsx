@@ -1,5 +1,8 @@
+// src/app/cadastro/equipe/page.tsx
+import dynamic from 'next/dynamic'
 import { Suspense } from 'react'
-import PageContent from './PageContent'
+
+const PageContent = dynamic(() => import('./PageContent'), { ssr: false })
 
 export default function Page() {
     return (
