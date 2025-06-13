@@ -2,23 +2,26 @@
 
 import { useState, useEffect } from 'react'
 
-export function PokemonSelect({
-    value,
-    onChange,
-    pokemonList
-}: {
-    value: string
-    onChange: (value: string) => void
-    pokemonList: { name: string, id: number }[]
-}) {
+type Pokemon = {
+    name: string
+    id: number
+}
+
+interface PokemonSelectProps {
+    value: string[]
+    onChange: (value: string[]) => void
+    pokemonList: Pokemon[]
+}
+
+export function PokemonSelect({ value, onChange, pokemonList }: PokemonSelectProps) {
     const [searchTerm, setSearchTerm] = useState('')
-    const [filteredPokemon, setFilteredPokemon] = useState(pokemonList)
+    const [filteredPokemon, setFilteredPokemon] = useState<Pokemon[]>(pokemonList)
     const [isOpen, setIsOpen] = useState(false)
 
     useEffect(() => {
         if (searchTerm) {
             setFilteredPokemon(
-                pokemonList.filter(p =>
+                pokemonList.filter((p) =>
                     p.name.toLowerCase().includes(searchTerm.toLowerCase())
                 )
             )
@@ -27,12 +30,20 @@ export function PokemonSelect({
         }
     }, [searchTerm, pokemonList])
 
+    const handleSelect = (name: string) => {
+        if (!value.includes(name)) {
+            onChange([...value, name])
+        }
+        setIsOpen(false)
+        setSearchTerm('')
+    }
+
     return (
         <div className="relative">
             <input
                 type="text"
                 placeholder="Buscar Pokémon..."
-                value={searchTerm || value}
+                value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onFocus={() => setIsOpen(true)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
@@ -43,19 +54,17 @@ export function PokemonSelect({
                         filteredPokemon.map((pokemon) => (
                             <div
                                 key={pokemon.id}
-                                className={`cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-yellow-50 ${value === pokemon.name ? 'bg-yellow-100' : ''
+                                className={`cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-yellow-50 ${value.includes(pokemon.name) ? 'bg-yellow-100' : ''
                                     }`}
-                                onClick={() => {
-                                    onChange(pokemon.name)
-                                    setIsOpen(false)
-                                    setSearchTerm('')
-                                }}
+                                onClick={() => handleSelect(pokemon.name)}
                             >
                                 <span className="block truncate">{pokemon.name}</span>
                             </div>
                         ))
                     ) : (
-                        <div className="text-gray-500 py-2 pl-3 pr-9">Nenhum Pokémon encontrado</div>
+                        <div className="text-gray-500 py-2 pl-3 pr-9">
+                            Nenhum Pokémon encontrado
+                        </div>
                     )}
                 </div>
             )}
