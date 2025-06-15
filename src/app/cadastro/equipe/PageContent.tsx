@@ -44,14 +44,38 @@ export default function PageContent() {
             }))
 
             const extraForms = [
-                'Raichu (Alola)', 'Meowth (Alola)', 'Meowth (Galar)', 'Zigzagoon (Galar)',
-                'Articuno (Galar)', 'Zapdos (Galar)', 'Moltres (Galar)', 'Growlithe (Hisui)',
-                'Voltorb (Hisui)', 'Typhlosion (Hisui)', 'Zorua (Hisui)', 'Zoroark (Hisui)',
-                'Braviary (Hisui)', 'Lilligant (Hisui)', 'Goodra (Hisui)', 'Avalugg (Hisui)',
-                'Sneasel (Hisui)', 'Samurott (Hisui)', 'Decidueye (Hisui)', 'Wooper (Paldea)',
-                'Tauros (Paldea Combat)', 'Tauros (Paldea Blaze)', 'Tauros (Paldea Aqua)',
-                'Zacian (Hero)', 'Zacian (Crowned)', 'Zamazenta (Hero)', 'Zamazenta (Crowned)',
-                'Basculegion (Male)', 'Basculegion (Female)'
+                // Alolan Forms
+                'Raichu (Alola)', 'Meowth (Alola)', 'Meowth (Galar)', // Meowth repete aqui como Galar
+                'Diglett (Alola)', 'Dugtrio (Alola)', 'Vulpix (Alola)', 'Ninetales (Alola)',
+                'Sandshrew (Alola)', 'Sandslash (Alola)', 'Grimer (Alola)', 'Muk (Alola)',
+                'Geodude (Alola)', 'Graveler (Alola)', 'Golem (Alola)', 'Exeggutor (Alola)',
+                'Marowak (Alola)',
+
+                // Galarian Forms
+                'Meowth (Galar)', 'Ponyta (Galar)', 'Rapidash (Galar)',
+                'Slowpoke (Galar)', 'Slowbro (Galar)', 'Farfetch’d (Galar)',
+                'Weezing (Galar)', 'Mr. Mime (Galar)', 'Articuno (Galar)',
+                'Zapdos (Galar)', 'Moltres (Galar)', 'Slowking (Galar)',
+                'Corsola (Galar)', 'Zigzagoon (Galar)', 'Linoone (Galar)',
+                'Darumaka (Galar)', 'Darmanitan (Galar)', 'Yamask (Galar)',
+                'Stunfisk (Galar)', // dentre outros
+
+                // Hisuian Forms (Alola gen, mas Hisui)
+                'Growlithe (Hisui)', 'Arcanine (Hisui)', 'Voltorb (Hisui)',
+                'Electrode (Hisui)', 'Typhlosion (Hisui)', 'Qwilfish (Hisui)',
+                'Sneasel (Hisui)', 'Samurott (Hisui)', 'Lilligant (Hisui)',
+                'Zorua (Hisui)', 'Zoroark (Hisui)', 'Braviary (Hisui)',
+                'Sliggoo (Hisui)', 'Goodra (Hisui)', 'Avalugg (Hisui)',
+                'Decidueye (Hisui)',
+
+                // Paldean Forms
+                'Wooper (Paldea)', 'Tauros (Paldea Combat)', 'Tauros (Paldea Blaze)',
+                'Tauros (Paldea Aqua)', 'Maushold (Paldea)', 'Squawkabilly (Paldea)',
+                'Palafin (Hero)', 'Tatsugiri (Paldea)', 'Dudunsparce (Paldea)',
+                'Gimmighoul (Paldea)', 'Ogerpon (Paldea)', 'Terapagos (Paldea)',
+
+                // Certaines légendaires/d'autres formes
+                'Basculegion (Male)', 'Basculegion (Female)',
             ].map((name, i) => ({ name, id: 10000 + i }))
 
             setPokemonList([...formatted, ...extraForms])
