@@ -1,4 +1,3 @@
-// cadastro.tsx
 'use client'
 
 import { useState } from 'react'
@@ -28,13 +27,23 @@ export default function CadastroPage() {
             return
         }
 
-        const { user } = data
+        const user = data?.user
 
-        await supabase.from('usuarios').insert({
+        if (!user) {
+            setMensagem('Erro ao obter usuário após cadastro.')
+            return
+        }
+
+        const { error: insertError } = await supabase.from('usuarios').insert({
             id: user.id,
             nome,
             email
         })
+
+        if (insertError) {
+            setMensagem('Erro ao salvar no banco de dados.')
+            return
+        }
 
         router.push('/login')
     }
@@ -42,10 +51,38 @@ export default function CadastroPage() {
     return (
         <form onSubmit={handleSubmit} className="p-8 max-w-md mx-auto">
             <h1 className="text-xl font-bold mb-4">Cadastro</h1>
-            <input type="text" placeholder="Friend Code" required value={friendCode} onChange={e => setFriendCode(e.target.value)} className="w-full border p-2 mb-2" />
-            <input type="text" placeholder="Nome" required value={nome} onChange={e => setNome(e.target.value)} className="w-full border p-2 mb-2" />
-            <input type="email" placeholder="Email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full border p-2 mb-2" />
-            <input type="password" placeholder="Senha" required value={senha} onChange={e => setSenha(e.target.value)} className="w-full border p-2 mb-4" />
+            <input
+                type="text"
+                placeholder="Friend Code"
+                required
+                value={friendCode}
+                onChange={e => setFriendCode(e.target.value)}
+                className="w-full border p-2 mb-2"
+            />
+            <input
+                type="text"
+                placeholder="Nome"
+                required
+                value={nome}
+                onChange={e => setNome(e.target.value)}
+                className="w-full border p-2 mb-2"
+            />
+            <input
+                type="email"
+                placeholder="Email"
+                required
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full border p-2 mb-2"
+            />
+            <input
+                type="password"
+                placeholder="Senha"
+                required
+                value={senha}
+                onChange={e => setSenha(e.target.value)}
+                className="w-full border p-2 mb-4"
+            />
             <button type="submit" className="w-full bg-yellow-500 text-white p-2">Cadastrar</button>
             {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
         </form>
