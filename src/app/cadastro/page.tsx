@@ -17,6 +17,11 @@ export default function CadastroPage() {
         e.preventDefault()
         setMensagem('')
 
+        if (!friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
+            setMensagem('Friend Code inválido (use o formato: 1234 5678 9012)')
+            return
+        }
+
         const { data, error } = await supabase.auth.signUp({
             email,
             password: senha
@@ -37,7 +42,8 @@ export default function CadastroPage() {
         const { error: insertError } = await supabase.from('usuarios').insert({
             id: user.id,
             nome,
-            email
+            email,
+            friend_code: friendCode.replace(/\s/g, '')
         })
 
         if (insertError) {
@@ -53,7 +59,7 @@ export default function CadastroPage() {
             <h1 className="text-xl font-bold mb-4">Cadastro</h1>
             <input
                 type="text"
-                placeholder="Friend Code"
+                placeholder="Código do treinador: 9999 0000 9999"
                 required
                 value={friendCode}
                 onChange={e => setFriendCode(e.target.value)}
