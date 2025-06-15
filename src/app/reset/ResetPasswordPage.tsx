@@ -11,7 +11,6 @@ export default function ResetPasswordPage() {
     const [loading, setLoading] = useState(false)
 
     const router = useRouter()
-    const searchParams = useSearchParams()
     const supabase = createClient()
 
     const handleReset = async () => {
