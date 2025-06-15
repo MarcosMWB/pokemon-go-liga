@@ -43,6 +43,7 @@ export default async function PerfilPage(props: any) {
                     Perfil de {usuario.nome}
                 </h1>
 
+
                 {participacoes && participacoes.length > 0 ? (
                     participacoes.map((p: any, i: number) => (
                         <div key={i} className="mb-6 border-t pt-4">
@@ -68,13 +69,20 @@ export default async function PerfilPage(props: any) {
                                 key={liga}
                                 href={`/cadastro/equipe?user=${id}&liga=${liga}`}
                             >
-                                <button className="block w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md">
+                                <button className="block w-full mt-1 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md">
                                     Cadastrar equipe {liga}
                                 </button>
                             </Link>
                         ))}
                     </div>
                 )}
+                <div className="mt-2 space-y-4">
+                    <Link href="/jogadores">
+                        <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                            Ver Treinadores
+                        </button>
+                    </Link>
+                </div>
 
                 <footer className="mt-10 text-sm text-gray-500 text-center">
                     {user && `Logado como: ${user.email}`}
