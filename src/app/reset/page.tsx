@@ -15,7 +15,7 @@ export default function ResetPasswordPage() {
     useEffect(() => {
         const code = searchParams.get('code')
         if (!code) {
-            setMessage('CÛdigo de redefiniÁ„o inv·lido.')
+            setMessage('C√≥digo de redefini√ß√£o inv√°lido.')
         }
     }, [searchParams])
 
