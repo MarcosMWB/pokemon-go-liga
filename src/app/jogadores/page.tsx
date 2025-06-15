@@ -1,3 +1,5 @@
+'use client'
+
 import Link from 'next/link'
 import { createServerSideClient } from '@/utils/supabase/server'
 import { FiltroUsuarios } from './FiltroUsuarios'
