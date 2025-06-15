@@ -2,10 +2,20 @@ import Link from 'next/link'
 import { createServerSideClient } from '@/utils/supabase/server'
 import { notFound } from 'next/navigation'
 
+export const dynamic = 'force-dynamic'
+
 export default async function PerfilPage(props: any) {
     const supabase = await createServerSideClient()
-    const { id } = props.params
+    const { id } = await props.params
 
+    // Obtém o usuário logado
+    const {
+        data: { session },
+    } = await supabase.auth.getSession()
+    const user = session?.user
+    const isOwnProfile = user?.id === id
+
+    // Dados do perfil visitado
     const { data: usuario } = await supabase
         .from('usuarios')
         .select('nome')
@@ -50,11 +60,9 @@ export default async function PerfilPage(props: any) {
                     <p className="text-gray-600 mb-4">Nenhuma equipe registrada ainda.</p>
                 )}
 
-                {ligasFaltando.length > 0 && (
+                {ligasFaltando.length > 0 && isOwnProfile && (
                     <div className="mt-8 space-y-4">
-                        <h2 className="text-lg font-semibold text-blue-700">
-                            Cadastrar Equipe:
-                        </h2>
+                        <h2 className="text-lg font-semibold text-blue-700">Cadastrar Equipe:</h2>
                         {ligasFaltando.map((liga: string) => (
                             <Link
                                 key={liga}
@@ -67,6 +75,10 @@ export default async function PerfilPage(props: any) {
                         ))}
                     </div>
                 )}
+
+                <footer className="mt-10 text-sm text-gray-500 text-center">
+                    {user && `Logado como: ${user.email}`}
+                </footer>
             </div>
         </div>
     )

@@ -1,95 +1,58 @@
+// login.tsx
 'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import bcrypt from 'bcryptjs'
 
 export default function LoginPage() {
     const router = useRouter()
+    const supabase = createClient()
     const [email, setEmail] = useState('')
     const [senha, setSenha] = useState('')
-    const [isSubmitting, setIsSubmitting] = useState(false)
-    const [message, setMessage] = useState({ text: '', type: '' })
+    const [mensagem, setMensagem] = useState('')
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
-        setIsSubmitting(true)
-        setMessage({ text: '', type: '' })
+        setMensagem('')
 
-        const supabase = createClient()
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password: senha
+        })
 
-        try {
-            const { data: user, error } = await supabase
-                .from('usuarios')
-                .select('id, senha_hash')
-                .eq('email', email)
-                .single()
+        if (error) {
+            setMensagem(error.message)
+            return
+        }
 
-            if (error || !user) throw new Error('E-mail não encontrado.')
+        const { user } = data
+        router.push(`/perfil/${user.id}`)
+    }
 
-            const senhaCorreta = bcrypt.compareSync(senha, user.senha_hash)
-            if (!senhaCorreta) throw new Error('Senha incorreta.')
-
-            setMessage({ text: 'Login realizado com sucesso!', type: 'success' })
-
-            setTimeout(() => {
-                router.push(`/perfil/${user.id}`) // ajuste para rota real
-            }, 1500)
-        } catch (error) {
-            const err = error as Error
-            setMessage({ text: err.message, type: 'error' })
-        } finally {
-            setIsSubmitting(false)
+    const handlePasswordReset = async () => {
+        if (!email) {
+            setMensagem('Informe seu email para recuperar a senha.')
+            return
+        }
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: `${window.location.origin}/reset`
+        })
+        if (error) {
+            setMensagem(error.message)
+        } else {
+            setMensagem('E-mail de recuperação enviado.')
         }
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-blue-50 px-4">
-            <div className="max-w-md w-full bg-white rounded-xl shadow p-8">
-                <h1 className="text-2xl font-bold text-center text-blue-700 mb-6">Login</h1>
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm text-gray-700">E-mail</label>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            required
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm text-gray-700">Senha</label>
-                        <input
-                            type="password"
-                            value={senha}
-                            onChange={(e) => setSenha(e.target.value)}
-                            required
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        />
-                    </div>
-
-                    <button
-                        type="submit"
-                        disabled={isSubmitting}
-                        className="w-full py-3 bg-blue-700 text-white font-semibold rounded-md hover:bg-blue-800"
-                    >
-                        {isSubmitting ? 'Entrando...' : 'Entrar'}
-                    </button>
-
-                    {message.text && (
-                        <div className={`mt-3 p-3 text-sm rounded-md ${message.type === 'error'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-green-100 text-green-800'
-                            }`}>
-                            {message.text}
-                        </div>
-                    )}
-                </form>
-            </div>
-        </div>
+        <form onSubmit={handleLogin} className="p-8 max-w-md mx-auto">
+            <h1 className="text-xl font-bold mb-4">Login</h1>
+            <input type="email" placeholder="Email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full border p-2 mb-2" />
+            <input type="password" placeholder="Senha" required value={senha} onChange={e => setSenha(e.target.value)} className="w-full border p-2 mb-4" />
+            <button type="submit" className="w-full bg-blue-500 text-white p-2">Entrar</button>
+            <button type="button" onClick={handlePasswordReset} className="w-full mt-2 text-sm text-blue-600 underline">Esqueci minha senha</button>
+            {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
+        </form>
     )
 }

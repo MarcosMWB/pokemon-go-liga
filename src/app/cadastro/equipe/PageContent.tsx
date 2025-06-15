@@ -9,7 +9,7 @@ export default function PageContent() {
     const searchParams = useSearchParams()
     const router = useRouter()
     const supabase = createClient()
-
+    const userIdFromUrl = searchParams.get('user')
     const [selectedPokemons, setSelectedPokemons] = useState<string[]>([])
     const [savedPokemons, setSavedPokemons] = useState<string[]>([])
     const [pokemonList, setPokemonList] = useState<{ name: string; id: number }[]>([])
@@ -17,6 +17,19 @@ export default function PageContent() {
 
     const userId = searchParams.get('user')
     const liga = searchParams.get('liga')
+
+    useEffect(() => {
+        const checkAuth = async () => {
+            const { data } = await supabase.auth.getUser()
+            const user = data?.user
+
+            if (!user || user.id !== userIdFromUrl) {
+                router.push('/') // bloqueia acesso se não for o dono do perfil
+            }
+        }
+
+        checkAuth()
+    }, [userIdFromUrl])
 
     useEffect(() => {
         if (!userId || !liga) router.push('/')
