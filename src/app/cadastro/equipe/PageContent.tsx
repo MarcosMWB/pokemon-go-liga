@@ -9,27 +9,26 @@ export default function PageContent() {
     const searchParams = useSearchParams()
     const router = useRouter()
     const supabase = createClient()
-    const userIdFromUrl = searchParams.get('user')
+    const userId = searchParams.get('user')
+    const liga = searchParams.get('liga')
+
     const [selectedPokemons, setSelectedPokemons] = useState<string[]>([])
     const [savedPokemons, setSavedPokemons] = useState<string[]>([])
     const [pokemonList, setPokemonList] = useState<{ name: string; id: number }[]>([])
     const [loading, setLoading] = useState(false)
-
-    const userId = searchParams.get('user')
-    const liga = searchParams.get('liga')
 
     useEffect(() => {
         const checkAuth = async () => {
             const { data } = await supabase.auth.getUser()
             const user = data?.user
 
-            if (!user || user.id !== userIdFromUrl) {
-                router.push('/') // bloqueia acesso se não for o dono do perfil
+            if (!user || user.id !== userId) {
+                router.push('/')
             }
         }
 
         checkAuth()
-    }, [userIdFromUrl])
+    }, [userId])
 
     useEffect(() => {
         if (!userId || !liga) router.push('/')
@@ -45,46 +44,21 @@ export default function PageContent() {
             }))
 
             const extraForms = [
-                'Raichu (Alola)',
-                'Meowth (Alola)',
-                'Meowth (Galar)',
-                'Zigzagoon (Galar)',
-                'Articuno (Galar)',
-                'Zapdos (Galar)',
-                'Moltres (Galar)',
-                'Growlithe (Hisui)',
-                'Voltorb (Hisui)',
-                'Typhlosion (Hisui)',
-                'Zorua (Hisui)',
-                'Zoroark (Hisui)',
-                'Braviary (Hisui)',
-                'Lilligant (Hisui)',
-                'Goodra (Hisui)',
-                'Avalugg (Hisui)',
-                'Sneasel (Hisui)',
-                'Samurott (Hisui)',
-                'Decidueye (Hisui)',
-                'Wooper (Paldea)',
-                'Tauros (Paldea Combat)',
-                'Tauros (Paldea Blaze)',
-                'Tauros (Paldea Aqua)',
-                'Zacian (Hero)',
-                'Zacian (Crowned)',
-                'Zamazenta (Hero)',
-                'Zamazenta (Crowned)',
-                'Basculegion (Male)',
-                'Basculegion (Female)'
-            ].map((name, i) => ({
-                name,
-                id: 10000 + i
-            }))
+                'Raichu (Alola)', 'Meowth (Alola)', 'Meowth (Galar)', 'Zigzagoon (Galar)',
+                'Articuno (Galar)', 'Zapdos (Galar)', 'Moltres (Galar)', 'Growlithe (Hisui)',
+                'Voltorb (Hisui)', 'Typhlosion (Hisui)', 'Zorua (Hisui)', 'Zoroark (Hisui)',
+                'Braviary (Hisui)', 'Lilligant (Hisui)', 'Goodra (Hisui)', 'Avalugg (Hisui)',
+                'Sneasel (Hisui)', 'Samurott (Hisui)', 'Decidueye (Hisui)', 'Wooper (Paldea)',
+                'Tauros (Paldea Combat)', 'Tauros (Paldea Blaze)', 'Tauros (Paldea Aqua)',
+                'Zacian (Hero)', 'Zacian (Crowned)', 'Zamazenta (Hero)', 'Zamazenta (Crowned)',
+                'Basculegion (Male)', 'Basculegion (Female)'
+            ].map((name, i) => ({ name, id: 10000 + i }))
 
             setPokemonList([...formatted, ...extraForms])
         }
 
         fetchPokemonList()
     }, [])
-
 
     useEffect(() => {
         const fetchParticipacaoExistente = async () => {
@@ -129,7 +103,7 @@ export default function PageContent() {
         name.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ')
 
     const handleRemove = (name: string) => {
-        if (savedPokemons.includes(name)) return // bloqueia remoção dos salvos
+        if (savedPokemons.includes(name)) return
         setSelectedPokemons(prev => prev.filter(p => p !== name))
     }
 

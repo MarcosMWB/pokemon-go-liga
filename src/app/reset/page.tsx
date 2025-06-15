@@ -1,26 +1,29 @@
 'use client'
 
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 
 export default function ResetPasswordPage() {
     const [newPassword, setNewPassword] = useState('')
     const [message, setMessage] = useState('')
     const [loading, setLoading] = useState(false)
-
     const router = useRouter()
     const searchParams = useSearchParams()
-
     const supabase = createClient()
+
+    useEffect(() => {
+        const code = searchParams.get('code')
+        if (!code) {
+            setMessage('Código de redefinição inválido.')
+        }
+    }, [searchParams])
 
     const handleReset = async () => {
         setLoading(true)
         setMessage('')
 
-        const { error } = await supabase.auth.updateUser({
-            password: newPassword,
-        })
+        const { error } = await supabase.auth.updateUser({ password: newPassword })
 
         if (error) {
             setMessage(error.message)
