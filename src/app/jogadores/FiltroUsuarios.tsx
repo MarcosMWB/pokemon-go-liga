@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 
-export function FiltroUsuarios({ usuarios }: { usuarios: { id: string; nome: string }[] }) {
+export function FiltroUsuarios({ usuarios }: { usuarios: { id: string, nome: string }[] }) {
     const [busca, setBusca] = useState('')
 
     const filtrados = usuarios.filter(u =>
@@ -14,13 +14,14 @@ export function FiltroUsuarios({ usuarios }: { usuarios: { id: string; nome: str
         <div>
             <input
                 type="text"
+                placeholder="Buscar treinador..."
                 value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar jogador..."
-                className="mb-4 p-2 border border-gray-300 rounded w-full"
+                onChange={e => setBusca(e.target.value)}
+                className="mb-4 w-full px-3 py-2 border border-gray-300 rounded-md"
             />
-            <ul className="space-y-1">
-                {filtrados.map((u) => (
+
+            <ul className="space-y-2">
+                {filtrados.map(u => (
                     <li key={u.id}>
                         <Link href={`/perfil/${u.id}`} className="text-blue-600 hover:underline">
                             {u.nome}

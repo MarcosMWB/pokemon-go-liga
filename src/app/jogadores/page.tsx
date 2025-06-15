@@ -10,9 +10,13 @@ export default async function JogadoresPage() {
         .order('nome', { ascending: true })
 
     return (
-        <div className="p-6 max-w-2xl mx-auto">
-            <h1 className="text-2xl font-bold mb-4">Todos os Jogadores</h1>
-            {usuarios && <FiltroUsuarios usuarios={usuarios} />}
+        <div className="max-w-xl mx-auto p-6">
+            <h1 className="text-2xl font-bold mb-4">Jogadores</h1>
+            {usuarios ? (
+                <FiltroUsuarios usuarios={usuarios} />
+            ) : (
+                <p>Não foi possível carregar os usuários.</p>
+            )}
         </div>
     )
 }
