@@ -1,7 +1,7 @@
 // src/app/reset/ResetPasswordPage.tsx
 'use client'
 
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 
