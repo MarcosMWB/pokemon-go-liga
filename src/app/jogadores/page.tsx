@@ -15,7 +15,7 @@ export default async function JogadoresPage() {
             {usuarios ? (
                 <FiltroUsuarios usuarios={usuarios} />
             ) : (
-                <p>N„o foi possÌvel carregar os usu·rios.</p>
+                <p>N√£o foi poss√≠vel carregar os usu√°rios.</p>
             )}
         </div>
     )
