@@ -11,7 +11,6 @@ export default function ResetPasswordPage() {
 
     const router = useRouter()
     const searchParams = useSearchParams()
-    const code = searchParams.get('code')
 
     const supabase = createClient()
 
