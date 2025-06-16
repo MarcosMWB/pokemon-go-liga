@@ -4,6 +4,13 @@
 import { useState } from 'react'
 import Image from 'next/image'
 
+type RegiaoInfo = {
+    nome: string
+    coordenadas: { top: string; left: string }
+    simbolo: string
+    descricao: string
+}
+
 const regioes = [
     {
         nome: "Cafubá",
@@ -74,7 +81,7 @@ const regioes = [
 ]
 
 export default function MapaPage() {
-    const [regiaoAtiva, setRegiaoAtiva] = useState<null>(null)
+    const [regiaoAtiva, setRegiaoAtiva] = useState<RegiaoInfo | null>(null)
 
 
     return (
