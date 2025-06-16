@@ -240,7 +240,7 @@ export default function PageContent() {
                                     key={p}
                                     className="flex justify-between items-center bg-yellow-100 px-3 py-1 rounded"
                                 >
-                                    <span>{p}</span>
+                                    <span className="text-blue-800 font-bold">{p}</span>
                                     {!savedPokemons.includes(p) && (
                                         <button
                                             onClick={() => handleRemove(p)}

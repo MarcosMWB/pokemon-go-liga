@@ -82,6 +82,11 @@ export default async function PerfilPage(props: any) {
                             Ver Treinadores
                         </button>
                     </Link>
+                    <Link href="/mapa">
+                        <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                            Mapa
+                        </button>
+                    </Link>
                 </div>
 
                 <footer className="mt-10 text-sm text-gray-500 text-center">
