@@ -74,7 +74,7 @@ const regioes = [
 ]
 
 export default function MapaPage() {
-    const [regiaoAtiva, setRegiaoAtiva] = useState<RegiaoInfo | null>(null)
+    const [regiaoAtiva, setRegiaoAtiva] = useState<null>(null)
 
 
     return (
