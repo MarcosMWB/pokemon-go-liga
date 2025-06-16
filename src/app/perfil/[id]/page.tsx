@@ -33,6 +33,13 @@ export default async function PerfilPage(props: any) {
         ligas?: { nome: string }[]
     }
 
+    type RegiaoInfo = {
+        nome: string
+        coordenadas: { top: string; left: string }
+        simbolo: string
+        descricao: string
+    }
+
     const ligasRegistradas = (participacoes as Participacao[])?.map(p => p.ligas?.[0]?.nome) || []
     const ligasFaltando = ['Great', 'Master'].filter(l => !ligasRegistradas.includes(l))
 

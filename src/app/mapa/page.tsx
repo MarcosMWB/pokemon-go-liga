@@ -74,7 +74,8 @@ const regioes = [
 ]
 
 export default function MapaPage() {
-    const [regiaoAtiva, setRegiaoAtiva] = useState(null)
+    const [regiaoAtiva, setRegiaoAtiva] = useState<RegiaoInfo | null>(null)
+
 
     return (
         <div className="relative w-full max-w-5xl mx-auto p-4">
