@@ -1,54 +1,52 @@
-// src/app/reset/ResetPasswordPage.tsx
-'use client'
+"use client";
 
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import { useState } from "react";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 export default function ResetPasswordPage() {
-    const [newPassword, setNewPassword] = useState('')
-    const [message, setMessage] = useState('')
-    const [loading, setLoading] = useState(false)
+  const [email, setEmail] = useState("");
+  const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
-    const router = useRouter()
-    const supabase = createClient()
-
-    const handleReset = async () => {
-        setLoading(true)
-        setMessage('')
-
-        const { error } = await supabase.auth.updateUser({ password: newPassword })
-
-        if (error) {
-            setMessage(error.message)
-        } else {
-            setMessage('Senha redefinida com sucesso.')
-            setTimeout(() => router.push('/login'), 2000)
-        }
-
-        setLoading(false)
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg("");
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setMsg("Se existir conta com esse e-mail, o link foi enviado.");
+    } catch (err: any) {
+      setMsg(err.message || "Erro ao enviar e-mail.");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-blue-50 px-4">
-            <div className="max-w-md w-full bg-white rounded-xl shadow p-8">
-                <h1 className="text-2xl font-bold text-center text-blue-700 mb-6">Redefinir Senha</h1>
-                <input
-                    type="password"
-                    placeholder="Nova senha"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
-                />
-                <button
-                    onClick={handleReset}
-                    disabled={loading}
-                    className="w-full py-3 bg-blue-700 text-white font-semibold rounded-md hover:bg-blue-800"
-                >
-                    {loading ? 'Atualizando...' : 'Atualizar Senha'}
-                </button>
-                {message && <p className="mt-4 text-center text-sm text-gray-700">{message}</p>}
-            </div>
-        </div>
-    )
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <form
+        onSubmit={handleReset}
+        className="bg-white p-6 rounded shadow max-w-sm w-full"
+      >
+        <h1 className="text-xl font-bold mb-4">Recuperar senha</h1>
+        <input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="seuemail@email.com"
+          className="w-full border p-2 mb-3 rounded"
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-blue-600 text-white py-2 rounded disabled:opacity-50"
+        >
+          {loading ? "Enviando..." : "Enviar link"}
+        </button>
+        {msg && <p className="mt-3 text-sm text-gray-700">{msg}</p>}
+      </form>
+    </div>
+  );
 }
