@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
+import "./globals.css";
+import type { ReactNode } from "react";
+import { Header } from "@/components/Header";
+
 
 const inter = Inter({
     variable: "--font-geist-sans",
@@ -12,21 +16,19 @@ const robotoMono = Roboto_Mono({
     subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-    title: "Liga Pokémon GO - Região Oceânica",
-    description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
+
+export const metadata = {
+  title: "Liga Pokémon GO - Região Oceânica",
+  description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
 };
 
-export default function RootLayout({
-    children,
-}: Readonly<{
-    children: React.ReactNode;
-}>) {
-    return (
-        <html lang="pt-BR">
-            <body className={`${inter.variable} ${robotoMono.variable} antialiased bg-blue-50`}>
-                {children}
-            </body>
-        </html>
-    );
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="pt-BR">
+      <body className="bg-slate-50">
+        <Header />
+        <main className="min-h-screen">{children}</main>
+      </body>
+    </html>
+  );
 }

@@ -12,7 +12,11 @@ import {
   getDoc,
   updateDoc,
   addDoc,
+  getDocs,
+  orderBy,
 } from "firebase/firestore";
+import { TYPE_ICONS } from "@/utils/typeIcons";
+import Image from "next/image";
 
 type Usuario = {
   id: string;
@@ -28,6 +32,7 @@ type Ginasio = {
   lider_uid: string;
   derrotas_seguidas?: number;
   em_disputa?: boolean;
+  insignia_icon?: string;
 };
 
 type DisputaParticipante = {
@@ -49,6 +54,17 @@ type Desafio = {
   desafiante_nome?: string;
 };
 
+type Insignia = {
+  id: string;
+  ginasio_id: string;
+  ginasio_nome?: string;
+  ginasio_tipo?: string;
+  insignia_icon?: string;
+  temporada_id?: string;
+  temporada_nome?: string;
+  createdAt?: number;
+};
+
 export default function PerfilPage() {
   const params = useParams();
   const router = useRouter();
@@ -59,6 +75,8 @@ export default function PerfilPage() {
   const [ginasiosLider, setGinasiosLider] = useState<Ginasio[]>([]);
   const [minhasInscricoes, setMinhasInscricoes] = useState<DisputaParticipante[]>([]);
   const [desafiosComoLider, setDesafiosComoLider] = useState<Desafio[]>([]);
+  const [temporada, setTemporada] = useState<{ id: string; nome?: string } | null>(null);
+  const [insignias, setInsignias] = useState<Insignia[]>([]);
   const [loading, setLoading] = useState(true);
 
   // quem está logado
@@ -69,23 +87,46 @@ export default function PerfilPage() {
     return () => unsub();
   }, []);
 
+  // temporada ativa
+  useEffect(() => {
+    (async () => {
+      try {
+        const qTemp = query(collection(db, "temporadas"), where("ativa", "==", true));
+        const snap = await getDocs(qTemp);
+        if (!snap.empty) {
+          const d = snap.docs[0];
+          const data = d.data() as any;
+          setTemporada({ id: d.id, nome: data.nome });
+        }
+      } catch (e) {
+        console.warn("erro carregando temporada", e);
+      }
+    })();
+  }, []);
+
   // dados do usuário do perfil
   useEffect(() => {
     if (!perfilUid) return;
     (async () => {
-      const uSnap = await getDoc(doc(db, "usuarios", perfilUid));
-      if (uSnap.exists()) {
-        const d = uSnap.data() as any;
-        setUsuario({
-          id: perfilUid,
-          nome: d.nome,
-          email: d.email,
-          friend_code: d.friend_code,
-        });
-      } else {
+      try {
+        const uSnap = await getDoc(doc(db, "usuarios", perfilUid));
+        if (uSnap.exists()) {
+          const d = uSnap.data() as any;
+          setUsuario({
+            id: perfilUid,
+            nome: d.nome,
+            email: d.email,
+            friend_code: d.friend_code,
+          });
+        } else {
+          setUsuario({ id: perfilUid });
+        }
+      } catch (e) {
+        console.error("erro carregando usuário", e);
         setUsuario({ id: perfilUid });
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     })();
   }, [perfilUid]);
 
@@ -103,6 +144,7 @@ export default function PerfilPage() {
           lider_uid: data.lider_uid,
           derrotas_seguidas: data.derrotas_seguidas ?? 0,
           em_disputa: data.em_disputa ?? false,
+          insignia_icon: data.insignia_icon || "",
         };
       });
       setGinasiosLider(list);
@@ -112,57 +154,50 @@ export default function PerfilPage() {
 
   // disputas que ele participa
   useEffect(() => {
-  if (!perfilUid) return;
+    if (!perfilUid) return;
 
-  const qP = query(
-    collection(db, "disputas_ginasio_participantes"),
-    where("usuario_uid", "==", perfilUid)
-  );
+    const qP = query(
+      collection(db, "disputas_ginasio_participantes"),
+      where("usuario_uid", "==", perfilUid)
+    );
 
-  const unsub = onSnapshot(qP, async (snap) => {
-    const enriched: DisputaParticipante[] = [];
+    const unsub = onSnapshot(qP, (snap) => {
+      (async () => {
+        const enriched: DisputaParticipante[] = [];
 
-    for (const docPart of snap.docs) {
-      const data = docPart.data() as any;
-      const disputaId = data.disputa_id;
-      const ginasioId = data.ginasio_id;
+        for (const docPart of snap.docs) {
+          const data = docPart.data() as any;
+          const disputaId = data.disputa_id;
+          const ginasioId = data.ginasio_id;
 
-      // pega disputa
-      const dSnap = await getDoc(doc(db, "disputas_ginasio", disputaId));
-      if (!dSnap.exists()) {
-        // disputa apagada → não mostra
-        continue;
-      }
-      const dData = dSnap.data() as any;
+          const dSnap = await getDoc(doc(db, "disputas_ginasio", disputaId));
+          if (!dSnap.exists()) continue;
+          const dData = dSnap.data() as any;
+          if (dData.status === "finalizado") continue;
 
-      // pula disputas finalizadas
-      if (dData.status === "finalizado") {
-        continue;
-      }
+          let ginasio_nome: string | undefined = undefined;
+          const gSnap = await getDoc(doc(db, "ginasios", ginasioId));
+          if (gSnap.exists()) {
+            const gData = gSnap.data() as any;
+            ginasio_nome = gData.nome;
+          }
 
-      // pega ginásio
-      let ginasio_nome: string | undefined = undefined;
-      const gSnap = await getDoc(doc(db, "ginasios", ginasioId));
-      if (gSnap.exists()) {
-        const gData = gSnap.data() as any;
-        ginasio_nome = gData.nome;
-      }
+          enriched.push({
+            id: docPart.id,
+            disputa_id: disputaId,
+            ginasio_id: ginasioId,
+            tipo_escolhido: data.tipo_escolhido,
+            ginasio_nome,
+            disputa_status: dData.status,
+          });
+        }
 
-      enriched.push({
-        id: docPart.id,
-        disputa_id: disputaId,
-        ginasio_id: ginasioId,
-        tipo_escolhido: data.tipo_escolhido,
-        ginasio_nome,
-        disputa_status: dData.status,
-      });
-    }
+        setMinhasInscricoes(enriched);
+      })();
+    });
 
-    setMinhasInscricoes(enriched);
-  });
-
-  return () => unsub();
-}, [perfilUid]);
+    return () => unsub();
+  }, [perfilUid]);
 
   // desafios que ele precisa confirmar (como líder)
   useEffect(() => {
@@ -200,73 +235,159 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
+  // insígnias do jogador (aqui é o que você queria)
+  useEffect(() => {
+    if (!perfilUid) return;
+    const qIns = query(
+      collection(db, "insignias"),
+      where("usuario_uid", "==", perfilUid),
+      orderBy("createdAt", "desc")
+    );
+    const unsub = onSnapshot(qIns, (snap) => {
+      const list: Insignia[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          ginasio_id: data.ginasio_id,
+          ginasio_nome: data.ginasio_nome,
+          ginasio_tipo: data.ginasio_tipo,
+          insignia_icon: data.insignia_icon,
+          temporada_id: data.temporada_id,
+          temporada_nome: data.temporada_nome,
+          createdAt: data.createdAt,
+        };
+      });
+      setInsignias(list);
+    });
+    return () => unsub();
+  }, [perfilUid]);
+
   const ehMeuPerfil = logadoUid === perfilUid;
 
-  // líder disse que ganhou
+  // os dois handlers (igual mandamos antes) ----------------------------------
   const handleLiderGanhou = async (desafio: Desafio) => {
     if (!ehMeuPerfil) return;
-    await updateDoc(doc(db, "desafios_ginasio", desafio.id), {
-      status: "lider_ganhou",
-      confirmado_por_lider: perfilUid,
-      confirmadoEm: Date.now(),
-    });
-  };
 
-  // líder disse que desafiante ganhou
-  const handleDesafianteGanhou = async (desafio: Desafio) => {
-    if (!ehMeuPerfil) return;
+    const desafioRef = doc(db, "desafios_ginasio", desafio.id);
 
-    await updateDoc(doc(db, "desafios_ginasio", desafio.id), {
-      status: "desafiante_ganhou",
-      confirmado_por_lider: perfilUid,
-      confirmadoEm: Date.now(),
+    await updateDoc(desafioRef, {
+      resultado_lider: "lider",
     });
 
-    const gRef = doc(db, "ginasios", desafio.ginasio_id);
-    const gSnap = await getDoc(gRef);
-    if (!gSnap.exists()) return;
-    const gData = gSnap.data() as any;
-    let derrotas = gData.derrotas_seguidas ?? 0;
-    derrotas += 1;
+    const dSnap = await getDoc(desafioRef);
+    const dData = dSnap.data() as any;
+    const rd = dData.resultado_desafiante;
 
-    if (derrotas >= 3) {
-      await addDoc(collection(db, "disputas_ginasio"), {
-        ginasio_id: desafio.ginasio_id,
-        status: "inscricoes",
-        tipo_original: gData.tipo || "",
-        lider_anterior_uid: gData.lider_uid || "",
-        createdAt: Date.now(),
-      });
+    if (!rd) return;
 
-      await updateDoc(gRef, {
-        lider_uid: "",
-        em_disputa: true,
+    if (rd === "lider") {
+      // zera strikes
+      await updateDoc(doc(db, "ginasios", desafio.ginasio_id), {
         derrotas_seguidas: 0,
       });
+
+      await addDoc(collection(db, "bloqueios_ginasio"), {
+        ginasio_id: desafio.ginasio_id,
+        desafiante_uid: desafio.desafiante_uid,
+        proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      await updateDoc(desafioRef, {
+        status: "concluido",
+      });
     } else {
-      await updateDoc(gRef, {
-        derrotas_seguidas: derrotas,
+      await updateDoc(desafioRef, {
+        status: "conflito",
+      });
+      await addDoc(collection(db, "alertas_conflito"), {
+        desafio_id: desafio.id,
+        ginasio_id: desafio.ginasio_id,
+        lider_uid: desafio.lider_uid,
+        desafiante_uid: desafio.desafiante_uid,
+        createdAt: Date.now(),
       });
     }
   };
 
-  // renunciar
-  const handleRenunciar = async (g: Ginasio) => {
+  const handleDesafianteGanhou = async (desafio: Desafio) => {
     if (!ehMeuPerfil) return;
 
-    await addDoc(collection(db, "disputas_ginasio"), {
-      ginasio_id: g.id,
-      status: "inscricoes",
-      tipo_original: g.tipo || "",
-      lider_anterior_uid: g.lider_uid || "",
-      createdAt: Date.now(),
+    const desafioRef = doc(db, "desafios_ginasio", desafio.id);
+
+    await updateDoc(desafioRef, {
+      resultado_lider: "desafiante",
     });
 
-    await updateDoc(doc(db, "ginasios", g.id), {
-      lider_uid: "",
-      em_disputa: true,
-      derrotas_seguidas: 0,
-    });
+    const dSnap = await getDoc(desafioRef);
+    const dData = dSnap.data() as any;
+    const rd = dData.resultado_desafiante;
+
+    if (!rd) return;
+
+    if (rd === "desafiante") {
+      const gRef = doc(db, "ginasios", desafio.ginasio_id);
+      const gSnap = await getDoc(gRef);
+      const gData = gSnap.exists() ? (gSnap.data() as any) : null;
+
+      await addDoc(collection(db, "insignias"), {
+        usuario_uid: desafio.desafiante_uid,
+        ginasio_id: desafio.ginasio_id,
+        ginasio_nome: gData?.nome || "",
+        ginasio_tipo: gData?.tipo || "",
+        lider_derrotado_uid: desafio.lider_uid,
+        insignia_icon: gData?.insignia_icon || "",
+        temporada_id: temporada?.id || "",
+        temporada_nome: temporada?.nome || "",
+        createdAt: Date.now(),
+      });
+
+      await addDoc(collection(db, "bloqueios_ginasio"), {
+        ginasio_id: desafio.ginasio_id,
+        desafiante_uid: desafio.desafiante_uid,
+        proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      if (gSnap.exists()) {
+        let derrotas = gData?.derrotas_seguidas ?? 0;
+        derrotas += 1;
+        if (derrotas >= 3) {
+          await addDoc(collection(db, "disputas_ginasio"), {
+            ginasio_id: desafio.ginasio_id,
+            status: "inscricoes",
+            tipo_original: gData?.tipo || "",
+            lider_anterior_uid: gData?.lider_uid || "",
+            temporada_id: temporada?.id || "",
+            temporada_nome: temporada?.nome || "",
+            createdAt: Date.now(),
+          });
+
+          await updateDoc(gRef, {
+            lider_uid: "",
+            em_disputa: true,
+            derrotas_seguidas: 0,
+          });
+        } else {
+          await updateDoc(gRef, {
+            derrotas_seguidas: derrotas,
+          });
+        }
+      }
+
+      await updateDoc(desafioRef, {
+        status: "concluido",
+      });
+    } else {
+      await updateDoc(desafioRef, {
+        status: "conflito",
+      });
+      await addDoc(collection(db, "alertas_conflito"), {
+        desafio_id: desafio.id,
+        ginasio_id: desafio.ginasio_id,
+        lider_uid: desafio.lider_uid,
+        desafiante_uid: desafio.desafiante_uid,
+        createdAt: Date.now(),
+      });
+    }
   };
 
   if (loading) return <p className="p-6">Carregando...</p>;
@@ -283,12 +404,11 @@ export default function PerfilPage() {
           <p className="text-sm mt-1">Friend code: {usuario.friend_code}</p>
         )}
         <button
-  onClick={() => router.push(`/equipes/${perfilUid}`)}
-  className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
->
-  Ver minhas equipes
-</button>
-
+          onClick={() => router.push(`/equipes/${perfilUid}`)}
+          className="bg-purple-600 text-white px-3 py-2 rounded text-sm mt-3"
+        >
+          Ver minhas equipes
+        </button>
       </div>
 
       {/* área de líder */}
@@ -308,8 +428,23 @@ export default function PerfilPage() {
                 >
                   <div>
                     <p className="font-semibold">{g.nome}</p>
-                    <p className="text-sm text-gray-500">
-                      Tipo: {g.tipo || "não definido"}
+                    <p className="text-sm text-gray-500 flex items-center gap-2">
+                      Tipo:
+                      {g.tipo ? (
+                        <>
+                          {TYPE_ICONS[g.tipo] && (
+                            <Image
+                              src={TYPE_ICONS[g.tipo]}
+                              alt={g.tipo}
+                              width={20}
+                              height={20}
+                            />
+                          )}
+                          <span>{g.tipo}</span>
+                        </>
+                      ) : (
+                        <span>não definido</span>
+                      )}
                     </p>
                     <p className="text-xs text-gray-400">
                       Derrotas seguidas: {g.derrotas_seguidas ?? 0} / 3
@@ -319,7 +454,23 @@ export default function PerfilPage() {
                     )}
                   </div>
                   <button
-                    onClick={() => handleRenunciar(g)}
+                    onClick={async () => {
+                      await addDoc(collection(db, "disputas_ginasio"), {
+                        ginasio_id: g.id,
+                        status: "inscricoes",
+                        tipo_original: g.tipo || "",
+                        lider_anterior_uid: g.lider_uid || "",
+                        temporada_id: temporada?.id || "",
+                        temporada_nome: temporada?.nome || "",
+                        createdAt: Date.now(),
+                      });
+
+                      await updateDoc(doc(db, "ginasios", g.id), {
+                        lider_uid: "",
+                        em_disputa: true,
+                        derrotas_seguidas: 0,
+                      });
+                    }}
                     className="bg-red-500 text-white px-3 py-1 rounded text-sm"
                   >
                     Renunciar
@@ -337,39 +488,34 @@ export default function PerfilPage() {
               <p className="text-sm text-gray-500">Nenhum desafio pendente.</p>
             ) : (
               <div className="space-y-2">
-                {desafiosComoLider.map((d) => {
-                  const g = ginasiosLider.find((g) => g.id === d.ginasio_id);
-                  return (
-                    <div
-                      key={d.id}
-                      className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
-                    >
-                      <div>
-                        <p className="text-sm">
-                          {d.desafiante_nome || d.desafiante_uid} desafiou{" "}
-                          {g?.nome || d.ginasio_id}
-                        </p>
-                        <p className="text-xs text-gray-400">
-                          ID desafio: {d.id}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleLiderGanhou(d)}
-                          className="bg-green-600 text-white px-2 py-1 rounded text-xs"
-                        >
-                          Eu ganhei
-                        </button>
-                        <button
-                          onClick={() => handleDesafianteGanhou(d)}
-                          className="bg-yellow-500 text-white px-2 py-1 rounded text-xs"
-                        >
-                          Ele ganhou
-                        </button>
-                      </div>
+                {desafiosComoLider.map((d) => (
+                  <div
+                    key={d.id}
+                    className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
+                  >
+                    <div>
+                      <p className="text-sm">
+                        {d.desafiante_nome || d.desafiante_uid} desafiou{" "}
+                        {d.ginasio_id}
+                      </p>
+                      <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
                     </div>
-                  );
-                })}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleLiderGanhou(d)}
+                        className="bg-green-600 text-white px-2 py-1 rounded text-xs"
+                      >
+                        Eu ganhei
+                      </button>
+                      <button
+                        onClick={() => handleDesafianteGanhou(d)}
+                        className="bg-yellow-500 text-white px-2 py-1 rounded text-xs"
+                      >
+                        Ele ganhou
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -396,13 +542,24 @@ export default function PerfilPage() {
                     Status: {p.disputa_status}
                   </p>
                   {p.tipo_escolhido && (
-                    <p className="text-xs text-gray-500">
-                      Tipo: {p.tipo_escolhido}
+                    <p className="text-xs text-gray-500 flex items-center gap-2">
+                      Tipo:
+                      {TYPE_ICONS[p.tipo_escolhido] && (
+                        <Image
+                          src={TYPE_ICONS[p.tipo_escolhido]}
+                          alt={p.tipo_escolhido}
+                          width={18}
+                          height={18}
+                        />
+                      )}
+                      <span>{p.tipo_escolhido}</span>
                     </p>
                   )}
                 </div>
                 <button
-					onClick={() => router.push(`/ginasios/${p.ginasio_id}/disputa`)}
+                  onClick={() =>
+                    router.push(`/ginasios/${p.ginasio_id}/disputa`)
+                  }
                   className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
                 >
                   Abrir
@@ -413,14 +570,57 @@ export default function PerfilPage() {
         )}
       </div>
 
-      {/* placeholders */}
+      {/* INSÍGNIAS */}
       <div className="bg-white p-4 rounded shadow">
-        <h2 className="text-lg font-semibold mb-2">Insígnias</h2>
-        <p className="text-sm text-gray-500">
-          Aqui vão as insígnias conquistadas (quando você criar a coleção).
-        </p>
+        <h2 className="text-lg font-semibold mb-3">Insígnias</h2>
+        {insignias.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            Nenhuma insígnia conquistada ainda.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {insignias.map((ins) => (
+              <div
+                key={ins.id}
+                className="flex items-center gap-3 bg-gray-50 rounded p-2"
+              >
+                {ins.insignia_icon ? (
+                    <Image
+                      src={ins.insignia_icon}
+                      alt={ins.ginasio_nome || "insígnia"}
+                      width={48}
+                      height={48}
+                      className="rounded"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 bg-gray-300 rounded" />
+                  )}
+                <div className="text-sm">
+                  <p className="font-semibold">
+                    {ins.ginasio_nome || ins.ginasio_id}
+                  </p>
+                  {ins.temporada_nome && (
+                    <p className="text-xs text-gray-500">
+                      Temporada: {ins.temporada_nome}
+                    </p>
+                  )}
+                  {ins.ginasio_tipo && TYPE_ICONS[ins.ginasio_tipo] && (
+                    <Image
+                      src={TYPE_ICONS[ins.ginasio_tipo]}
+                      alt={ins.ginasio_tipo}
+                      width={16}
+                      height={16}
+                      className="mt-1"
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
+      {/* histórico / extra */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">Histórico de campeonatos</h2>
         <p className="text-sm text-gray-500">

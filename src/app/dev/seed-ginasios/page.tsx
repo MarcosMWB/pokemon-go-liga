@@ -5,17 +5,18 @@ import { db } from "@/lib/firebase";
 import { collection, addDoc } from "firebase/firestore";
 
 const GINASIOS = [
-  { nome: "Jardim Imbuí", tipo: "" },
-  { nome: "Piratininga", tipo: "" },
-  { nome: "Cafubá", tipo: "" },
-  { nome: "Jacaré", tipo: "" },
-  { nome: "Camboinhas", tipo: "" },
-  { nome: "Maravista", tipo: "" },
-  { nome: "Itaipu", tipo: "" },
-  { nome: "Itacoatiara", tipo: "" },
-  { nome: "Serra Grande", tipo: "" },
-  { nome: "Engenho do Mato", tipo: "" },
+  { nome: "Jardim Imbuí",  tipo: "", icon: "/Insignia/jardimimbui.png" },
+  { nome: "Piratininga",   tipo: "", icon: "/Insignia/piratininga.png" },
+  { nome: "Cafubá",        tipo: "", icon: "/Insignia/cafuba.png" },
+  { nome: "Jacaré",        tipo: "", icon: "/Insignia/jacare.png" },
+  { nome: "Camboinhas",    tipo: "", icon: "/Insignia/camboinhas.png" },
+  { nome: "Maravista",     tipo: "", icon: "/Insignia/maravista.png" },
+  { nome: "Itaipu",        tipo: "", icon: "/Insignia/itaipu.png" },
+  { nome: "Itacoatiara",   tipo: "", icon: "/Insignia/itacoatiara.png" },
+  { nome: "Serra Grande",  tipo: "", icon: "/Insignia/serragrande.png" },
+  { nome: "Engenho do Mato", tipo: "", icon: "/Insignia/engenhodomato.png" },
 ];
+
 
 export default function SeedGinasiosPage() {
   const [msg, setMsg] = useState("");
@@ -27,9 +28,11 @@ export default function SeedGinasiosPage() {
         await addDoc(collection(db, "ginasios"), {
           nome: g.nome,
           tipo: g.tipo,        // vazio por enquanto
+          insignia_icon: g.icon,
           lider_uid: "",
           lider_whatsapp: "",
           em_disputa: false,
+          liga: ""
         });
       }
       setMsg("Pronto! Veja no Firestore.");

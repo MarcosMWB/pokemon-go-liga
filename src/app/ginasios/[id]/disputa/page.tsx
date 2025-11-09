@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { TYPE_ICONS } from "@/utils/typeIcons";
+import Image from "next/image";
 import { auth, db } from "@/lib/firebase";
 import {
   collection,
@@ -87,6 +89,16 @@ export default function DisputaGinasioPage() {
   const [declarando, setDeclarando] = useState(false);
   const [oponente, setOponente] = useState("");
 
+  // helper pra renderizar ícone
+  const renderTipoIcon = (tipo?: string, size = 28) => {
+    if (!tipo) return null;
+    const src = TYPE_ICONS[tipo];
+    if (!src) return <span className="text-xs text-gray-500">{tipo}</span>;
+    return (
+      <Image src={src} alt={tipo} width={size} height={size} className="inline-block" />
+    );
+  };
+
   // 1) auth
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
@@ -154,7 +166,6 @@ export default function DisputaGinasioPage() {
     );
 
     const unsub = onSnapshot(qPart, async (snap) => {
-      // tira quem foi removido
       const base = snap.docs
         .map((p) => {
           const d = p.data() as any;
@@ -167,7 +178,6 @@ export default function DisputaGinasioPage() {
         })
         .filter((p) => !p.removido);
 
-      // pegar nomes 1 por 1
       const withNames: Participante[] = [];
       for (const p of base) {
         const uSnap = await getDoc(doc(db, "usuarios", p.usuario_uid));
@@ -225,7 +235,7 @@ export default function DisputaGinasioPage() {
     return () => unsub();
   }, [disputa]);
 
-  // 5) carregar tipos ocupados (pode ser 1x só)
+  // 5) carregar tipos ocupados
   useEffect(() => {
     if (!ginasioId) return;
     (async () => {
@@ -242,12 +252,9 @@ export default function DisputaGinasioPage() {
 
   const disputaTravada = disputa?.status === "batalhando";
 
-  // -------- helpers --------
-
-  // existe resultado entre os 2? ignora os que foram contestados
   const existeResultadoEntre = (a: string, b: string): boolean => {
     return resultados.some((r) => {
-      if (r.status === "contestado") return false; // pode refazer
+      if (r.status === "contestado") return false;
       if (r.tipo === "empate") {
         return (
           (r.jogador1_uid === a && r.jogador2_uid === b) ||
@@ -261,13 +268,11 @@ export default function DisputaGinasioPage() {
     });
   };
 
-  // escolher tipo (se ainda não começou)
   const handleEscolherTipo = async (tipo: string) => {
     if (!userUid || !disputa) return;
     if (disputaTravada) return;
     setSalvandoTipo(true);
 
-    // achar doc do participante
     const q = query(
       collection(db, "disputas_ginasio_participantes"),
       where("disputa_id", "==", disputa.id),
@@ -291,7 +296,6 @@ export default function DisputaGinasioPage() {
     setSalvandoTipo(false);
   };
 
-  // declarar vitória
   const handleDeclararVitoria = async () => {
     if (!userUid || !disputa) return;
     if (!oponente) return;
@@ -317,7 +321,6 @@ export default function DisputaGinasioPage() {
     setDeclarando(false);
   };
 
-  // declarar empate
   const handleDeclararEmpate = async () => {
     if (!userUid || !disputa) return;
     if (!oponente) return;
@@ -344,7 +347,6 @@ export default function DisputaGinasioPage() {
     setDeclarando(false);
   };
 
-  // confirmar / contestar
   const handleConfirmarResultado = async (
     res: Resultado,
     novoStatus: "confirmado" | "contestado"
@@ -358,19 +360,18 @@ export default function DisputaGinasioPage() {
   if (loading) return <p className="p-8">Carregando disputa...</p>;
   if (!ginasio) return <p className="p-8">Ginásio não encontrado.</p>;
   if (!disputa) {
-  return (
-    <div className="p-8">
-      <p className="mb-4">Nenhuma disputa aberta para este ginásio.</p>
-      <button
-        onClick={() => router.push("/ginasios")}
-        className="bg-blue-600 text-white px-4 py-2 rounded"
-      >
-        Voltar
-      </button>
-    </div>
-  );
-}
-
+    return (
+      <div className="p-8">
+        <p className="mb-4">Nenhuma disputa aberta para este ginásio.</p>
+        <button
+          onClick={() => router.push("/ginasios")}
+          className="bg-blue-600 text-white px-4 py-2 rounded"
+        >
+          Voltar
+        </button>
+      </div>
+    );
+  }
 
   const tiposPermitidos = TIPOS.filter((t) => {
     if (t === disputa.tipo_original) return true;
@@ -381,25 +382,20 @@ export default function DisputaGinasioPage() {
     ? participantes.find((p) => p.usuario_uid === userUid)
     : null;
 
-  // pendentes pra mim
-  const pendentesParaMim = userUid
-  ? resultados.filter((r) => {
-      if (r.status !== "pendente") return false;
-      // quem declarou não confirma
-      if (r.declarado_por === userUid) return false;
+  const pendentesParaMim =
+    userUid
+      ? resultados.filter((r) => {
+          if (r.status !== "pendente") return false;
+          if (r.declarado_por === userUid) return false;
 
-      if (r.tipo === "empate") {
-        // empate: os dois têm que confirmar, menos quem declarou
-        return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
-      }
+          if (r.tipo === "empate") {
+            return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
+          }
 
-      // vitória: só o perdedor confirma
-      return r.perdedor_uid === userUid;
-    })
-  : [];
+          return r.perdedor_uid === userUid;
+        })
+      : [];
 
-
-  // pontuação
   const pontos: Record<string, number> = {};
   participantes.forEach((p) => {
     pontos[p.usuario_uid] = 0;
@@ -430,8 +426,7 @@ export default function DisputaGinasioPage() {
       )}
 
       <p className="text-gray-600">
-        Status:{" "}
-        {disputa.status === "inscricoes" ? "inscrições abertas" : disputa.status}
+        Status: {disputa.status === "inscricoes" ? "inscrições abertas" : disputa.status}
       </p>
 
       {/* escolher tipo */}
@@ -448,19 +443,22 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`px-3 py-1 rounded text-sm ${
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
                 meuParticipante?.tipo_escolhido === t
                   ? "bg-blue-600 text-white"
                   : "bg-gray-200"
               } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
-              {t}
+              {renderTipoIcon(t, 20)}
+              <span className="capitalize">{t}</span>
             </button>
           ))}
         </div>
         {meuParticipante?.tipo_escolhido && (
-          <p className="text-sm text-green-600 mt-2">
-            Você escolheu: {meuParticipante.tipo_escolhido}
+          <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
+            Você escolheu:
+            {renderTipoIcon(meuParticipante.tipo_escolhido, 24)}
+            <span className="capitalize">{meuParticipante.tipo_escolhido}</span>
           </p>
         )}
       </div>
@@ -491,22 +489,14 @@ export default function DisputaGinasioPage() {
           <div className="flex gap-2">
             <button
               onClick={handleDeclararVitoria}
-              disabled={
-                declarando ||
-                !oponente ||
-                !meuParticipante?.tipo_escolhido
-              }
+              disabled={declarando || !oponente || !meuParticipante?.tipo_escolhido}
               className="bg-green-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
             >
               Eu ganhei
             </button>
             <button
               onClick={handleDeclararEmpate}
-              disabled={
-                declarando ||
-                !oponente ||
-                !meuParticipante?.tipo_escolhido
-              }
+              disabled={declarando || !oponente || !meuParticipante?.tipo_escolhido}
               className="bg-yellow-500 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
             >
               Empatamos
@@ -527,24 +517,17 @@ export default function DisputaGinasioPage() {
                     ? r.jogador2_uid
                     : r.jogador1_uid
                   : r.vencedor_uid;
-              const outro = participantes.find(
-                (p) => p.usuario_uid === outroUid
-              );
+              const outro = participantes.find((p) => p.usuario_uid === outroUid);
               return (
-                <li
-                  key={r.id}
-                  className="flex justify-between items-center gap-2"
-                >
+                <li key={r.id} className="flex justify-between items-center gap-2">
                   <span className="text-sm">
                     {r.tipo === "empate" ? (
                       <>
-                        {outro?.nome || outro?.email || outroUid} disse que
-                        empatou com você.
+                        {outro?.nome || outro?.email || outroUid} disse que empatou com você.
                       </>
                     ) : (
                       <>
-                        {outro?.nome || outro?.email || outroUid} disse que
-                        ganhou de você.
+                        {outro?.nome || outro?.email || outroUid} disse que ganhou de você.
                       </>
                     )}
                   </span>
@@ -577,14 +560,12 @@ export default function DisputaGinasioPage() {
         ) : (
           <ul className="space-y-1">
             {ranking.map((p) => (
-              <li key={p.usuario_uid} className="flex justify-between text-sm">
-                <span>
-                  {p.nome || p.email || p.usuario_uid}{" "}
-                  {p.tipo_escolhido ? `(${p.tipo_escolhido})` : ""}
+              <li key={p.usuario_uid} className="flex justify-between items-center text-sm">
+                <span className="flex items-center gap-2">
+                    {p.nome || p.email || p.usuario_uid}
+                    {p.tipo_escolhido && renderTipoIcon(p.tipo_escolhido, 20)}
                 </span>
-                <span className="font-semibold">
-                  {pontos[p.usuario_uid] || 0} pts
-                </span>
+                <span className="font-semibold">{pontos[p.usuario_uid] || 0} pts</span>
               </li>
             ))}
           </ul>

@@ -155,30 +155,6 @@ export default function EquipesPage() {
           </div>
         )}
 
-        <div className="mt-2 space-y-4">
-          <Link href="/jogadores">
-            <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-              Ver Treinadores
-            </button>
-          </Link>
-          <Link href="/mapa">
-            <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-              Mapa
-            </button>
-          </Link>
-          <Link href="/ginasios">
-            <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-              Ginasios
-            </button>
-          </Link>
-          <button
-            onClick={() => router.push(`/perfil/${id}`)}
-            className="mt-4 bg-blue-600 text-white px-3 py-2 rounded text-sm"
-          >
-            Ir ao perfil
-          </button>
-        </div>
-
         <footer className="mt-10 text-sm text-gray-500 text-center">
           {logadoEmail && `Logado como: ${logadoEmail}`}
         </footer>
