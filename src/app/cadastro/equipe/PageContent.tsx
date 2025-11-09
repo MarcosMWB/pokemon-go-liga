@@ -10,8 +10,6 @@ import {
   where,
   getDocs,
   addDoc,
-  doc,
-  getDoc,
 } from "firebase/firestore";
 
 export default function PageContent() {

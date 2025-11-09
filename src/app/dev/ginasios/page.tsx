@@ -13,7 +13,7 @@ import {
   doc,
 } from "firebase/firestore";
 
-const ADMIN_UID = "SEU_UID_AQUI"; // <<< TROCAR
+//const ADMIN_UID = "SEU_UID_AQUI"; // <<< TROCAR
 
 type Ginasio = {
   id: string;
