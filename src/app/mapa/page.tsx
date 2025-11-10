@@ -166,6 +166,7 @@ export default function MapaPage() {
         em_disputa: gData.em_disputa === true,
       });
     } catch (err) {
+      console.error(err);
       setGinasioInfo(null);
     } finally {
       setLoadingInfo(false);
