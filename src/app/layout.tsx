@@ -1,11 +1,11 @@
-import { Inter, Roboto_Mono } from "next/font/google";
+//import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import "./globals.css";
 import type { ReactNode } from "react";
 import { Header } from "@/components/Header";
 
 
-const inter = Inter({
+/*const inter = Inter({
     variable: "--font-geist-sans",
     subsets: ["latin"],
 });
@@ -13,7 +13,7 @@ const inter = Inter({
 const robotoMono = Roboto_Mono({
     variable: "--font-geist-mono",
     subsets: ["latin"],
-});
+});*/
 
 
 export const metadata = {
