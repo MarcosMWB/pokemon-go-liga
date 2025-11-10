@@ -4,19 +4,19 @@ import type { Metadata } from "next";
 import { Header } from "@/components/Header";
 
 export const metadata: Metadata = {
-  title: "Liga GO RO",
-  description: "Liga regional de Pokémon GO",
+  title: "Liga Pokémon GO - Região Oceânica",
+  description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
   openGraph: {
-    title: "Liga GO RO",
-    description: "Liga regional de Pokémon GO",
-    url: "https://seu-dominio.vercel.app", // troca pelo teu domínio
-    siteName: "Liga GO RO",
+    title: "Liga Pokémon GO - Região Oceânica",
+    description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
+    url: "https://pokemon-go-liga.vercel.app/",
+    siteName: "Liga Pokémon GO - Região Oceânica",
     images: [
       {
-        url: "https://seu-dominio.vercel.app/og-image.png", // coloca o caminho certo
+        url: "https://pokemon-go-liga.vercel.app/logo.png", // coloca o caminho certo
         width: 1200,
         height: 630,
-        alt: "Liga GO RO",
+        alt: "Liga Pokémon GO - Região Oceânica",
       },
     ],
     type: "website",
@@ -42,3 +42,33 @@ export default function RootLayout({
     </html>
   );
 }
+
+/*const inter = Inter({
+    variable: "--font-geist-sans",
+    subsets: ["latin"],
+});
+
+const robotoMono = Roboto_Mono({
+    variable: "--font-geist-mono",
+    subsets: ["latin"],
+});
+
+export const metadata = {
+  title: "Liga Pokémon GO - Região Oceânica",
+  description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="pt-BR">
+      <body className="bg-slate-100 text-slate-900 min-h-screen">
+        <Header />
+        <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
+      </body>
+    </html>
+  );
+}*/
