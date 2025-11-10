@@ -1,7 +1,6 @@
 //import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import "./globals.css";
-import type { ReactNode } from "react";
 import { Header } from "@/components/Header";
 
 
