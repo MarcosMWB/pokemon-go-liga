@@ -21,12 +21,16 @@ export const metadata = {
   description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="pt-BR">
-      <body className="bg-slate-50">
+      <body className="bg-slate-100 text-slate-900 min-h-screen">
         <Header />
-        <main className="min-h-screen">{children}</main>
+        <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
       </body>
     </html>
   );

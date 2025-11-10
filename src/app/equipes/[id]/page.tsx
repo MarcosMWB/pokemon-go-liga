@@ -107,7 +107,7 @@ export default function EquipesPage() {
 
         // se ainda não tem liga selecionada, seleciona a primeira que existir
         if (ligasList.length > 0 && !ligaSelecionada) {
-          setLigaSelecionada(ligasList[0].nome);
+          setLigaSelecionada("Great");
         }
       } catch (e: any) {
         setErro(e.message || "Erro ao carregar equipes.");

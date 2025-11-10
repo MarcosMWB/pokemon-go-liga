@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { db } from "@/lib/firebase";
 import {
@@ -121,10 +121,37 @@ type GinasioExtra = {
   em_disputa?: boolean;
 };
 
+type Liga = {
+  id: string;
+  nome: string;
+};
+
 export default function MapaPage() {
   const [regiaoAtiva, setRegiaoAtiva] = useState<RegiaoInfo | null>(null);
   const [ginasioInfo, setGinasioInfo] = useState<GinasioExtra | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
+
+  const [ligas, setLigas] = useState<Liga[]>([]);
+  const [ligaSelecionada, setLigaSelecionada] = useState<string>("Great");
+
+  // carrega ligas da coleção "ligas"
+  useEffect(() => {
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, "ligas"));
+        const list: Liga[] = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            nome: data.nome || d.id,
+          };
+        });
+        setLigas(list);
+      } catch (e) {
+        console.warn("erro carregando ligas", e);
+      }
+    })();
+  }, []);
 
   const handleAbrirRegiao = async (regiao: RegiaoInfo) => {
     setRegiaoAtiva(regiao);
@@ -132,13 +159,69 @@ export default function MapaPage() {
     setLoadingInfo(true);
 
     try {
-      const q = query(
-        collection(db, "ginasios"),
-        where("nome", "==", regiao.nome)
-      );
-      const snap = await getDocs(q);
+      // se NÃO tem liga selecionada, faz o que já fazia
+      if (!ligaSelecionada) {
+        const q = query(
+          collection(db, "ginasios"),
+          where("nome", "==", regiao.nome)
+        );
+        const snap = await getDocs(q);
 
-      if (snap.empty) {
+        if (snap.empty) {
+          setGinasioInfo({
+            tipo: undefined,
+            liderNome: undefined,
+            em_disputa: false,
+          });
+          setLoadingInfo(false);
+          return;
+        }
+
+        const gDoc = snap.docs[0];
+        const gData = gDoc.data() as any;
+
+        let liderNome: string | undefined = undefined;
+        if (gData.lider_uid) {
+          const uSnap = await getDoc(doc(db, "usuarios", gData.lider_uid));
+          if (uSnap.exists()) {
+            const uData = uSnap.data() as any;
+            liderNome = uData.nome || uData.email || gData.lider_uid;
+          }
+        }
+
+        setGinasioInfo({
+          tipo: gData.tipo || undefined,
+          liderNome,
+          em_disputa: gData.em_disputa === true,
+        });
+        setLoadingInfo(false);
+        return;
+      }
+
+      // se TEM liga selecionada, precisamos achar o ginásio daquela liga
+      // primeiro tentamos campo "liga"
+      const qLiga = query(
+        collection(db, "ginasios"),
+        where("nome", "==", regiao.nome),
+        where("liga", "==", ligaSelecionada)
+      );
+      const snapLiga = await getDocs(qLiga);
+
+      let gDocFound = snapLiga.docs[0];
+
+      // se não achou pelo campo "liga", tenta "liga_nome" (porque seu BD varia)
+      if (!gDocFound) {
+        const qLigaNome = query(
+          collection(db, "ginasios"),
+          where("nome", "==", regiao.nome),
+          where("liga_nome", "==", ligaSelecionada)
+        );
+        const snapLigaNome = await getDocs(qLigaNome);
+        gDocFound = snapLigaNome.docs[0];
+      }
+
+      if (!gDocFound) {
+        // não tem ginásio dessa liga nessa região
         setGinasioInfo({
           tipo: undefined,
           liderNome: undefined,
@@ -148,8 +231,7 @@ export default function MapaPage() {
         return;
       }
 
-      const gDoc = snap.docs[0];
-      const gData = gDoc.data() as any;
+      const gData = gDocFound.data() as any;
 
       let liderNome: string | undefined = undefined;
       if (gData.lider_uid) {
@@ -174,10 +256,34 @@ export default function MapaPage() {
   };
 
   return (
-    <div className="relative w-full max-w-5xl mx-auto p-4">
-      <h1 className="text-3xl font-bold text-center mb-4">
-        Mapa da Liga - Região Oceânica
-      </h1>
+    <div className="relative w-full max-w-5xl mx-auto p-4 space-y-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <h1 className="text-3xl font-bold text-center sm:text-left">
+          Mapa da Liga - Região Oceânica
+        </h1>
+
+        <div>
+          <label className="text-xs block mb-1 text-gray-600">
+            Filtrar por liga
+          </label>
+          <select
+            value={ligaSelecionada}
+            onChange={(e) => {
+              setLigaSelecionada(e.target.value);
+              // fechar modal atual porque a info pode mudar
+              setRegiaoAtiva(null);
+              setGinasioInfo(null);
+            }}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            {ligas.map((l) => (
+              <option key={l.id} value={l.nome}>
+                {l.nome}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <div className="relative">
         <Image
@@ -231,6 +337,12 @@ export default function MapaPage() {
               className="mx-auto mb-4"
             />
             <p className="mb-4">{regiaoAtiva.descricao}</p>
+
+            {ligaSelecionada && (
+              <p className="text-xs text-gray-500 mb-2">
+                Liga selecionada: {ligaSelecionada}
+              </p>
+            )}
 
             {loadingInfo && <p>carregando informações do ginásio...</p>}
 

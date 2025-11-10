@@ -83,7 +83,7 @@ export default function GinasiosPage() {
 
   // NOVO: ligas
   const [ligas, setLigas] = useState<Liga[]>([]);
-  const [selectedLiga, setSelectedLiga] = useState<string>("");
+  const [selectedLiga, setSelectedLiga] = useState<string>("Great");
 
   // 1) pegar usuário logado
   useEffect(() => {
@@ -122,9 +122,7 @@ export default function GinasiosPage() {
         nome: (d.data() as any).nome,
       }));
       setLigas(list);
-      if (list.length > 0) {
-        setSelectedLiga(list[0].nome);
-      }
+      setSelectedLiga("Great");
     }
     loadLigas();
   }, []);
@@ -563,8 +561,8 @@ export default function GinasiosPage() {
 
         const jaNaDisputa = disputaDoGinasio
           ? participacoesDisputa.some(
-              (p) => p.disputa_id === disputaDoGinasio.id
-            )
+            (p) => p.disputa_id === disputaDoGinasio.id
+          )
           : false;
 
         const semLider = !g.lider_uid;

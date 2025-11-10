@@ -13,14 +13,14 @@ import {
   doc,
 } from "firebase/firestore";
 
-//const ADMIN_UID = "SEU_UID_AQUI"; // <<< TROCAR
-
 type Ginasio = {
   id: string;
   nome: string;
   tipo: string;
   lider_uid: string;
   em_disputa: boolean;
+  liga?: string; // pode vir assim
+  liga_nome?: string; // ou assim
 };
 
 type Disputa = {
@@ -29,11 +29,18 @@ type Disputa = {
   status: "inscricoes" | "batalhando" | "finalizado";
 };
 
+type Liga = {
+  id: string;
+  nome: string;
+};
+
 export default function DevGinasiosPage() {
   const router = useRouter();
   const [userUid, setUserUid] = useState<string | null>(null);
   const [ginasios, setGinasios] = useState<Ginasio[]>([]);
   const [disputas, setDisputas] = useState<Disputa[]>([]);
+  const [ligas, setLigas] = useState<Liga[]>([]);
+  const [ligaSelecionada, setLigaSelecionada] = useState<string>("Great"); // "" = todas
   const [loading, setLoading] = useState(true);
 
   // auth
@@ -47,6 +54,22 @@ export default function DevGinasiosPage() {
     });
     return () => unsub();
   }, [router]);
+
+  // carregar ligas
+  useEffect(() => {
+    if (!userUid) return;
+    (async () => {
+      const snap = await getDocs(collection(db, "ligas"));
+      const list: Liga[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          nome: data.nome || d.id,
+        };
+      });
+      setLigas(list);
+    })();
+  }, [userUid]);
 
   // carregar dados
   useEffect(() => {
@@ -63,6 +86,8 @@ export default function DevGinasiosPage() {
           tipo: data.tipo || "",
           lider_uid: data.lider_uid || "",
           em_disputa: data.em_disputa || false,
+          liga: data.liga || data.liga_nome || "",
+          liga_nome: data.liga_nome || data.liga || "",
         };
       });
 
@@ -90,16 +115,10 @@ export default function DevGinasiosPage() {
     loadAll();
   }, [userUid]);
 
-  // se não for admin, bloqueia
-  /*if (userUid && userUid !== ADMIN_UID) {
-    return <p className="p-8 text-red-500">Acesso negado.</p>;
-  }*/
-
   const getDisputaDoGinasio = (gId: string) =>
     disputas.find((d) => d.ginasio_id === gId);
 
   const handleCriarDisputa = async (g: Ginasio) => {
-    // só cria se não tem
     const ja = getDisputaDoGinasio(g.id);
     if (ja) return;
 
@@ -112,16 +131,19 @@ export default function DevGinasiosPage() {
       createdAt: Date.now(),
     });
 
-    // marca ginásio
     await updateDoc(doc(db, "ginasios", g.id), {
       em_disputa: true,
     });
 
-    // atualiza lista local
     setDisputas((prev) => [
       ...prev,
       { id: nova.id, ginasio_id: g.id, status: "inscricoes" },
     ]);
+    setGinasios((prev) =>
+      prev.map((gg) =>
+        gg.id === g.id ? { ...gg, em_disputa: true } : gg
+      )
+    );
   };
 
   const handleIniciarDisputa = async (g: Ginasio) => {
@@ -141,12 +163,9 @@ export default function DevGinasiosPage() {
     for (const pDoc of partSnap.docs) {
       const d = pDoc.data() as any;
       if (!d.tipo_escolhido || d.tipo_escolhido === "") {
-        // remove da disputa
         await updateDoc(pDoc.ref, {
           removido: true,
         });
-        // se quiser realmente apagar:
-        // await deleteDoc(pDoc.ref)
       }
     }
 
@@ -167,7 +186,7 @@ export default function DevGinasiosPage() {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa) return;
 
-    // 1. pegar participantes dessa disputa
+    // participantes
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
@@ -182,7 +201,7 @@ export default function DevGinasiosPage() {
       };
     });
 
-    // 2. pegar resultados dessa disputa
+    // resultados
     const resSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_resultados"),
@@ -197,7 +216,7 @@ export default function DevGinasiosPage() {
       };
     });
 
-    // 3. somar pontos
+    // pontos
     const pontos: Record<string, number> = {};
     participantes.forEach((p) => {
       pontos[p.usuario_uid] = 0;
@@ -209,7 +228,6 @@ export default function DevGinasiosPage() {
       pontos[r.vencedor_uid] += 3;
     });
 
-    // 4. descobrir vencedor
     let vencedorUid: string | null = null;
     let maior = -1;
     for (const uid in pontos) {
@@ -219,14 +237,12 @@ export default function DevGinasiosPage() {
       }
     }
 
-    // 5. atualizar disputa e ginásio
     await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
       status: "finalizado",
       encerradaEm: Date.now(),
       vencedor_uid: vencedorUid || "",
     });
 
-    // se tem vencedor, atualiza o ginásio
     if (vencedorUid) {
       const participanteVencedor = participantes.find(
         (p) => p.usuario_uid === vencedorUid
@@ -237,32 +253,11 @@ export default function DevGinasiosPage() {
         em_disputa: false,
       });
     } else {
-      // sem vencedor, só tira disputa
       await updateDoc(doc(db, "ginasios", g.id), {
         em_disputa: false,
       });
     }
 
-    // 6. tirar da tela local
-    setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
-    setGinasios((prev) =>
-      prev.map((gg) =>
-        gg.id === g.id ? { ...gg, em_disputa: false } : gg
-      )
-    );
-
-    // encerra disputa
-    await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-      status: "finalizado",
-      encerradaEm: Date.now(),
-    });
-
-    // desmarca ginásio
-    await updateDoc(doc(db, "ginasios", g.id), {
-      em_disputa: false,
-    });
-
-    // tira da lista local
     setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
     setGinasios((prev) =>
       prev.map((gg) =>
@@ -273,14 +268,42 @@ export default function DevGinasiosPage() {
 
   if (loading) return <p className="p-8">Carregando...</p>;
 
+  // aplica filtro de liga na lista renderizada
+  const ginasiosFiltrados = ginasios.filter((g) => {
+    if (!ligaSelecionada) return true;
+    const nomeLigaDoGinasio = g.liga_nome || g.liga || "";
+    return nomeLigaDoGinasio === ligaSelecionada;
+  });
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-bold mb-4">DEV / Ginásios</h1>
-      <p className="text-sm text-gray-500 mb-4">
-        Aqui você força abrir/começar/encerrar disputas.
-      </p>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-2xl font-bold">DEV / Ginásios</h1>
+          <p className="text-sm text-gray-500">
+            Aqui você força abrir/começar/encerrar disputas.
+          </p>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">
+            Filtrar por liga
+          </label>
+          <select
+            value={ligaSelecionada}
+            onChange={(e) => setLigaSelecionada(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            <option value="">Todas</option>
+            {ligas.map((l) => (
+              <option key={l.id} value={l.nome}>
+                {l.nome}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
-      {ginasios.map((g) => {
+      {ginasiosFiltrados.map((g) => {
         const disputa = getDisputaDoGinasio(g.id);
         return (
           <div
@@ -298,6 +321,9 @@ export default function DevGinasiosPage() {
               </h2>
               <p className="text-sm text-gray-600">
                 Líder: {g.lider_uid ? g.lider_uid : "vago"}
+              </p>
+              <p className="text-xs text-gray-500">
+                Liga: {g.liga_nome || g.liga || "Sem liga"}
               </p>
               <p className="text-xs text-gray-500">
                 Disputa: {disputa ? disputa.status : "nenhuma"}

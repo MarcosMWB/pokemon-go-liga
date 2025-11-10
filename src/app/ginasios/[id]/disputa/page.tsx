@@ -50,6 +50,8 @@ type Disputa = {
   ginasio_id: string;
   status: "inscricoes" | "batalhando" | "finalizado";
   tipo_original: string;
+  liga?: string;
+  liga_nome?: string;
 };
 
 type Participante = {
@@ -146,6 +148,8 @@ export default function DisputaGinasioPage() {
         ginasio_id: dData.ginasio_id,
         status: dData.status,
         tipo_original: dData.tipo_original || "",
+        liga: dData.liga || dData.liga_nome || "",
+        liga_nome: dData.liga_nome || dData.liga || "",
       });
       setLoading(false);
     });
@@ -235,20 +239,35 @@ export default function DisputaGinasioPage() {
     return () => unsub();
   }, [disputa]);
 
-  // 5) carregar tipos ocupados
+  // 5) carregar tipos ocupados, MAS agora filtra pela liga da disputa
   useEffect(() => {
-    if (!ginasioId) return;
+    if (!disputa) return;
+
     (async () => {
       const all = await getDocs(collection(db, "ginasios"));
       const v: string[] = [];
+
+      const ligaDaDisputa = disputa.liga || disputa.liga_nome || "";
+
       all.forEach((g) => {
         const d = g.data() as any;
-        if (g.id === ginasioId) return;
+        // não comparar com o próprio ginásio da disputa
+        if (g.id === disputa.ginasio_id) return;
+
+        const ligaDoGinasio = d.liga || d.liga_nome || "";
+
+        // se a disputa tem liga definida, só bloqueia tipos de ginásios da MESMA liga
+        if (ligaDaDisputa) {
+          if (!ligaDoGinasio) return; // ginásio sem liga não interfere
+          if (ligaDoGinasio !== ligaDaDisputa) return; // liga diferente, ignora
+        }
+
         if (d.tipo) v.push(d.tipo);
       });
+
       setOcupados(v);
     })();
-  }, [ginasioId]);
+  }, [disputa]);
 
   const disputaTravada = disputa?.status === "batalhando";
 
@@ -373,6 +392,7 @@ export default function DisputaGinasioPage() {
     );
   }
 
+  // agora os tipos permitidos consideram apenas os ocupados da MESMA liga
   const tiposPermitidos = TIPOS.filter((t) => {
     if (t === disputa.tipo_original) return true;
     return !ocupados.includes(t);
@@ -417,7 +437,14 @@ export default function DisputaGinasioPage() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Disputa do ginásio {ginasio.nome}</h1>
+      <h1 className="text-2xl font-bold">
+        Disputa do ginásio {ginasio.nome}
+        {disputa.liga_nome ? (
+          <span className="ml-2 text-sm text-gray-500">
+            ({disputa.liga_nome})
+          </span>
+        ) : null}
+      </h1>
 
       {!ginasio.lider_uid && (
         <p className="text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
@@ -562,8 +589,8 @@ export default function DisputaGinasioPage() {
             {ranking.map((p) => (
               <li key={p.usuario_uid} className="flex justify-between items-center text-sm">
                 <span className="flex items-center gap-2">
-                    {p.nome || p.email || p.usuario_uid}
-                    {p.tipo_escolhido && renderTipoIcon(p.tipo_escolhido, 20)}
+                  {p.nome || p.email || p.usuario_uid}
+                  {p.tipo_escolhido && renderTipoIcon(p.tipo_escolhido, 20)}
                 </span>
                 <span className="font-semibold">{pontos[p.usuario_uid] || 0} pts</span>
               </li>
