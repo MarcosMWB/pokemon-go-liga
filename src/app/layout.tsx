@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     siteName: "Liga Pokémon GO - Região Oceânica",
     images: [
       {
-        url: "https://pokemon-go-liga.vercel.app/_next/image?url=%2Flogo.png&w=32&q=75",
+        url: "https://pokemon-go-liga.vercel.app/",
         width: 1200,
         height: 630,
         alt: "Liga Pokémon GO - Região Oceânica",
