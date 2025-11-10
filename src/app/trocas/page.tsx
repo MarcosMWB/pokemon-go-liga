@@ -28,6 +28,7 @@ type Oferta = {
   id: string
   userId: string
   userName?: string
+  friendCode?: string
   ofereco: string[]
   quero: string[]
   oferecoDetalhes?: Record<string, DetalhePokemon>
@@ -62,24 +63,18 @@ export default function TrocasPage() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // minha oferta
   const [minhaOferta, setMinhaOferta] = useState<Oferta | null>(null)
   const [ofereco, setOfereco] = useState<string[]>([])
-  const [oferecoDetalhes, setOferecoDetalhes] = useState<
-    Record<string, DetalhePokemon>
-  >({})
+  const [oferecoDetalhes, setOferecoDetalhes] = useState<Record<string, DetalhePokemon>>({})
   const [quero, setQuero] = useState<string[]>([])
-  const [queroDetalhes, setQueroDetalhes] = useState<
-    Record<string, DetalhePokemon>
-  >({})
+  const [queroDetalhes, setQueroDetalhes] = useState<Record<string, DetalhePokemon>>({})
 
-  // outros
   const [outrasOfertas, setOutrasOfertas] = useState<Oferta[]>([])
   const [matches, setMatches] = useState<Match[]>([])
   const [pokemonList, setPokemonList] = useState<Pokemon[]>([])
   const [meusSwipes, setMeusSwipes] = useState<MeuSwipe[]>([])
 
-  // helper pra exibir o poke com detalhes
+  // helper pra sempre exibir shiny/evento
   const renderPokemonChip = (
     nome: string,
     det?: DetalhePokemon,
@@ -87,7 +82,8 @@ export default function TrocasPage() {
   ) => (
     <span
       key={nome}
-      className={`px-2 py-1 rounded text-xs capitalize ${extraClass || 'bg-slate-200 text-slate-900'}`}
+      className={`px-2 py-1 rounded text-xs capitalize ${extraClass || 'bg-slate-200 text-slate-900'
+        }`}
     >
       {nome}
       {det?.shiny ? ' ⭐' : ''}
@@ -96,7 +92,7 @@ export default function TrocasPage() {
     </span>
   )
 
-  // carregar pokémon
+  // carregar pokémon da API
   useEffect(() => {
     async function loadPokemon() {
       try {
@@ -133,25 +129,23 @@ export default function TrocasPage() {
     const qMinhas = query(collection(db, 'trocas_ofertas'), where('userId', '==', uid))
     const minhasSnap = await getDocs(qMinhas)
 
-    let minha: Oferta | null = null
     if (!minhasSnap.empty) {
       const d = minhasSnap.docs[0]
       const data = d.data() as any
-      minha = {
+      setMinhaOferta({
         id: d.id,
         userId: data.userId,
         userName: data.userName,
+        friendCode: data.friendCode,
         ofereco: data.ofereco || [],
         quero: data.quero || [],
-        // se em algum momento o doc não tiver o campo, cai no {}
         oferecoDetalhes: data.oferecoDetalhes || {},
         queroDetalhes: data.queroDetalhes || {},
-      }
-      setMinhaOferta(minha)
-      setOfereco(minha.ofereco)
-      setQuero(minha.quero)
-      setOferecoDetalhes(minha.oferecoDetalhes || {})
-      setQueroDetalhes(minha.queroDetalhes || {})
+      })
+      setOfereco(data.ofereco || [])
+      setQuero(data.quero || [])
+      setOferecoDetalhes(data.oferecoDetalhes || {})
+      setQueroDetalhes(data.queroDetalhes || {})
     } else {
       setMinhaOferta(null)
       setOfereco([])
@@ -162,24 +156,38 @@ export default function TrocasPage() {
 
     // outras ofertas
     const todasSnap = await getDocs(collection(db, 'trocas_ofertas'))
-    const outras: Oferta[] = []
-    todasSnap.forEach((d) => {
+    const outrasTemp: Oferta[] = []
+    for (const d of todasSnap.docs) {
       const data = d.data() as any
-      if (data.userId !== uid) {
-        outras.push({
-          id: d.id,
-          userId: data.userId,
-          userName: data.userName,
-          ofereco: data.ofereco || [],
-          quero: data.quero || [],
-          oferecoDetalhes: data.oferecoDetalhes || {},
-          queroDetalhes: data.queroDetalhes || {},
-        })
-      }
-    })
-    setOutrasOfertas(outras)
+      if (data.userId === uid) continue
 
-    // meus swipes ativos
+      let nome = data.userName as string | undefined
+      let fc = data.friendCode as string | undefined
+
+      // se não tem denormalizado, busca no usuarios/{id}
+      if (!nome || !fc) {
+        const uDoc = await getDoc(doc(db, 'usuarios', data.userId))
+        if (uDoc.exists()) {
+          const uData = uDoc.data() as any
+          nome = nome || uData.nome || undefined
+          fc = fc || uData.friend_code || undefined
+        }
+      }
+
+      outrasTemp.push({
+        id: d.id,
+        userId: data.userId,
+        userName: nome,
+        friendCode: fc,
+        ofereco: data.ofereco || [],
+        quero: data.quero || [],
+        oferecoDetalhes: data.oferecoDetalhes || {},
+        queroDetalhes: data.queroDetalhes || {},
+      })
+    }
+    setOutrasOfertas(outrasTemp)
+
+    // meus swipes
     const qSwipes = query(
       collection(db, 'trocas_swipes'),
       where('fromUserId', '==', uid),
@@ -189,10 +197,7 @@ export default function TrocasPage() {
     setMeusSwipes(
       swipesSnap.docs.map((d) => {
         const data = d.data() as any
-        return {
-          id: d.id,
-          ofertaAlvoId: data.ofertaAlvoId,
-        }
+        return { id: d.id, ofertaAlvoId: data.ofertaAlvoId }
       })
     )
 
@@ -203,7 +208,6 @@ export default function TrocasPage() {
     )
     const matchesSnap = await getDocs(qMatches)
     const lista: Match[] = []
-
     for (const d of matchesSnap.docs) {
       const data = d.data() as any
 
@@ -219,7 +223,6 @@ export default function TrocasPage() {
         o1 && o2
           ? (o1.ofereco || []).filter((p: string) => (o2.quero || []).includes(p))
           : []
-
       const pokesQueEuQueroDoOutro =
         o1 && o2
           ? (o2.ofereco || []).filter((p: string) => (o1.quero || []).includes(p))
@@ -229,7 +232,10 @@ export default function TrocasPage() {
       if (Array.isArray(data.users)) {
         const prom = data.users.map(async (uId: string) => {
           const uDoc = await getDoc(doc(db, 'usuarios', uId))
-          if (uDoc.exists()) return (uDoc.data() as any).nome || 'Treinador'
+          if (uDoc.exists()) {
+            const uData = uDoc.data() as any
+            return uData.nome || uData.friend_code || 'Treinador'
+          }
           return 'Treinador'
         })
         userNames = await Promise.all(prom)
@@ -248,11 +254,9 @@ export default function TrocasPage() {
         oferta2Detalhes: o2?.oferecoDetalhes || {},
       })
     }
-
     setMatches(lista)
   }
 
-  // ofertas compatíveis
   const ofertasCompativeis = useMemo(() => {
     if (!minhaOferta) return []
     return outrasOfertas.filter((of) => {
@@ -262,7 +266,6 @@ export default function TrocasPage() {
     })
   }, [outrasOfertas, minhaOferta])
 
-  // change ofereço
   const handleOferecoChange = (lista: string[]) => {
     setOfereco(lista)
     setOferecoDetalhes((prev) => {
@@ -277,7 +280,6 @@ export default function TrocasPage() {
     })
   }
 
-  // change quero
   const handleQueroChange = (lista: string[]) => {
     setQuero(lista)
     setQueroDetalhes((prev) => {
@@ -292,13 +294,23 @@ export default function TrocasPage() {
     })
   }
 
-  // salvar
   async function salvarOferta() {
     if (!user) return
 
+    // pegar nome e friendcode do usuario pra salvar junto
+    let nome = user.displayName || undefined
+    let friendCode: string | undefined
+    const uDoc = await getDoc(doc(db, 'usuarios', user.uid))
+    if (uDoc.exists()) {
+      const uData = uDoc.data() as any
+      nome = uData.nome || nome
+      friendCode = uData.friend_code
+    }
+
     const base = {
       userId: user.uid,
-      userName: user.displayName || user.email || 'Treinador',
+      userName: nome || user.email || 'Treinador',
+      friendCode: friendCode || null,
       ofereco,
       quero,
       oferecoDetalhes,
@@ -319,14 +331,12 @@ export default function TrocasPage() {
     await carregarTudo(user.uid)
   }
 
-  // revalidar matches quando muda oferta
   async function revalidarMatches(uid: string) {
     const qMatches = query(
       collection(db, 'trocas_matches'),
       where('users', 'array-contains', uid)
     )
     const snap = await getDocs(qMatches)
-
     for (const d of snap.docs) {
       const data = d.data() as any
       const o1Doc = data.oferta1Id
@@ -355,14 +365,12 @@ export default function TrocasPage() {
     }
   }
 
-  // like / cancelar + derrubar match de 1 lado só
   async function handleLike(oferta: Oferta) {
     if (!user) return
 
     const jaCurti = meusSwipes.find((s) => s.ofertaAlvoId === oferta.id)
 
     if (!jaCurti) {
-      // criar swipe
       await addDoc(collection(db, 'trocas_swipes'), {
         fromUserId: user.uid,
         toUserId: oferta.userId,
@@ -371,7 +379,6 @@ export default function TrocasPage() {
         createdAt: serverTimestamp(),
       })
 
-      // reciproco?
       const q = query(
         collection(db, 'trocas_swipes'),
         where('fromUserId', '==', oferta.userId),
@@ -391,13 +398,12 @@ export default function TrocasPage() {
         })
       }
     } else {
-      // cancelar meu swipe
       await updateDoc(doc(db, 'trocas_swipes', jaCurti.id), {
         canceled: true,
         updatedAt: serverTimestamp(),
       })
 
-      // derrubar TODOS os matches entre nós dois, independente de quem criou
+      // derruba match de 1 lado só
       const qMatches = query(
         collection(db, 'trocas_matches'),
         where('users', 'array-contains', user.uid)
@@ -417,7 +423,6 @@ export default function TrocasPage() {
     await carregarTudo(user.uid!)
   }
 
-  // atualizar detalhes
   const updateOferecoDetalhe = (
     nome: string,
     campo: 'shiny' | 'especial' | 'nota',
@@ -516,7 +521,7 @@ export default function TrocasPage() {
                           value={det.nota || ''}
                           onChange={(e) => updateOferecoDetalhe(name, 'nota', e.target.value)}
                           className="mt-2 w-full border rounded px-2 py-1 text-xs"
-                          placeholder="ex.: evento halloween, roupinha..."
+                          placeholder="ex.: evento halloween..."
                           rows={2}
                         />
                       )}
@@ -617,9 +622,14 @@ export default function TrocasPage() {
                 return (
                   <div key={of.id} className="border rounded-md p-3 bg-slate-50 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
-                      <p className="font-semibold text-slate-800">
-                        {of.userName || 'Treinador'}
-                      </p>
+                      <div>
+                        <p className="font-semibold text-slate-800">
+                          {of.userName || 'Treinador'}
+                        </p>
+                        {of.friendCode && (
+                          <p className="text-xs text-slate-500">FC: {of.friendCode}</p>
+                        )}
+                      </div>
                       <button
                         onClick={() => handleLike(of)}
                         className={
@@ -634,22 +644,48 @@ export default function TrocasPage() {
                     <div>
                       <p className="text-xs text-slate-500 mb-1">Oferece:</p>
                       <div className="flex flex-wrap gap-2">
-                        {of.ofereco?.map((p) =>
-                          renderPokemonChip(p, of.oferecoDetalhes?.[p])
-                        )}
+                        {of.ofereco?.map((p) => {
+                          const det =
+                            of.oferecoDetalhes?.[p] ||
+                            of.queroDetalhes?.[p] || // fallback: se o cara marcou no lugar “errado” ainda mostra
+                            undefined
+
+                          return (
+                            <span
+                              key={p}
+                              className="bg-slate-200 text-slate-900 px-2 py-1 rounded text-xs capitalize"
+                            >
+                              {p}
+                              {det?.shiny ? ' ⭐' : ''}
+                              {det?.especial ? ' 🎟' : ''}
+                              {det?.nota ? ` (${det.nota})` : ''}
+                            </span>
+                          )
+                        })}
                       </div>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500 mb-1">Quer:</p>
                       <div className="flex flex-wrap gap-2">
-                        {of.quero?.map((p) => (
-                          <span
-                            key={p}
-                            className="bg-indigo-100 text-indigo-900 px-2 py-1 rounded text-xs capitalize"
-                          >
-                            {p}
-                          </span>
-                        ))}
+                        {of.quero?.map((p) => {
+                          // tenta pegar dos dois, igual no "oferece"
+                          const det =
+                            of.queroDetalhes?.[p] ||
+                            of.oferecoDetalhes?.[p] ||
+                            undefined
+
+                          return (
+                            <span
+                              key={p}
+                              className="bg-indigo-100 text-indigo-900 px-2 py-1 rounded text-xs capitalize"
+                            >
+                              {p}
+                              {det?.shiny ? ' ⭐' : ''}
+                              {det?.especial ? ' 🎟' : ''}
+                              {det?.nota ? ` (${det.nota})` : ''}
+                            </span>
+                          )
+                        })}
                       </div>
                     </div>
                   </div>
@@ -663,9 +699,7 @@ export default function TrocasPage() {
         <div className="bg-white rounded-lg shadow p-4 flex flex-col gap-4">
           <h2 className="text-lg font-semibold text-slate-900">Matches</h2>
           {matches.filter((m) => !m.invalid).length === 0 ? (
-            <p className="text-sm text-slate-500">
-              Nenhum match válido no momento.
-            </p>
+            <p className="text-sm text-slate-500">Nenhum match válido no momento.</p>
           ) : (
             <div className="flex flex-col gap-3">
               {matches
@@ -677,7 +711,6 @@ export default function TrocasPage() {
                       {m.userNames?.length ? m.userNames.join(' e ') : m.users.join(' e ')}
                     </p>
 
-                    {/* ele -> você */}
                     <p className="text-xs text-slate-700 font-semibold mb-1">
                       Ele tem para você:
                     </p>
@@ -686,7 +719,6 @@ export default function TrocasPage() {
                         {m.pokesQueEuQueroDoOutro.map((p) =>
                           renderPokemonChip(
                             p,
-                            // detalhes do que ELE oferece ficam na oferta2
                             m.oferta2Detalhes?.[p] || m.oferta1Detalhes?.[p],
                             'bg-white text-green-700'
                           )
@@ -696,7 +728,6 @@ export default function TrocasPage() {
                       <p className="text-xs text-slate-500 mb-2">nenhum listado</p>
                     )}
 
-                    {/* você -> ele */}
                     <p className="text-xs text-slate-700 font-semibold mb-1">
                       Você tem para ele:
                     </p>
@@ -705,7 +736,6 @@ export default function TrocasPage() {
                         {m.pokesQueOutroQuerDeMim.map((p) =>
                           renderPokemonChip(
                             p,
-                            // detalhes do que VOCÊ oferece ficam na oferta1
                             m.oferta1Detalhes?.[p] || m.oferta2Detalhes?.[p],
                             'bg-white text-green-700'
                           )
