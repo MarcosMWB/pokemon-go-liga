@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { Header } from "@/components/Header";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://pokemon-go-liga.vercel.app"),
   title: "Liga Pokémon GO - Região Oceânica",
   description: "Sistema oficial da Liga Pokémon GO da Região Oceânica de Niterói",
   openGraph: {
@@ -13,7 +14,7 @@ export const metadata: Metadata = {
     siteName: "Liga Pokémon GO - Região Oceânica",
     images: [
       {
-        url: "/logo.png", // coloca o caminho certo
+        url: "https://pokemon-go-liga.vercel.app/logo.png",
         width: 1200,
         height: 630,
         alt: "Liga Pokémon GO - Região Oceânica",

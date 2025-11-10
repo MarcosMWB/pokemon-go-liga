@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  signOut,
+} from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 
 export default function CadastroPage() {
@@ -24,27 +28,34 @@ export default function CadastroPage() {
     }
 
     try {
-      // cria usuário
+      // cria no Auth
       const cred = await createUserWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // salva dados extras
+      // salva no Firestore com verificado: false
       await setDoc(doc(db, "usuarios", user.uid), {
         nome,
         email,
         friend_code: friendCode.replace(/\s/g, ""),
+        verificado: false, // <- controle nosso
         createdAt: Date.now(),
       });
 
-      // tenta redirecionar pelo Next
-      router.replace("/login");
-
-      // fallback caso o router não navegue
-      if (typeof window !== "undefined") {
-        setTimeout(() => {
-          window.location.href = "/login";
-        }, 200);
+      // tenta mandar email de verificação (se o hosting não estiver ok, só não vai redirecionar)
+      try {
+        await sendEmailVerification(user, {
+          // se isso não existir/der erro, o cadastro continua
+          url: "https://pokemon-go-liga.vercel.app/login?verify=1",
+        });
+      } catch (e) {
+        console.warn("não consegui enviar email de verificação", e);
       }
+
+      // desloga pra não ficar logado sem verificar
+      await signOut(auth);
+
+      // volta pro login com aviso
+      router.replace("/login?verify=1");
     } catch (err: any) {
       setMensagem(err.message || "Erro ao cadastrar.");
     }

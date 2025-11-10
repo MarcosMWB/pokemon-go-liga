@@ -1,15 +1,12 @@
 {
   "hosting": {
     "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "redirects": [
       {
-        "source": "**",
-        "destination": "/index.html"
+        "source": "/**",
+        "destination": "https://pokemon-go-liga.vercel.app",
+        "type": 301
       }
     ]
   }

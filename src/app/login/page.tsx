@@ -1,16 +1,20 @@
-// app/login/page.tsx ou onde você usava antes
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { auth } from "@/lib/firebase";
+import { useRouter, useSearchParams } from "next/navigation";
+import { auth, db } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
+  signOut,
 } from "firebase/auth";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const showVerifyMsg = searchParams.get("verify") === "1";
+
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [mensagem, setMensagem] = useState("");
@@ -22,7 +26,33 @@ export default function LoginPage() {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
-      // mesmo comportamento de antes, só que firebase usa .uid
+
+      // busca no Firestore
+      const uSnap = await getDoc(doc(db, "usuarios", user.uid));
+      const dados = uSnap.exists() ? (uSnap.data() as any) : null;
+
+      // casos em que a gente NÃO deixa entrar:
+      // 1) firebase diz que não está verificado
+      // 2) firestore tem verificado === false
+      const emailNaoVerificado = !user.emailVerified;
+      const firestoreNaoVerificado = dados && dados.verificado === false;
+
+      if (emailNaoVerificado || firestoreNaoVerificado) {
+        // se o firebase já marcou verificado (caso o link funcione), aproveita e marca no firestore
+        if (!firestoreNaoVerificado && user.emailVerified && uSnap.exists()) {
+          await updateDoc(doc(db, "usuarios", user.uid), {
+            verificado: true,
+          });
+        }
+
+        await signOut(auth);
+        setMensagem(
+          "Seu e-mail ainda não foi verificado. Verifique sua caixa de entrada e clique no link. Depois faça login novamente."
+        );
+        return;
+      }
+
+      // se chegou aqui, tá ok
       router.push(`/perfil/${user.uid}`);
     } catch (err: any) {
       setMensagem(err.message || "Erro ao fazer login.");
@@ -35,23 +65,29 @@ export default function LoginPage() {
       return;
     }
     try {
-      // se quiser redirecionar pra uma página sua depois do reset:
-      // const actionCodeSettings = { url: `${window.location.origin}/reset` };
-      // await sendPasswordResetEmail(auth, email, actionCodeSettings);
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, email, {
+        url: "https://pokemon-go-liga.vercel.app/login",
+      });
       setMensagem("E-mail de recuperação enviado.");
     } catch (err: any) {
       setMensagem(err.message || "Erro ao enviar recuperação.");
     }
   };
 
-  const handleCadastro = async () => {
+  const handleCadastro = () => {
     router.push("/cadastro");
   };
 
   return (
     <form onSubmit={handleLogin} className="p-8 max-w-md mx-auto">
       <h1 className="text-xl font-bold mb-4">Login</h1>
+
+      {showVerifyMsg && (
+        <p className="mb-3 text-sm text-green-700 bg-green-100 px-3 py-2 rounded">
+          Cadastro feito! Verifique o e-mail que enviamos e depois faça login.
+        </p>
+      )}
+
       <input
         type="email"
         placeholder="Email"
