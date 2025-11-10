@@ -65,6 +65,12 @@ export function Header() {
           <Link href="/mapa" className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm">
             Mapa
           </Link>
+          <Link href="/trocas" className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm">
+            RTS
+          </Link>
+          <Link href="/loja" className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm">
+            Loja
+          </Link>
         </nav>
 
         <div className="flex items-center gap-2">

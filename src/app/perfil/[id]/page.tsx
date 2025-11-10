@@ -33,6 +33,7 @@ type Ginasio = {
   derrotas_seguidas?: number;
   em_disputa?: boolean;
   insignia_icon?: string;
+  liga?: string;
 };
 
 type DisputaParticipante = {
@@ -62,7 +63,12 @@ type Insignia = {
   insignia_icon?: string;
   temporada_id?: string;
   temporada_nome?: string;
+  liga?: string;
   createdAt?: number;
+};
+
+type Liga = {
+  nome: string;
 };
 
 export default function PerfilPage() {
@@ -77,6 +83,8 @@ export default function PerfilPage() {
   const [desafiosComoLider, setDesafiosComoLider] = useState<Desafio[]>([]);
   const [temporada, setTemporada] = useState<{ id: string; nome?: string } | null>(null);
   const [insignias, setInsignias] = useState<Insignia[]>([]);
+  const [ligas, setLigas] = useState<Liga[]>([]);
+  const [ligaSelecionada, setLigaSelecionada] = useState<string>(""); // "" = todas
   const [loading, setLoading] = useState(true);
 
   // quem está logado
@@ -85,6 +93,18 @@ export default function PerfilPage() {
       if (user) setLogadoUid(user.uid);
     });
     return () => unsub();
+  }, []);
+
+  // carregar ligas
+  useEffect(() => {
+    (async () => {
+      const snap = await getDocs(collection(db, "ligas"));
+      const list: Liga[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return { id: d.id, nome: data.nome || d.id };
+      });
+      setLigas(list);
+    })();
   }, []);
 
   // temporada ativa
@@ -145,6 +165,7 @@ export default function PerfilPage() {
           derrotas_seguidas: data.derrotas_seguidas ?? 0,
           em_disputa: data.em_disputa ?? false,
           insignia_icon: data.insignia_icon || "",
+          liga: data.liga || "",
         };
       });
       setGinasiosLider(list);
@@ -235,7 +256,7 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
-  // insígnias do jogador (aqui é o que você queria)
+  // insígnias do jogador
   useEffect(() => {
     if (!perfilUid) return;
     const qIns = query(
@@ -254,6 +275,7 @@ export default function PerfilPage() {
           insignia_icon: data.insignia_icon,
           temporada_id: data.temporada_id,
           temporada_nome: data.temporada_nome,
+          liga: data.liga || "",
           createdAt: data.createdAt,
         };
       });
@@ -264,7 +286,7 @@ export default function PerfilPage() {
 
   const ehMeuPerfil = logadoUid === perfilUid;
 
-  // os dois handlers (igual mandamos antes) ----------------------------------
+  // líder disse que ganhou
   const handleLiderGanhou = async (desafio: Desafio) => {
     if (!ehMeuPerfil) return;
 
@@ -309,6 +331,7 @@ export default function PerfilPage() {
     }
   };
 
+  // líder disse que desafiante ganhou
   const handleDesafianteGanhou = async (desafio: Desafio) => {
     if (!ehMeuPerfil) return;
 
@@ -338,6 +361,7 @@ export default function PerfilPage() {
         insignia_icon: gData?.insignia_icon || "",
         temporada_id: temporada?.id || "",
         temporada_nome: temporada?.nome || "",
+        liga: gData?.liga || "",
         createdAt: Date.now(),
       });
 
@@ -358,6 +382,7 @@ export default function PerfilPage() {
             lider_anterior_uid: gData?.lider_uid || "",
             temporada_id: temporada?.id || "",
             temporada_nome: temporada?.nome || "",
+            liga: gData?.liga || "",
             createdAt: Date.now(),
           });
 
@@ -392,20 +417,53 @@ export default function PerfilPage() {
 
   if (loading) return <p className="p-6">Carregando...</p>;
 
+  // aplicar filtro da liga nos ginásios onde ele é líder
+  const ginasiosFiltrados = ginasiosLider.filter((g) => {
+    if (!ligaSelecionada) return true;
+    return (g.liga || "") === ligaSelecionada;
+  });
+
+  // aplicar filtro da liga nas insígnias
+  const insigniasFiltradas = insignias.filter((ins) => {
+    if (!ligaSelecionada) return true;
+    return (ins.liga || "") === ligaSelecionada;
+  });
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Cabeçalho */}
-      <div className="bg-white p-4 rounded shadow">
-        <h1 className="text-2xl font-bold">
-          {usuario?.nome || usuario?.email || "Jogador"}
-        </h1>
-        <p className="text-sm text-gray-500">UID: {perfilUid}</p>
-        {usuario?.friend_code && (
-          <p className="text-sm mt-1">Friend code: {usuario.friend_code}</p>
-        )}
+      <div className="bg-white p-4 rounded shadow space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">
+              {usuario?.nome || usuario?.email || "Jogador"}
+            </h1>
+            <p className="text-sm text-gray-500">UID: {perfilUid}</p>
+            {usuario?.friend_code && (
+              <p className="text-sm mt-1">Friend code: {usuario.friend_code}</p>
+            )}
+          </div>
+          <div>
+            <label className="text-xs block mb-1 text-gray-500">
+              Liga
+            </label>
+            <select
+              value={ligaSelecionada}
+              onChange={(e) => setLigaSelecionada(e.target.value)}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              <option value="">Todas</option>
+              {ligas.map((l) => (
+                <option key={l.nome} value={l.nome}>
+                  {l.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         <button
           onClick={() => router.push(`/equipes/${perfilUid}`)}
-          className="bg-purple-600 text-white px-3 py-2 rounded text-sm mt-3"
+          className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
         >
           Ver minhas equipes
         </button>
@@ -416,18 +474,23 @@ export default function PerfilPage() {
         <>
           <div className="space-y-3">
             <h2 className="text-xl font-semibold">Seus ginásios</h2>
-            {ginasiosLider.length === 0 ? (
+            {ginasiosFiltrados.length === 0 ? (
               <p className="text-sm text-gray-500">
-                Você não é líder de nenhum ginásio.
+                {ligaSelecionada
+                  ? "Você não é líder de ginásio nessa liga."
+                  : "Você não é líder de nenhum ginásio."}
               </p>
             ) : (
-              ginasiosLider.map((g) => (
+              ginasiosFiltrados.map((g) => (
                 <div
                   key={g.id}
                   className="bg-white p-4 rounded shadow flex justify-between items-center"
                 >
                   <div>
                     <p className="font-semibold">{g.nome}</p>
+                    <p className="text-xs text-gray-400">
+                      {g.liga || g.liga || "Sem liga"}
+                    </p>
                     <p className="text-sm text-gray-500 flex items-center gap-2">
                       Tipo:
                       {g.tipo ? (
@@ -462,6 +525,7 @@ export default function PerfilPage() {
                         lider_anterior_uid: g.lider_uid || "",
                         temporada_id: temporada?.id || "",
                         temporada_nome: temporada?.nome || "",
+                        liga: g.liga || "",
                         createdAt: Date.now(),
                       });
 
@@ -573,32 +637,37 @@ export default function PerfilPage() {
       {/* INSÍGNIAS */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-3">Insígnias</h2>
-        {insignias.length === 0 ? (
+        {insigniasFiltradas.length === 0 ? (
           <p className="text-sm text-gray-500">
-            Nenhuma insígnia conquistada ainda.
+            {ligaSelecionada
+              ? "Nenhuma insígnia nessa liga."
+              : "Nenhuma insígnia conquistada ainda."}
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {insignias.map((ins) => (
+            {insigniasFiltradas.map((ins) => (
               <div
                 key={ins.id}
                 className="flex items-center gap-3 bg-gray-50 rounded p-2"
               >
                 {ins.insignia_icon ? (
-                    <Image
-                      src={ins.insignia_icon}
-                      alt={ins.ginasio_nome || "insígnia"}
-                      width={48}
-                      height={48}
-                      className="rounded"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 bg-gray-300 rounded" />
-                  )}
+                  <Image
+                    src={ins.insignia_icon}
+                    alt={ins.ginasio_nome || "insígnia"}
+                    width={48}
+                    height={48}
+                    className="rounded"
+                  />
+                ) : (
+                  <div className="w-12 h-12 bg-gray-300 rounded" />
+                )}
                 <div className="text-sm">
                   <p className="font-semibold">
                     {ins.ginasio_nome || ins.ginasio_id}
                   </p>
+                  {ins.liga && (
+                    <p className="text-xs text-gray-500">{ins.liga}</p>
+                  )}
                   {ins.temporada_nome && (
                     <p className="text-xs text-gray-500">
                       Temporada: {ins.temporada_nome}

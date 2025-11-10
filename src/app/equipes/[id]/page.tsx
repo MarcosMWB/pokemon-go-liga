@@ -25,6 +25,11 @@ type Participacao = {
   pokemon: { nome: string }[];
 };
 
+type Liga = {
+  id: string;
+  nome: string;
+};
+
 export default function EquipesPage() {
   const params = useParams();
   const router = useRouter();
@@ -36,6 +41,9 @@ export default function EquipesPage() {
   const [isOwnProfile, setIsOwnProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
+
+  const [ligas, setLigas] = useState<Liga[]>([]);
+  const [ligaSelecionada, setLigaSelecionada] = useState<string>(""); // nome da liga
 
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (current) => {
@@ -57,17 +65,27 @@ export default function EquipesPage() {
         }
         setUsuario(snap.data() as Usuario);
 
-        // 2) participações do usuário
+        // 2) pegar todas as ligas pra montar o select
+        const ligasSnap = await getDocs(collection(db, "ligas"));
+        const ligasList: Liga[] = ligasSnap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            nome: data.nome || d.id,
+          };
+        });
+        setLigas(ligasList);
+
+        // 3) participações do usuário
         const partSnap = await getDocs(
           query(collection(db, "participacoes"), where("usuario_id", "==", id))
         );
 
-        // 3) para cada participação, buscar os pokémon dela
+        // 4) para cada participação, buscar os pokémon dela
         const parts: Participacao[] = [];
         for (const d of partSnap.docs) {
           const data = d.data() as any;
 
-          // busca pokémon dessa participação
           const pokSnap = await getDocs(
             query(
               collection(db, "pokemon"),
@@ -80,12 +98,17 @@ export default function EquipesPage() {
 
           parts.push({
             id: d.id,
-            liga_nome: data.liga_nome, // você salva isso na hora que cria
+            liga_nome: data.liga_nome, // esse campo você já salva na criação
             pokemon: pokemons,
           });
         }
 
         setParticipacoes(parts);
+
+        // se ainda não tem liga selecionada, seleciona a primeira que existir
+        if (ligasList.length > 0 && !ligaSelecionada) {
+          setLigaSelecionada(ligasList[0].nome);
+        }
       } catch (e: any) {
         setErro(e.message || "Erro ao carregar equipes.");
       } finally {
@@ -94,31 +117,52 @@ export default function EquipesPage() {
     });
 
     return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, router]);
 
   if (loading) return <p className="p-8">Carregando...</p>;
   if (erro) return <p className="p-8 text-red-600">{erro}</p>;
   if (!usuario) return <p className="p-8">Usuário não encontrado.</p>;
 
-  // agora só conta liga como "registrada" se tiver pelo menos 1 pokémon
-  const ligasRegistradas = participacoes
-    .filter((p) => p.pokemon && p.pokemon.length > 6)
-    .map((p) => p.liga_nome)
-    .filter(Boolean) as string[];
+  // filtra participações pela liga selecionada
+  const participacoesDaLiga = participacoes.filter(
+    (p) => !ligaSelecionada || p.liga_nome === ligaSelecionada
+  );
 
-  const ligasFaltando = ["Great", "Master"].filter(
-    (l) => !ligasRegistradas.includes(l)
+  // agora só conta como "registrada" se tiver pelo menos 6 pokémon
+  const temEquipeNaLigaSelecionada = participacoesDaLiga.some(
+    (p) => p.pokemon && p.pokemon.length >= 6
   );
 
   return (
     <div className="min-h-screen bg-blue-50 py-10 px-4">
       <div className="max-w-3xl mx-auto bg-white p-8 rounded shadow">
-        <h1 className="text-2xl font-bold text-blue-800 mb-4">
-          Equipes de {usuario.nome ?? "Treinador"}
-        </h1>
+        <div className="flex items-center justify-between gap-4 mb-6">
+          <h1 className="text-2xl font-bold text-blue-800">
+            Equipes de {usuario.nome ?? "Treinador"}
+          </h1>
 
-        {participacoes.length > 0 ? (
-          participacoes.map((p) => (
+          {/* select de liga */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Liga
+            </label>
+            <select
+              value={ligaSelecionada}
+              onChange={(e) => setLigaSelecionada(e.target.value)}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              {ligas.map((l) => (
+                <option key={l.id} value={l.nome}>
+                  {l.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {participacoesDaLiga.length > 0 ? (
+          participacoesDaLiga.map((p) => (
             <div key={p.id} className="mb-6 border-t pt-4">
               <h2 className="text-lg font-semibold text-blue-700">
                 Liga: {p.liga_nome || "Desconhecida"}
@@ -137,21 +181,26 @@ export default function EquipesPage() {
             </div>
           ))
         ) : (
-          <p className="text-gray-600 mb-4">Nenhuma equipe registrada ainda.</p>
+          <p className="text-gray-600 mb-4">
+            Nenhuma equipe registrada nessa liga ainda.
+          </p>
         )}
 
-        {ligasFaltando.length > 0 && isOwnProfile && (
+        {/* botão pra cadastrar SÓ da liga selecionada */}
+        {isOwnProfile && ligaSelecionada && !temEquipeNaLigaSelecionada && (
           <div className="mt-8 space-y-4">
             <h2 className="text-lg font-semibold text-blue-700">
               Cadastrar Equipe:
             </h2>
-            {ligasFaltando.map((liga) => (
-              <Link key={liga} href={`/cadastro/equipe?user=${id}&liga=${liga}`}>
-                <button className="block w-full mt-1 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md">
-                  Cadastrar equipe {liga}
-                </button>
-              </Link>
-            ))}
+            <Link
+              href={`/cadastro/equipe?user=${id}&liga=${encodeURIComponent(
+                ligaSelecionada
+              )}`}
+            >
+              <button className="block w-full mt-1 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md">
+                Cadastrar equipe {ligaSelecionada}
+              </button>
+            </Link>
           </div>
         )}
 

@@ -32,7 +32,7 @@ export default function SeedGinasiosPage() {
           lider_uid: "",
           lider_whatsapp: "",
           em_disputa: false,
-          liga: ""
+          liga: "Master"
         });
       }
       setMsg("Pronto! Veja no Firestore.");
