@@ -45,6 +45,10 @@ export default function LoginPage() {
     }
   };
 
+  const handleCadastro = async () => {
+    router.push("/cadastro");
+  };
+
   return (
     <form onSubmit={handleLogin} className="p-8 max-w-md mx-auto">
       <h1 className="text-xl font-bold mb-4">Login</h1>
@@ -73,6 +77,13 @@ export default function LoginPage() {
         className="w-full mt-2 text-sm text-blue-600 underline"
       >
         Esqueci minha senha
+      </button>
+      <button
+        type="button"
+        onClick={handleCadastro}
+        className="w-full mt-2 text-sm text-blue-600 underline"
+      >
+        Cadastro
       </button>
       {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
     </form>
