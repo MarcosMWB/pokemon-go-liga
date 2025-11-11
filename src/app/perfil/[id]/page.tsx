@@ -68,6 +68,7 @@ type Insignia = {
 };
 
 type Liga = {
+  id?: string;
   nome: string;
 };
 
@@ -84,9 +85,13 @@ export default function PerfilPage() {
   const [temporada, setTemporada] = useState<{ id: string; nome?: string } | null>(null);
   const [insignias, setInsignias] = useState<Insignia[]>([]);
   const [ligas, setLigas] = useState<Liga[]>([]);
-  const [ligaSelecionada, setLigaSelecionada] = useState<string>(""); // "" = todas
+  const [ligaSelecionada, setLigaSelecionada] = useState<string>("");
   const [loading, setLoading] = useState(true);
-  const [ginasiosMap, setGinasiosMap] = useState<Record<string, string>>({});
+
+  // agora o map guarda nome + liga
+  const [ginasiosMap, setGinasiosMap] = useState<
+    Record<string, { nome: string; liga: string }>
+  >({});
 
   // quem está logado
   useEffect(() => {
@@ -174,14 +179,17 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
-  //carrega ginasios uma vez
+  // carrega TODOS os ginásios pra montar o map id -> {nome, liga}
   useEffect(() => {
     async function loadGinasios() {
       const snap = await getDocs(collection(db, "ginasios"));
-      const map: Record<string, string> = {};
-      snap.forEach((doc) => {
-        const data = doc.data() as any;
-        map[doc.id] = data.nome || doc.id;
+      const map: Record<string, { nome: string; liga: string }> = {};
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as any;
+        map[docSnap.id] = {
+          nome: data.nome || docSnap.id,
+          liga: data.liga || data.liga_nome || "",
+        };
       });
       setGinasiosMap(map);
     }
@@ -318,7 +326,6 @@ export default function PerfilPage() {
     if (!rd) return;
 
     if (rd === "lider") {
-      // zera strikes
       await updateDoc(doc(db, "ginasios", desafio.ginasio_id), {
         derrotas_seguidas: 0,
       });
@@ -432,13 +439,11 @@ export default function PerfilPage() {
 
   if (loading) return <p className="p-6">Carregando...</p>;
 
-  // aplicar filtro da liga nos ginásios onde ele é líder
   const ginasiosFiltrados = ginasiosLider.filter((g) => {
     if (!ligaSelecionada) return true;
     return (g.liga || "") === ligaSelecionada;
   });
 
-  // aplicar filtro da liga nas insígnias
   const insigniasFiltradas = insignias.filter((ins) => {
     if (!ligaSelecionada) return true;
     return (ins.liga || "") === ligaSelecionada;
@@ -459,9 +464,7 @@ export default function PerfilPage() {
             )}
           </div>
           <div>
-            <label className="text-xs block mb-1 text-gray-500">
-              Liga
-            </label>
+            <label className="text-xs block mb-1 text-gray-500">Liga</label>
             <select
               value={ligaSelecionada}
               onChange={(e) => setLigaSelecionada(e.target.value)}
@@ -504,7 +507,7 @@ export default function PerfilPage() {
                   <div>
                     <p className="font-semibold">{g.nome}</p>
                     <p className="text-xs text-gray-400">
-                      {g.liga || g.liga || "Sem liga"}
+                      {g.liga || "Sem liga"}
                     </p>
                     <p className="text-sm text-gray-500 flex items-center gap-2">
                       Tipo:
@@ -567,34 +570,40 @@ export default function PerfilPage() {
               <p className="text-sm text-gray-500">Nenhum desafio pendente.</p>
             ) : (
               <div className="space-y-2">
-                {desafiosComoLider.map((d) => (
-                  <div
-                    key={d.id}
-                    className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
-                  >
-                    <div>
-                      <p className="text-sm">
-                        {d.desafiante_nome || d.desafiante_uid} desafiou{" "}
-                        {ginasiosMap[d.ginasio_id] || d.ginasio_id}
-                      </p>
-                      <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
+                {desafiosComoLider.map((d) => {
+                  const gin = ginasiosMap[d.ginasio_id];
+                  return (
+                    <div
+                      key={d.id}
+                      className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
+                    >
+                      <div>
+                        <p className="text-sm">
+                          {d.desafiante_nome || d.desafiante_uid} desafiou{" "}
+                          {gin ? gin.nome : d.ginasio_id}
+                          {gin?.liga ? ` na liga ${gin.liga}` : ""}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          ID desafio: {d.id}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleLiderGanhou(d)}
+                          className="bg-green-600 text-white px-2 py-1 rounded text-xs"
+                        >
+                          Eu ganhei
+                        </button>
+                        <button
+                          onClick={() => handleDesafianteGanhou(d)}
+                          className="bg-yellow-500 text-white px-2 py-1 rounded text-xs"
+                        >
+                          Ele ganhou
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleLiderGanhou(d)}
-                        className="bg-green-600 text-white px-2 py-1 rounded text-xs"
-                      >
-                        Eu ganhei
-                      </button>
-                      <button
-                        onClick={() => handleDesafianteGanhou(d)}
-                        className="bg-yellow-500 text-white px-2 py-1 rounded text-xs"
-                      >
-                        Ele ganhou
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -636,9 +645,7 @@ export default function PerfilPage() {
                   )}
                 </div>
                 <button
-                  onClick={() =>
-                    router.push(`/ginasios/${p.ginasio_id}/disputa`)
-                  }
+                  onClick={() => router.push(`/ginasios/${p.ginasio_id}/disputa`)}
                   className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
                 >
                   Abrir
