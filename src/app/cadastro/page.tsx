@@ -28,34 +28,34 @@ export default function CadastroPage() {
     }
 
     try {
-      // cria no Auth
+      // 1) cria usuário no Auth
       const cred = await createUserWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // salva no Firestore com verificado: false
+      // 2) salva dados extras no Firestore
       await setDoc(doc(db, "usuarios", user.uid), {
         nome,
         email,
         friend_code: friendCode.replace(/\s/g, ""),
-        verificado: false, // <- controle nosso
+        verificado: false,
         createdAt: Date.now(),
       });
 
-      // tenta mandar email de verificação (se o hosting não estiver ok, só não vai redirecionar)
-      try {
-        await sendEmailVerification(user, {
-          // se isso não existir/der erro, o cadastro continua
-          url: "https://pokemon-go-liga.vercel.app/login?verify=1",
-        });
-      } catch (e) {
-        console.warn("não consegui enviar email de verificação", e);
-      }
+      // 3) envia e-mail de verificação
+      await sendEmailVerification(user);
 
-      // desloga pra não ficar logado sem verificar
+      // 4) desloga pra obrigar a entrar só depois de verificar
       await signOut(auth);
 
-      // volta pro login com aviso
+      // 5) manda pro login com aviso
       router.replace("/login?verify=1");
+
+      // fallback
+      if (typeof window !== "undefined") {
+        setTimeout(() => {
+          window.location.href = "/login?verify=1";
+        }, 200);
+      }
     } catch (err: any) {
       setMensagem(err.message || "Erro ao cadastrar.");
     }

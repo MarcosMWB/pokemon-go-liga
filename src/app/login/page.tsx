@@ -1,42 +1,58 @@
+// app/login/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { auth } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  signOut,
 } from "firebase/auth";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [mensagem, setMensagem] = useState("");
+  const [info, setInfo] = useState("");
 
-  // lê ?verify=1 da URL sem usar useSearchParams
+  // se veio de /cadastro com ?verify=1
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("verify") === "1") {
-      setMensagem("E-mail verificado! Agora você pode fazer login. 👍");
+    const v = searchParams.get("verify");
+    if (v === "1") {
+      setInfo("Cadastro feito! Confirme seu e-mail antes de entrar.");
     }
-  }, []);
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setMensagem("");
+    setInfo("");
 
     try {
       const cred = await signInWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // se quiser travar quem não verificou:
-      // if (!user.emailVerified) {
-      //   setMensagem("Confirme seu e-mail antes de entrar.");
-      //   return;
-      // }
+      // se o e-mail não foi verificado ainda
+      if (!user.emailVerified) {
+        // manda outro e-mail de verificação
+        try {
+          await sendEmailVerification(user);
+          setInfo("Seu e-mail ainda não foi confirmado. Reenviamos o link.");
+        } catch {
+          setInfo("Seu e-mail ainda não foi confirmado.");
+        }
 
+        // desloga pra não ficar logado sem verificar
+        await signOut(auth);
+        return;
+      }
+
+      // ok, pode entrar
       router.push(`/perfil/${user.uid}`);
     } catch (err: any) {
       setMensagem(err.message || "Erro ao fazer login.");
@@ -45,12 +61,13 @@ export default function LoginPage() {
 
   const handlePasswordReset = async () => {
     if (!email) {
-      setMensagem("Informe seu e-mail para recuperar a senha.");
+      setMensagem("Informe seu email para recuperar a senha.");
       return;
     }
     try {
       await sendPasswordResetEmail(auth, email);
-      setMensagem("E-mail de recuperação enviado.");
+      setInfo("E-mail de recuperação enviado.");
+      setMensagem("");
     } catch (err: any) {
       setMensagem(err.message || "Erro ao enviar recuperação.");
     }
@@ -69,7 +86,7 @@ export default function LoginPage() {
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="w-full border p-2 mb-2 text-black"
+        className="w-full border p-2 mb-2"
       />
       <input
         type="password"
@@ -77,11 +94,12 @@ export default function LoginPage() {
         required
         value={senha}
         onChange={(e) => setSenha(e.target.value)}
-        className="w-full border p-2 mb-4 text-black"
+        className="w-full border p-2 mb-4"
       />
       <button type="submit" className="w-full bg-blue-500 text-white p-2">
         Entrar
       </button>
+
       <button
         type="button"
         onClick={handlePasswordReset}
@@ -89,6 +107,7 @@ export default function LoginPage() {
       >
         Esqueci minha senha
       </button>
+
       <button
         type="button"
         onClick={handleCadastro}
@@ -96,6 +115,8 @@ export default function LoginPage() {
       >
         Cadastro
       </button>
+
+      {info && <p className="text-green-600 mt-2">{info}</p>}
       {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
     </form>
   );
