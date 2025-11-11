@@ -1,75 +1,77 @@
-// app/login/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { auth } from "@/lib/firebase";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { auth, db } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
   sendEmailVerification,
   signOut,
 } from "firebase/auth";
+import { doc, updateDoc, getDoc, setDoc } from "firebase/firestore";
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
-  const [mensagem, setMensagem] = useState("");
-  const [info, setInfo] = useState("");
-
-  // se veio de /cadastro com ?verify=1
-  useEffect(() => {
-    const v = searchParams.get("verify");
-    if (v === "1") {
-      setInfo("Cadastro feito! Confirme seu e-mail antes de entrar.");
-    }
-  }, [searchParams]);
+  const [msg, setMsg] = useState("");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMensagem("");
-    setInfo("");
+    setMsg("");
 
     try {
       const cred = await signInWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // se o e-mail não foi verificado ainda
+      // se ainda não confirmou o e-mail
       if (!user.emailVerified) {
-        // manda outro e-mail de verificação
         try {
           await sendEmailVerification(user);
-          setInfo("Seu e-mail ainda não foi confirmado. Reenviamos o link.");
         } catch {
-          setInfo("Seu e-mail ainda não foi confirmado.");
+          // se der erro pra reenviar, a gente só não quebra o fluxo
         }
-
-        // desloga pra não ficar logado sem verificar
+        setMsg("Seu e-mail ainda não foi confirmado. Veja sua caixa de entrada.");
         await signOut(auth);
         return;
       }
 
-      // ok, pode entrar
+      // aqui o e-mail está verificado no Auth → vamos marcar no Firestore
+      try {
+        const userRef = doc(db, "usuarios", user.uid);
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          await updateDoc(userRef, { verificado: true });
+        } else {
+          // caso raro: não exista doc (alguém apagou no painel)
+          await setDoc(userRef, {
+            email: user.email || "",
+            verificado: true,
+            createdAt: Date.now(),
+          });
+        }
+      } catch (e) {
+        // não bloqueia o login se der erro pra escrever
+        console.warn("não foi possível marcar verificado no firestore", e);
+      }
+
       router.push(`/perfil/${user.uid}`);
     } catch (err: any) {
-      setMensagem(err.message || "Erro ao fazer login.");
+      setMsg(err.message || "Erro ao fazer login.");
     }
   };
 
-  const handlePasswordReset = async () => {
+  const handleReset = async () => {
     if (!email) {
-      setMensagem("Informe seu email para recuperar a senha.");
+      setMsg("Informe seu email para recuperar a senha.");
       return;
     }
     try {
       await sendPasswordResetEmail(auth, email);
-      setInfo("E-mail de recuperação enviado.");
-      setMensagem("");
+      setMsg("E-mail de recuperação enviado.");
     } catch (err: any) {
-      setMensagem(err.message || "Erro ao enviar recuperação.");
+      setMsg(err.message || "Erro ao enviar recuperação.");
     }
   };
 
@@ -81,28 +83,26 @@ export default function LoginPage() {
     <form onSubmit={handleLogin} className="p-8 max-w-md mx-auto">
       <h1 className="text-xl font-bold mb-4">Login</h1>
       <input
-        type="email"
-        placeholder="Email"
-        required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="w-full border p-2 mb-2"
+        type="email"
+        placeholder="Email"
+        className="w-full border p-2 mb-2 text-black"
+        required
       />
       <input
-        type="password"
-        placeholder="Senha"
-        required
         value={senha}
         onChange={(e) => setSenha(e.target.value)}
-        className="w-full border p-2 mb-4"
+        type="password"
+        placeholder="Senha"
+        className="w-full border p-2 mb-4 text-black"
+        required
       />
-      <button type="submit" className="w-full bg-blue-500 text-white p-2">
-        Entrar
-      </button>
+      <button className="w-full bg-blue-500 text-white p-2">Entrar</button>
 
       <button
         type="button"
-        onClick={handlePasswordReset}
+        onClick={handleReset}
         className="w-full mt-2 text-sm text-blue-600 underline"
       >
         Esqueci minha senha
@@ -116,8 +116,7 @@ export default function LoginPage() {
         Cadastro
       </button>
 
-      {info && <p className="text-green-600 mt-2">{info}</p>}
-      {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
+      {msg && <p className="mt-3 text-sm text-red-600">{msg}</p>}
     </form>
   );
 }
