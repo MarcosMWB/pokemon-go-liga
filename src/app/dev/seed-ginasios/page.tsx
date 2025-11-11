@@ -101,8 +101,8 @@ export default function SeedGinasiosPage() {
         });
       }
       setMsg("Pronto! Veja no Firestore.");
-    } catch (e: any) {
-      setMsg("Erro: " + e.message);
+    } catch (err: any) {
+      setMsg("Erro: " + (err?.message || "não foi possível criar"));
     }
   };
 
