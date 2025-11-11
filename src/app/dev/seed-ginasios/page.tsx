@@ -24,18 +24,12 @@ const GINASIOS = [
   { nome: "Engenho do Mato", tipo: "", icon: "/Insignia/engenhodomato.png" },
 ];
 
-type Liga = {
-  id: string;
-  nome: string;
-};
-
 export default function SeedGinasiosPage() {
   const router = useRouter();
   const [msg, setMsg] = useState("");
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-
-  const [ligas, setLigas] = useState<Liga[]>([]);
-  const [selectedLiga, setSelectedLiga] = useState<string>("");
+  const [ligas, setLigas] = useState<{ id: string; nome: string }[]>([]);
+  const [ligaSelecionada, setLigaSelecionada] = useState("");
 
   // checar auth + superusers
   useEffect(() => {
@@ -64,31 +58,29 @@ export default function SeedGinasiosPage() {
 
   // carregar ligas
   useEffect(() => {
+    if (isAdmin !== true) return;
+
     (async () => {
-      try {
-        const snap = await getDocs(collection(db, "ligas"));
-        const list: Liga[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            nome: data.nome || d.id,
-          };
-        });
-        setLigas(list);
-        if (list.length > 0) {
-          setSelectedLiga(list[0].nome);
-        }
-      } catch (e) {
-        // se der erro, deixa vazio e o seed cai pra "Master"
+      const snap = await getDocs(collection(db, "ligas"));
+      const list = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return { id: d.id, nome: data.nome as string };
+      });
+      setLigas(list);
+      if (list.length > 0) {
+        setLigaSelecionada(list[0].nome);
       }
     })();
-  }, []);
+  }, [isAdmin]);
 
   const handleSeed = async () => {
+    if (!ligaSelecionada) {
+      setMsg("Escolha uma liga primeiro.");
+      return;
+    }
+
     setMsg("Criando...");
     try {
-      const ligaParaSalvar = selectedLiga || "Master";
-
       for (const g of GINASIOS) {
         await addDoc(collection(db, "ginasios"), {
           nome: g.nome,
@@ -97,11 +89,12 @@ export default function SeedGinasiosPage() {
           lider_uid: "",
           lider_whatsapp: "",
           em_disputa: false,
-          liga: ligaParaSalvar,
+          liga: ligaSelecionada,
         });
       }
       setMsg("Pronto! Veja no Firestore.");
     } catch (err: any) {
+      // usamos o err pra não dar eslint
       setMsg("Erro: " + (err?.message || "não foi possível criar"));
     }
   };
@@ -111,26 +104,20 @@ export default function SeedGinasiosPage() {
 
   return (
     <div className="p-8 space-y-4">
-      <h1 className="text-xl mb-2 font-semibold">Semear ginásios</h1>
+      <h1 className="text-xl mb-2 font-bold">Semear ginásios</h1>
 
-      <div>
-        <label className="block text-sm text-gray-600 mb-1">
-          Liga para criar os ginásios
-        </label>
+      <div className="flex gap-2 items-center">
+        <label className="text-sm text-gray-700">Liga:</label>
         <select
-          value={selectedLiga}
-          onChange={(e) => setSelectedLiga(e.target.value)}
-          className="border rounded px-3 py-1 text-sm"
+          value={ligaSelecionada}
+          onChange={(e) => setLigaSelecionada(e.target.value)}
+          className="border rounded px-2 py-1"
         >
-          {ligas.length === 0 ? (
-            <option value="">(sem ligas) — vai salvar como "Master"</option>
-          ) : (
-            ligas.map((l) => (
-              <option key={l.id} value={l.nome}>
-                {l.nome}
-              </option>
-            ))
-          )}
+          {ligas.map((l) => (
+            <option key={l.id} value={l.nome}>
+              {l.nome}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -140,7 +127,6 @@ export default function SeedGinasiosPage() {
       >
         Criar 10 ginásios
       </button>
-
       {msg && <p className="mt-4 text-sm">{msg}</p>}
     </div>
   );
