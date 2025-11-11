@@ -23,6 +23,7 @@ export default function PageContent() {
   const [savedPokemons, setSavedPokemons] = useState<string[]>([]);
   const [pokemonList, setPokemonList] = useState<{ name: string; id: number }[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
 
   // 1. garantir auth
   useEffect(() => {
@@ -226,7 +227,7 @@ export default function PageContent() {
       const nova = await addDoc(collection(db, "participacoes"), {
         usuario_id: userId,
         liga_id: ligaDoc.id,
-        liga_nome: liga, // pra facilitar listar depois
+        liga_nome: liga,
         temporada_id: temporada.id,
         equipe_registrada: true,
         createdAt: Date.now(),
@@ -243,7 +244,6 @@ export default function PageContent() {
     }
 
     if (novos.length > 0 && participacaoId) {
-      // insere um doc por pokémon
       for (const nome of novos) {
         await addDoc(collection(db, "pokemon"), {
           nome,
@@ -256,12 +256,43 @@ export default function PageContent() {
     setLoading(false);
   };
 
+  const buttonLabel = loading
+    ? "Salvando..."
+    : savedPokemons.length > 0
+    ? "Definir escolhas"
+    : "Salvar Equipe";
+
   return (
     <div className="min-h-screen bg-blue-50 py-10 px-4">
       <div className="max-w-2xl mx-auto bg-white p-6 rounded shadow">
-        <h1 className="text-2xl font-bold mb-4 text-blue-800">
-          {savedPokemons.length > 0 ? "Editar Equipe" : "Cadastrar Equipe"}
-        </h1>
+        <div className="flex items-center gap-2 mb-4">
+          <h1 className="text-2xl font-bold text-blue-800">Registrar Equipe</h1>
+          <button
+            type="button"
+            onClick={() => setShowInfo((v) => !v)}
+            className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 text-sm flex items-center justify-center"
+            title="Informações sobre registro"
+          >
+            i
+          </button>
+        </div>
+
+        {showInfo && (
+          <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-gray-700">
+            <p>
+              • Você pode registrar até <strong>6 Pokémon</strong> por liga/temporada.
+            </p>
+            <p>
+              • Você pode adicionar um por vez e voltar depois para completar os 6.
+            </p>
+            <p>
+              • Pokémon já registrados não podem ser removidos aqui — apenas os que ainda não foram salvos.
+            </p>
+            <p>
+              • Só os Pokémon registrados ficam válidos para desafiar líderes, treinadores, Elite 4 e campeão.
+            </p>
+          </div>
+        )}
 
         <PokemonSelect
           value={selectedPokemons}
@@ -277,19 +308,19 @@ export default function PageContent() {
             <ul className="grid grid-cols-2 gap-2">
               {selectedPokemons.map((p) => (
                 <li
-                    key={p}
-                    className="flex justify-between items-center bg-yellow-100 px-3 py-1 rounded"
-                  >
-                    <span className="text-blue-800 font-bold">{p}</span>
-                    {!savedPokemons.includes(p) && (
-                      <button
-                        onClick={() => handleRemove(p)}
-                        className="text-red-600 font-bold hover:underline"
-                      >
-                        Remover
-                      </button>
-                    )}
-                  </li>
+                  key={p}
+                  className="flex justify-between items-center bg-yellow-100 px-3 py-1 rounded"
+                >
+                  <span className="text-blue-800 font-bold">{p}</span>
+                  {!savedPokemons.includes(p) && (
+                    <button
+                      onClick={() => handleRemove(p)}
+                      className="text-red-600 font-bold hover:underline"
+                    >
+                      Remover
+                    </button>
+                  )}
+                </li>
               ))}
             </ul>
           </div>
@@ -310,11 +341,7 @@ export default function PageContent() {
           }
           className="mt-6 w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded disabled:opacity-50"
         >
-          {loading
-            ? "Salvando..."
-            : savedPokemons.length > 0
-            ? "Salvar Edição"
-            : "Salvar Equipe"}
+          {buttonLabel}
         </button>
 
         <button

@@ -19,8 +19,8 @@ type Ginasio = {
   tipo: string;
   lider_uid: string;
   em_disputa: boolean;
-  liga?: string; // pode vir assim
-  liga_nome?: string; // ou assim
+  liga?: string;
+  liga_nome?: string;
 };
 
 type Disputa = {
@@ -37,27 +37,45 @@ type Liga = {
 export default function DevGinasiosPage() {
   const router = useRouter();
   const [userUid, setUserUid] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null); // null = carregando
   const [ginasios, setGinasios] = useState<Ginasio[]>([]);
   const [disputas, setDisputas] = useState<Disputa[]>([]);
   const [ligas, setLigas] = useState<Liga[]>([]);
-  const [ligaSelecionada, setLigaSelecionada] = useState<string>("Great"); // "" = todas
+  const [ligaSelecionada, setLigaSelecionada] = useState<string>("Great");
   const [loading, setLoading] = useState(true);
 
-  // auth
+  // auth + checar superusers
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
+    const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
         router.replace("/login");
         return;
       }
+
       setUserUid(user.uid);
+
+      // checar se tá na coleção superusers
+      const q = query(
+        collection(db, "superusers"),
+        where("uid", "==", user.uid)
+      );
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        setIsAdmin(false);
+        router.replace("/"); // não é admin
+        return;
+      }
+
+      setIsAdmin(true);
     });
+
     return () => unsub();
   }, [router]);
 
-  // carregar ligas
+  // carregar ligas (só se for admin)
   useEffect(() => {
     if (!userUid) return;
+    if (isAdmin !== true) return;
     (async () => {
       const snap = await getDocs(collection(db, "ligas"));
       const list: Liga[] = snap.docs.map((d) => {
@@ -69,14 +87,14 @@ export default function DevGinasiosPage() {
       });
       setLigas(list);
     })();
-  }, [userUid]);
+  }, [userUid, isAdmin]);
 
-  // carregar dados
+  // carregar dados (só se for admin)
   useEffect(() => {
     if (!userUid) return;
+    if (isAdmin !== true) return;
 
     async function loadAll() {
-      // ginasios
       const gSnap = await getDocs(collection(db, "ginasios"));
       const gList: Ginasio[] = gSnap.docs.map((d) => {
         const data = d.data() as any;
@@ -91,7 +109,6 @@ export default function DevGinasiosPage() {
         };
       });
 
-      // disputas abertas ou em andamento
       const dSnap = await getDocs(
         query(
           collection(db, "disputas_ginasio"),
@@ -113,7 +130,7 @@ export default function DevGinasiosPage() {
     }
 
     loadAll();
-  }, [userUid]);
+  }, [userUid, isAdmin]);
 
   const getDisputaDoGinasio = (gId: string) =>
     disputas.find((d) => d.ginasio_id === gId);
@@ -151,7 +168,6 @@ export default function DevGinasiosPage() {
     if (!disputa) return;
     if (disputa.status !== "inscricoes") return;
 
-    // pega participantes
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
@@ -159,7 +175,6 @@ export default function DevGinasiosPage() {
       )
     );
 
-    // exclui quem não tem tipo
     for (const pDoc of partSnap.docs) {
       const d = pDoc.data() as any;
       if (!d.tipo_escolhido || d.tipo_escolhido === "") {
@@ -169,7 +184,6 @@ export default function DevGinasiosPage() {
       }
     }
 
-    // agora inicia
     await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
       status: "batalhando",
       iniciadaEm: Date.now(),
@@ -186,7 +200,6 @@ export default function DevGinasiosPage() {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa) return;
 
-    // participantes
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
@@ -201,7 +214,6 @@ export default function DevGinasiosPage() {
       };
     });
 
-    // resultados
     const resSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_resultados"),
@@ -216,7 +228,6 @@ export default function DevGinasiosPage() {
       };
     });
 
-    // pontos
     const pontos: Record<string, number> = {};
     participantes.forEach((p) => {
       pontos[p.usuario_uid] = 0;
@@ -266,9 +277,11 @@ export default function DevGinasiosPage() {
     );
   };
 
-  if (loading) return <p className="p-8">Carregando...</p>;
+  // ainda carregando / ou não é admin
+  if (isAdmin === null) return <p className="p-8">Carregando...</p>;
+  if (isAdmin === false) return null; // já redirecionou
 
-  // aplica filtro de liga na lista renderizada
+  // aplica filtro
   const ginasiosFiltrados = ginasios.filter((g) => {
     if (!ligaSelecionada) return true;
     const nomeLigaDoGinasio = g.liga_nome || g.liga || "";
@@ -303,67 +316,71 @@ export default function DevGinasiosPage() {
         </div>
       </div>
 
-      {ginasiosFiltrados.map((g) => {
-        const disputa = getDisputaDoGinasio(g.id);
-        return (
-          <div
-            key={g.id}
-            className="border rounded p-4 flex justify-between items-center bg-white"
-          >
-            <div>
-              <h2 className="font-semibold">
-                {g.nome}{" "}
-                {g.em_disputa && (
-                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded ml-2">
-                    em disputa
-                  </span>
+      {loading ? (
+        <p>Carregando dados…</p>
+      ) : (
+        ginasiosFiltrados.map((g) => {
+          const disputa = getDisputaDoGinasio(g.id);
+          return (
+            <div
+              key={g.id}
+              className="border rounded p-4 flex justify-between items-center bg-white"
+            >
+              <div>
+                <h2 className="font-semibold">
+                  {g.nome}{" "}
+                  {g.em_disputa && (
+                    <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded ml-2">
+                      em disputa
+                    </span>
+                  )}
+                </h2>
+                <p className="text-sm text-gray-600">
+                  Líder: {g.lider_uid ? g.lider_uid : "vago"}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Liga: {g.liga_nome || g.liga || "Sem liga"}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Disputa: {disputa ? disputa.status : "nenhuma"}
+                </p>
+                <a
+                  href={`/ginasios/${g.id}/disputa`}
+                  className="text-xs text-blue-600 underline"
+                >
+                  Ver página da disputa
+                </a>
+              </div>
+              <div className="flex gap-2">
+                {!disputa && (
+                  <button
+                    onClick={() => handleCriarDisputa(g)}
+                    className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Criar disputa
+                  </button>
                 )}
-              </h2>
-              <p className="text-sm text-gray-600">
-                Líder: {g.lider_uid ? g.lider_uid : "vago"}
-              </p>
-              <p className="text-xs text-gray-500">
-                Liga: {g.liga_nome || g.liga || "Sem liga"}
-              </p>
-              <p className="text-xs text-gray-500">
-                Disputa: {disputa ? disputa.status : "nenhuma"}
-              </p>
-              <a
-                href={`/ginasios/${g.id}/disputa`}
-                className="text-xs text-blue-600 underline"
-              >
-                Ver página da disputa
-              </a>
+                {disputa && disputa.status === "inscricoes" && (
+                  <button
+                    onClick={() => handleIniciarDisputa(g)}
+                    className="bg-orange-500 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Iniciar disputa
+                  </button>
+                )}
+                {disputa && (
+                  <button
+                    onClick={() => handleEncerrarDisputa(g)}
+                    className="bg-gray-400 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Encerrar disputa
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="flex gap-2">
-              {!disputa && (
-                <button
-                  onClick={() => handleCriarDisputa(g)}
-                  className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
-                >
-                  Criar disputa
-                </button>
-              )}
-              {disputa && disputa.status === "inscricoes" && (
-                <button
-                  onClick={() => handleIniciarDisputa(g)}
-                  className="bg-orange-500 text-white px-3 py-1 rounded text-sm"
-                >
-                  Iniciar disputa
-                </button>
-              )}
-              {disputa && (
-                <button
-                  onClick={() => handleEncerrarDisputa(g)}
-                  className="bg-gray-400 text-white px-3 py-1 rounded text-sm"
-                >
-                  Encerrar disputa
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })
+      )}
     </div>
   );
 }
