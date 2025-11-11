@@ -131,18 +131,21 @@ export default function PageContent() {
     const fetchParticipacaoExistente = async () => {
       if (!userId || !liga) return;
 
+      // temporada ativa
       const temporadaSnap = await getDocs(
         query(collection(db, "temporadas"), where("ativa", "==", true))
       );
       const temporada = temporadaSnap.docs[0];
       if (!temporada) return;
 
+      // liga pelo nome
       const ligaSnap = await getDocs(
         query(collection(db, "ligas"), where("nome", "==", liga))
       );
       const ligaDoc = ligaSnap.docs[0];
       if (!ligaDoc) return;
 
+      // participação desse user nessa liga/temporada
       const partSnap = await getDocs(
         query(
           collection(db, "participacoes"),
@@ -183,16 +186,9 @@ export default function PageContent() {
   const handleSubmit = async () => {
     if (!userId || !liga) return;
 
-    const ok = window.confirm(
-        "Definir é definitio!\n" +
-          "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
-          "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
-          "Quer continuar?"
-      );
-      if (!ok) return;
-
     setLoading(true);
 
+    // temporada ativa
     const temporadaSnap = await getDocs(
       query(collection(db, "temporadas"), where("ativa", "==", true))
     );
@@ -203,6 +199,7 @@ export default function PageContent() {
       return;
     }
 
+    // liga
     const ligaSnap = await getDocs(
       query(collection(db, "ligas"), where("nome", "==", liga))
     );
@@ -213,6 +210,7 @@ export default function PageContent() {
       return;
     }
 
+    // participação existente?
     const partSnap = await getDocs(
       query(
         collection(db, "participacoes"),
@@ -223,6 +221,7 @@ export default function PageContent() {
     );
     let participacaoId = partSnap.docs[0]?.id as string | undefined;
 
+    // criar se não tiver
     if (!participacaoId) {
       const nova = await addDoc(collection(db, "participacoes"), {
         usuario_id: userId,
@@ -235,30 +234,53 @@ export default function PageContent() {
       participacaoId = nova.id;
     }
 
-    const novos = selectedPokemons.filter((p) => !savedPokemons.includes(p));
+    // 🔒 defesa contra múltiplas abas:
+    // lê de novo do Firestore quantos pokémon já estão salvos
+    const pokSnapAtual = await getDocs(
+      query(
+        collection(db, "pokemon"),
+        where("participacao_id", "==", participacaoId)
+      )
+    );
+    const pokemonsAtuais = pokSnapAtual.docs.map((d) => d.data().nome as string);
 
-    if (selectedPokemons.length > 6) {
-      alert("Limite de 6 Pokémon atingido.");
+    // o que o usuário quer adicionar agora
+    const novos = selectedPokemons.filter((p) => !pokemonsAtuais.includes(p));
+
+    const vagas = 6 - pokemonsAtuais.length;
+    if (vagas <= 0) {
+      alert("Você já tem 6 Pokémon registrados para esta liga/temporada.");
+      // sincroniza o estado local com o que realmente existe no banco
+      setSelectedPokemons(pokemonsAtuais);
+      setSavedPokemons(pokemonsAtuais);
       setLoading(false);
       return;
     }
 
-    if (novos.length > 0 && participacaoId) {
-      for (const nome of novos) {
+    const aInserir = novos.slice(0, vagas);
+
+    if (aInserir.length > 0) {
+      for (const nome of aInserir) {
         await addDoc(collection(db, "pokemon"), {
           nome,
           participacao_id: participacaoId,
         });
       }
-      setSavedPokemons([...savedPokemons, ...novos]);
     }
+
+    // junta o que já tinha com o que foi inserido de fato
+    const final = [...pokemonsAtuais, ...aInserir];
+    setSelectedPokemons(final);
+    setSavedPokemons(final);
 
     setLoading(false);
   };
 
   const buttonLabel = loading
     ? "Salvando..."
-    : "Definir escolhas";
+    : savedPokemons.length > 0
+    ? "Definir escolhas"
+    : "Salvar Equipe";
 
   return (
     <div className="min-h-screen bg-blue-50 py-10 px-4">
@@ -280,12 +302,14 @@ export default function PageContent() {
             <p>
               • Você pode registrar até <strong>6 Pokémon</strong> por liga/temporada.
             </p>
-            <p>• Pode voltar depois e completar os 6.</p>
             <p>
-              • Pokémon já registrados não podem ser removidos aqui — apenas os que ainda não foram salvos.
+              • Pode adicionar aos poucos, um por vez.
             </p>
             <p>
-              • Só os Pokémon registrados ficam válidos para desafiar líderes, treinadores, Elite 4 e campeão.
+              • Pokémon já registrados não podem ser removidos aqui — apenas os novos que ainda não foram salvos.
+            </p>
+            <p>
+              • Só os Pokémon registrados ficam válidos para batalhas oficiais.
             </p>
           </div>
         )}
@@ -332,8 +356,7 @@ export default function PageContent() {
           onClick={handleSubmit}
           disabled={
             loading ||
-            selectedPokemons.length === 0 ||
-            selectedPokemons.length > 6
+            selectedPokemons.length === 0
           }
           className="mt-6 w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded disabled:opacity-50"
         >
