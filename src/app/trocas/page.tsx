@@ -75,7 +75,9 @@ export default function TrocasPage() {
   const [pokemonList, setPokemonList] = useState<Pokemon[]>([])
   const [meusSwipes, setMeusSwipes] = useState<MeuSwipe[]>([])
 
-  // helper pra sempre exibir shiny/evento
+  // NOVO: modo que ignora o que eu ofereço, mostra só quem tem algo que eu quero
+  const [mostrarPorNecessidade, setMostrarPorNecessidade] = useState(false)
+
   const renderPokemonChip = (
     nome: string,
     det?: DetalhePokemon,
@@ -83,8 +85,7 @@ export default function TrocasPage() {
   ) => (
     <span
       key={nome}
-      className={`px-2 py-1 rounded text-xs capitalize ${extraClass || 'bg-slate-200 text-slate-900'
-        }`}
+      className={`px-2 py-1 rounded text-xs capitalize ${extraClass || 'bg-slate-200 text-slate-900'}`}
     >
       {nome}
       {det?.shiny ? ' ⭐' : ''}
@@ -94,7 +95,6 @@ export default function TrocasPage() {
     </span>
   )
 
-  // carregar pokémon da API
   useEffect(() => {
     async function loadPokemon() {
       try {
@@ -112,7 +112,6 @@ export default function TrocasPage() {
     loadPokemon()
   }, [])
 
-  // auth
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (current) => {
       if (!current) {
@@ -166,7 +165,6 @@ export default function TrocasPage() {
       let nome = data.userName as string | undefined
       let fc = data.friendCode as string | undefined
 
-      // se não tem denormalizado, busca no usuarios/{id}
       if (!nome || !fc) {
         const uDoc = await getDoc(doc(db, 'usuarios', data.userId))
         if (uDoc.exists()) {
@@ -259,6 +257,7 @@ export default function TrocasPage() {
     setMatches(lista)
   }
 
+  // modo "normal": precisa bater os dois lados
   const ofertasCompativeis = useMemo(() => {
     if (!minhaOferta) return []
     return outrasOfertas.filter((of) => {
@@ -266,6 +265,14 @@ export default function TrocasPage() {
       const eleQuerQueEuTenho = minhaOferta.ofereco?.some((p) => of.quero?.includes(p))
       return !!eleTemQueEuQuero && !!eleQuerQueEuTenho
     })
+  }, [outrasOfertas, minhaOferta])
+
+  // modo "ignorar o que ofereço": mostra todo mundo que TEM algo que eu quero
+  const ofertasPorNecessidade = useMemo(() => {
+    if (!minhaOferta) return []
+    return outrasOfertas.filter((of) =>
+      of.ofereco?.some((p) => minhaOferta.quero?.includes(p))
+    )
   }, [outrasOfertas, minhaOferta])
 
   const handleOferecoChange = (lista: string[]) => {
@@ -299,7 +306,6 @@ export default function TrocasPage() {
   async function salvarOferta() {
     if (!user) return
 
-    // pegar nome e friendcode do usuario pra salvar junto
     let nome = user.displayName || undefined
     let friendCode: string | undefined
     const uDoc = await getDoc(doc(db, 'usuarios', user.uid))
@@ -405,7 +411,6 @@ export default function TrocasPage() {
         updatedAt: serverTimestamp(),
       })
 
-      // derruba match de 1 lado só
       const qMatches = query(
         collection(db, 'trocas_matches'),
         where('users', 'array-contains', user.uid)
@@ -463,7 +468,7 @@ export default function TrocasPage() {
         {/* 1) minha oferta */}
         <div className="bg-white rounded-lg shadow p-4 flex flex-col gap-4">
           <h2 className="text-lg font-semibold text-slate-900">Minha oferta</h2>
-
+          {/* ... RESTO DA PRIMEIRA COLUNA IGUAL (deixei do jeito que você mandou) ... */}
           {/* ofereço */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -632,17 +637,34 @@ export default function TrocasPage() {
           </button>
         </div>
 
-        {/* 2) ofertas compatíveis */}
+        {/* 2) ofertas compatíveis / modo sugestão */}
         <div className="bg-white rounded-lg shadow p-4 flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-slate-900">Ofertas compatíveis</h2>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-slate-900">Ofertas compatíveis</h2>
+            <button
+              onClick={() => setMostrarPorNecessidade((v) => !v)}
+              className={`text-xs px-3 py-1 rounded ${
+                mostrarPorNecessidade ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-800'
+              }`}
+            >
+              {mostrarPorNecessidade ? 'Mostrar só matches reais' : 'Ver quem tem o que quero'}
+            </button>
+          </div>
+
           {!minhaOferta ? (
             <p className="text-sm text-slate-500">Crie sua oferta primeiro.</p>
-          ) : ofertasCompativeis.length === 0 ? (
-            <p className="text-sm text-slate-500">Nenhuma oferta compatível agora.</p>
+          ) : (mostrarPorNecessidade ? ofertasPorNecessidade : ofertasCompativeis).length === 0 ? (
+            <p className="text-sm text-slate-500">Nenhuma oferta encontrada.</p>
           ) : (
             <div className="flex flex-col gap-3">
-              {ofertasCompativeis.map((of) => {
+              {(mostrarPorNecessidade ? ofertasPorNecessidade : ofertasCompativeis).map((of) => {
                 const jaCurti = meusSwipes.some((s) => s.ofertaAlvoId === of.id)
+                // o que ele quer e eu NÃO tenho (só mostra no modo sugestão)
+                const faltandoPraBater =
+                  mostrarPorNecessidade && minhaOferta
+                    ? of.quero.filter((p) => !minhaOferta.ofereco.includes(p))
+                    : []
+
                 return (
                   <div key={of.id} className="border rounded-md p-3 bg-slate-50 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
@@ -665,13 +687,14 @@ export default function TrocasPage() {
                         {jaCurti ? 'Cancelar' : 'Gostei'}
                       </button>
                     </div>
+
                     <div>
                       <p className="text-xs text-slate-500 mb-1">Oferece:</p>
                       <div className="flex flex-wrap gap-2">
                         {of.ofereco?.map((p) => {
                           const det =
                             of.oferecoDetalhes?.[p] ||
-                            of.queroDetalhes?.[p] || // fallback: se o cara marcou no lugar “errado” ainda mostra
+                            of.queroDetalhes?.[p] ||
                             undefined
 
                           return (
@@ -689,11 +712,11 @@ export default function TrocasPage() {
                         })}
                       </div>
                     </div>
+
                     <div>
                       <p className="text-xs text-slate-500 mb-1">Quer:</p>
                       <div className="flex flex-wrap gap-2">
                         {of.quero?.map((p) => {
-                          // tenta pegar dos dois, igual no "oferece"
                           const det =
                             of.queroDetalhes?.[p] ||
                             of.oferecoDetalhes?.[p] ||
@@ -714,6 +737,24 @@ export default function TrocasPage() {
                         })}
                       </div>
                     </div>
+
+                    {mostrarPorNecessidade && faltandoPraBater.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded p-2">
+                        <p className="text-xs text-amber-700 mb-1">
+                          Pra dar match com esse jogador, você precisaria oferecer:
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {faltandoPraBater.map((p) => (
+                            <span
+                              key={p}
+                              className="bg-amber-200 text-amber-900 px-2 py-1 rounded text-xs capitalize"
+                            >
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}
