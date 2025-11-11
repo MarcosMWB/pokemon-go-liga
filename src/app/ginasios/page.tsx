@@ -81,7 +81,6 @@ export default function GinasiosPage() {
   const [minhasInsignias, setMinhasInsignias] = useState<Insignia[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ligas
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [selectedLiga, setSelectedLiga] = useState<string>("Great");
 
@@ -99,7 +98,7 @@ export default function GinasiosPage() {
 
   // 2) temporada ativa
   useEffect(() => {
-    async function loadTemporada() {
+    (async () => {
       const qTemp = query(collection(db, "temporadas"), where("ativa", "==", true));
       const snap = await getDocs(qTemp);
       if (!snap.empty) {
@@ -109,30 +108,26 @@ export default function GinasiosPage() {
       } else {
         setTemporada(null);
       }
-    }
-    loadTemporada();
+    })();
   }, []);
 
   // 2.1) ligas
   useEffect(() => {
-    async function loadLigas() {
+    (async () => {
       const snap = await getDocs(collection(db, "ligas"));
       const list: Liga[] = snap.docs.map((d) => ({
         id: d.id,
         nome: (d.data() as any).nome,
       }));
       setLigas(list);
-      if (list.length > 0) {
-        setSelectedLiga(list[0].nome);
-      }
-    }
-    loadLigas();
+      if (list.length > 0) setSelectedLiga(list[0].nome);
+    })();
   }, []);
 
-  // 3) ginasios
+  // 3) ginasios em tempo real
   useEffect(() => {
-    async function loadGinasios() {
-      const snap = await getDocs(collection(db, "ginasios"));
+    const colRef = collection(db, "ginasios");
+    const unsub = onSnapshot(colRef, (snap) => {
       const list: Ginasio[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
@@ -148,19 +143,18 @@ export default function GinasiosPage() {
       });
       setGinasios(list);
       setLoading(false);
-    }
-    loadGinasios();
+    });
+
+    return () => unsub();
   }, []);
 
-  // 4) disputas abertas
+  // 4) disputas em tempo real
   useEffect(() => {
-    async function loadDisputas() {
-      const snap = await getDocs(
-        query(
-          collection(db, "disputas_ginasio"),
-          where("status", "in", ["inscricoes", "batalhando"])
-        )
-      );
+    const qDisputas = query(
+      collection(db, "disputas_ginasio"),
+      where("status", "in", ["inscricoes", "batalhando"])
+    );
+    const unsub = onSnapshot(qDisputas, (snap) => {
       const list: Disputa[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
@@ -171,11 +165,11 @@ export default function GinasiosPage() {
         };
       });
       setDisputas(list);
-    }
-    loadDisputas();
+    });
+    return () => unsub();
   }, []);
 
-  // 5) nomes dos líderes
+  // 5) nomes dos líderes (aqui pode continuar request normal)
   useEffect(() => {
     async function loadLideres() {
       const nomes: Record<string, string> = {};
@@ -278,7 +272,7 @@ export default function GinasiosPage() {
     return () => unsub();
   }, [userUid]);
 
-  // 8) minhas inscrições em disputa
+  // 8) minhas inscrições nas disputas
   useEffect(() => {
     if (!userUid) return;
     const qPart = query(
@@ -319,7 +313,7 @@ export default function GinasiosPage() {
     return () => unsub();
   }, [userUid]);
 
-  // handlers
+  // handlers (iguais à versão anterior)
   const handleDesafiar = async (g: Ginasio) => {
     if (!userUid) return;
     if (!g.lider_uid) return;
@@ -478,7 +472,6 @@ export default function GinasiosPage() {
 
   if (loading) return <p className="p-8">Carregando...</p>;
 
-  // filtrar ginásios da liga
   const ginasiosFiltrados =
     selectedLiga && selectedLiga !== ""
       ? ginasios.filter((g) => (g.liga || "") === selectedLiga)
@@ -516,7 +509,6 @@ export default function GinasiosPage() {
         );
         const bloqueado = meuBloqueio ? meuBloqueio.proximo_desafio > agora : false;
 
-        // disputa EM INSCRIÇÕES para esse ginásio
         const disputaDoGinasio = disputas.find(
           (d) => d.ginasio_id === g.id && d.status === "inscricoes"
         );
@@ -576,7 +568,6 @@ export default function GinasiosPage() {
             </div>
 
             <div className="flex flex-col gap-2 items-end">
-              {/* PRIORIDADE: se tem disputa em inscrições -> sempre mostrar isso */}
               {disputaDoGinasio ? (
                 <>
                   {jaNaDisputa ? (
