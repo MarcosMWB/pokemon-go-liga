@@ -40,7 +40,7 @@ export default function PageContent() {
     if (!userId || !liga) router.push("/");
   }, [userId, liga, router]);
 
-  // 3. lista de pokémon (igual)
+  // 3. lista de pokémon
   useEffect(() => {
     const fetchPokemonList = async () => {
       const res = await fetch("https://pokeapi.co/api/v2/pokemon?limit=1010");
@@ -126,26 +126,23 @@ export default function PageContent() {
     fetchPokemonList();
   }, []);
 
-  // 4. buscar participação e pokémon já salvos (versão Firestore)
+  // 4. buscar participação e pokémon já salvos
   useEffect(() => {
     const fetchParticipacaoExistente = async () => {
       if (!userId || !liga) return;
 
-      // temporada ativa
       const temporadaSnap = await getDocs(
         query(collection(db, "temporadas"), where("ativa", "==", true))
       );
       const temporada = temporadaSnap.docs[0];
       if (!temporada) return;
 
-      // liga pelo nome
       const ligaSnap = await getDocs(
         query(collection(db, "ligas"), where("nome", "==", liga))
       );
       const ligaDoc = ligaSnap.docs[0];
       if (!ligaDoc) return;
 
-      // participação desse user nessa liga/temporada
       const partSnap = await getDocs(
         query(
           collection(db, "participacoes"),
@@ -157,7 +154,6 @@ export default function PageContent() {
       const participacao = partSnap.docs[0];
 
       if (participacao) {
-        // pega pokémon associados
         const pokSnap = await getDocs(
           query(
             collection(db, "pokemon"),
@@ -187,9 +183,19 @@ export default function PageContent() {
   const handleSubmit = async () => {
     if (!userId || !liga) return;
 
+    // se já tem pokémon salvo, vamos pedir confirmação
+    if (savedPokemons.length > 0) {
+      const ok = window.confirm(
+        "Você já registrou Pokémon para esta liga/temporada.\n" +
+          "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
+          "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
+          "Quer continuar?"
+      );
+      if (!ok) return;
+    }
+
     setLoading(true);
 
-    // temporada ativa
     const temporadaSnap = await getDocs(
       query(collection(db, "temporadas"), where("ativa", "==", true))
     );
@@ -200,7 +206,6 @@ export default function PageContent() {
       return;
     }
 
-    // liga
     const ligaSnap = await getDocs(
       query(collection(db, "ligas"), where("nome", "==", liga))
     );
@@ -211,7 +216,6 @@ export default function PageContent() {
       return;
     }
 
-    // participação existente?
     const partSnap = await getDocs(
       query(
         collection(db, "participacoes"),
@@ -222,7 +226,6 @@ export default function PageContent() {
     );
     let participacaoId = partSnap.docs[0]?.id as string | undefined;
 
-    // criar se não tiver
     if (!participacaoId) {
       const nova = await addDoc(collection(db, "participacoes"), {
         usuario_id: userId,
@@ -282,9 +285,7 @@ export default function PageContent() {
             <p>
               • Você pode registrar até <strong>6 Pokémon</strong> por liga/temporada.
             </p>
-            <p>
-              • Você pode adicionar um por vez e voltar depois para completar os 6.
-            </p>
+            <p>• Pode voltar depois e completar os 6.</p>
             <p>
               • Pokémon já registrados não podem ser removidos aqui — apenas os que ainda não foram salvos.
             </p>
