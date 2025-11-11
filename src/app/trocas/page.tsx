@@ -20,6 +20,7 @@ import { PokemonSelect } from '@/components/PokemonSelect'
 
 type DetalhePokemon = {
   shiny?: boolean
+  dynamax?: boolean
   especial?: boolean
   nota?: string
 }
@@ -87,6 +88,7 @@ export default function TrocasPage() {
     >
       {nome}
       {det?.shiny ? ' ⭐' : ''}
+      {det?.dynamax ? ' ✖' : ''}
       {det?.especial ? ' 🎟' : ''}
       {det?.nota ? ` (${det.nota})` : ''}
     </span>
@@ -425,7 +427,7 @@ export default function TrocasPage() {
 
   const updateOferecoDetalhe = (
     nome: string,
-    campo: 'shiny' | 'especial' | 'nota',
+    campo: 'shiny' | 'dynamax' | 'especial' | 'nota',
     valor: boolean | string
   ) => {
     setOferecoDetalhes((prev) => ({
@@ -439,7 +441,7 @@ export default function TrocasPage() {
 
   const updateQueroDetalhe = (
     nome: string,
-    campo: 'shiny' | 'especial' | 'nota',
+    campo: 'shiny' | 'dynamax' | 'especial' | 'nota',
     valor: boolean | string
   ) => {
     setQueroDetalhes((prev) => ({
@@ -482,6 +484,7 @@ export default function TrocasPage() {
                         <span className="font-semibold capitalize text-sm">
                           {name}
                           {det.shiny ? ' ⭐' : ''}
+                          {det.dynamax ? ' ✖' : ''}
                           {det.especial ? ' 🎟' : ''}
                         </span>
                         <button
@@ -504,6 +507,16 @@ export default function TrocasPage() {
                             }
                           />
                           shiny
+                        </label>
+                        <label className="flex items-center gap-1 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={!!det.dynamax}
+                            onChange={(e) =>
+                              updateOferecoDetalhe(name, 'dynamax', e.target.checked)
+                            }
+                          />
+                          dynamax
                         </label>
                         <label className="flex items-center gap-1 text-xs">
                           <input
@@ -552,6 +565,7 @@ export default function TrocasPage() {
                         <span className="font-semibold capitalize text-sm">
                           {name}
                           {det.shiny ? ' ⭐' : ''}
+                          {det.dynamax ? ' ✖' : ''}
                           {det.especial ? ' 🎟' : ''}
                         </span>
                         <button
@@ -576,6 +590,16 @@ export default function TrocasPage() {
                         <label className="flex items-center gap-1 text-xs">
                           <input
                             type="checkbox"
+                            checked={!!det.dynamax}
+                            onChange={(e) =>
+                              updateQueroDetalhe(name, 'dynamax', e.target.checked)
+                            }
+                          />
+                          quero dynamax
+                        </label>
+                        <label className="flex items-center gap-1 text-xs">
+                          <input
+                            type="checkbox"
                             checked={!!det.especial}
                             onChange={(e) =>
                               updateQueroDetalhe(name, 'especial', e.target.checked)
@@ -584,7 +608,7 @@ export default function TrocasPage() {
                           quero de evento
                         </label>
                       </div>
-                      {(det.especial || det.shiny) && (
+                      {(det.especial || det.shiny || det.dynamax) && (
                         <textarea
                           value={det.nota || ''}
                           onChange={(e) => updateQueroDetalhe(name, 'nota', e.target.value)}
@@ -657,6 +681,7 @@ export default function TrocasPage() {
                             >
                               {p}
                               {det?.shiny ? ' ⭐' : ''}
+                              {det?.dynamax ? ' ✖' : ''}
                               {det?.especial ? ' 🎟' : ''}
                               {det?.nota ? ` (${det.nota})` : ''}
                             </span>
@@ -681,6 +706,7 @@ export default function TrocasPage() {
                             >
                               {p}
                               {det?.shiny ? ' ⭐' : ''}
+                              {det?.dynamax ? ' ✖' : ''}
                               {det?.especial ? ' 🎟' : ''}
                               {det?.nota ? ` (${det.nota})` : ''}
                             </span>
