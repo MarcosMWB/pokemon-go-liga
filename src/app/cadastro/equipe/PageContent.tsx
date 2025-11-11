@@ -183,16 +183,13 @@ export default function PageContent() {
   const handleSubmit = async () => {
     if (!userId || !liga) return;
 
-    // se já tem pokémon salvo, vamos pedir confirmação
-    if (savedPokemons.length > 0) {
-      const ok = window.confirm(
-        "Você já registrou Pokémon para esta liga/temporada.\n" +
+    const ok = window.confirm(
+        "Definir é definitio!\n" +
           "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
           "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
           "Quer continuar?"
       );
       if (!ok) return;
-    }
 
     setLoading(true);
 
@@ -261,9 +258,7 @@ export default function PageContent() {
 
   const buttonLabel = loading
     ? "Salvando..."
-    : savedPokemons.length > 0
-    ? "Definir escolhas"
-    : "Salvar Equipe";
+    : "Definir escolhas";
 
   return (
     <div className="min-h-screen bg-blue-50 py-10 px-4">
