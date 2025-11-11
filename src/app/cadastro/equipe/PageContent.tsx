@@ -186,6 +186,14 @@ export default function PageContent() {
   const handleSubmit = async () => {
     if (!userId || !liga) return;
 
+    const ok = window.confirm(
+        "Definir é definitio!\n" +
+          "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
+          "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
+          "Quer continuar?"
+      );
+      if (!ok) return;
+
     setLoading(true);
 
     // temporada ativa
