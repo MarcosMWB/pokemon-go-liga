@@ -301,7 +301,7 @@ export default function PageContent() {
             className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 text-sm flex items-center justify-center"
             title="Informações sobre registro"
           >
-            i
+            ℹ️
           </button>
         </div>
 

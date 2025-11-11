@@ -698,7 +698,7 @@ export default function PerfilPage() {
       </div>
 
       <button
-        onClick={() => router.push("/")}
+        onClick={() => router.push("/jogadores")}
         className="bg-gray-200 text-gray-800 px-3 py-2 rounded text-sm"
       >
         Voltar
