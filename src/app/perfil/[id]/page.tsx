@@ -86,6 +86,7 @@ export default function PerfilPage() {
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>(""); // "" = todas
   const [loading, setLoading] = useState(true);
+  const [ginasiosMap, setGinasiosMap] = useState<Record<string, string>>({});
 
   // quem está logado
   useEffect(() => {
@@ -172,6 +173,20 @@ export default function PerfilPage() {
     });
     return () => unsub();
   }, [perfilUid]);
+
+  //carrega ginasios uma vez
+  useEffect(() => {
+    async function loadGinasios() {
+      const snap = await getDocs(collection(db, "ginasios"));
+      const map: Record<string, string> = {};
+      snap.forEach((doc) => {
+        const data = doc.data() as any;
+        map[doc.id] = data.nome || doc.id;
+      });
+      setGinasiosMap(map);
+    }
+    loadGinasios();
+  }, []);
 
   // disputas que ele participa
   useEffect(() => {
@@ -560,7 +575,7 @@ export default function PerfilPage() {
                     <div>
                       <p className="text-sm">
                         {d.desafiante_nome || d.desafiante_uid} desafiou{" "}
-                        {d.ginasio_id}
+                        {ginasiosMap[d.ginasio_id] || d.ginasio_id}
                       </p>
                       <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
                     </div>
