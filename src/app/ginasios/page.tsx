@@ -372,7 +372,7 @@ export default function GinasiosPage() {
     });
   };
 
-  const handleDeclarar = async (
+  /*const handleDeclarar = async (
     desafio: Desafio,
     vencedor: "lider" | "desafiante"
   ) => {
@@ -389,7 +389,7 @@ export default function GinasiosPage() {
 
     // ... (resto do fluxo de dar insígnia você já tinha; não vou repetir aqui
     // porque o bug que você falou é só na parte de mostrar o botão)
-  };
+  };*/
 
   const agora = Date.now();
 
