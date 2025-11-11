@@ -2,20 +2,21 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { TYPE_ICONS } from "@/utils/typeIcons";
-import Image from "next/image";
 import {
   collection,
   getDocs,
   doc,
   getDoc,
   addDoc,
+  updateDoc,
   query,
   where,
   onSnapshot,
 } from "firebase/firestore";
+import { TYPE_ICONS } from "@/utils/typeIcons";
 
 type Ginasio = {
   id: string;
@@ -80,10 +81,11 @@ export default function GinasiosPage() {
   const [minhasInsignias, setMinhasInsignias] = useState<Insignia[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ligas
   const [ligas, setLigas] = useState<Liga[]>([]);
-  const [selectedLiga, setSelectedLiga] = useState<string>("");
+  const [selectedLiga, setSelectedLiga] = useState<string>("Great");
 
-  // 1) pegar usuário logado
+  // 1) auth
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
       if (!user) {
@@ -111,7 +113,7 @@ export default function GinasiosPage() {
     loadTemporada();
   }, []);
 
-  // 2.1) carregar ligas
+  // 2.1) ligas
   useEffect(() => {
     async function loadLigas() {
       const snap = await getDocs(collection(db, "ligas"));
@@ -127,7 +129,7 @@ export default function GinasiosPage() {
     loadLigas();
   }, []);
 
-  // 3) carregar ginásios
+  // 3) ginasios
   useEffect(() => {
     async function loadGinasios() {
       const snap = await getDocs(collection(db, "ginasios"));
@@ -150,7 +152,7 @@ export default function GinasiosPage() {
     loadGinasios();
   }, []);
 
-  // 5) disputas abertas
+  // 4) disputas abertas
   useEffect(() => {
     async function loadDisputas() {
       const snap = await getDocs(
@@ -173,7 +175,7 @@ export default function GinasiosPage() {
     loadDisputas();
   }, []);
 
-  // 6) nomes dos líderes
+  // 5) nomes dos líderes
   useEffect(() => {
     async function loadLideres() {
       const nomes: Record<string, string> = {};
@@ -194,7 +196,7 @@ export default function GinasiosPage() {
     }
   }, [ginasios]);
 
-  // 7) desafios do usuário
+  // 6) desafios do usuário
   useEffect(() => {
     if (!userUid) return;
 
@@ -254,7 +256,7 @@ export default function GinasiosPage() {
     };
   }, [userUid]);
 
-  // 8) bloqueios do usuário
+  // 7) bloqueios do usuário
   useEffect(() => {
     if (!userUid) return;
     const qBloq = query(
@@ -276,7 +278,7 @@ export default function GinasiosPage() {
     return () => unsub();
   }, [userUid]);
 
-  // 9) minhas inscrições nas disputas
+  // 8) minhas inscrições em disputa
   useEffect(() => {
     if (!userUid) return;
     const qPart = query(
@@ -296,7 +298,7 @@ export default function GinasiosPage() {
     return () => unsub();
   }, [userUid]);
 
-  // 10) minhas insígnias
+  // 9) minhas insígnias
   useEffect(() => {
     if (!userUid) return;
     const qIns = query(
@@ -317,6 +319,7 @@ export default function GinasiosPage() {
     return () => unsub();
   }, [userUid]);
 
+  // handlers
   const handleDesafiar = async (g: Ginasio) => {
     if (!userUid) return;
     if (!g.lider_uid) return;
@@ -371,7 +374,7 @@ export default function GinasiosPage() {
     });
   };
 
-  /*const handleDeclarar = async (
+  const handleDeclarar = async (
     desafio: Desafio,
     vencedor: "lider" | "desafiante"
   ) => {
@@ -386,14 +389,96 @@ export default function GinasiosPage() {
       [souLider ? "resultado_lider" : "resultado_desafiante"]: vencedor,
     });
 
-    // ... (resto do fluxo de dar insígnia você já tinha; não vou repetir aqui
-    // porque o bug que você falou é só na parte de mostrar o botão)
-  };*/
+    const updated = await getDoc(ref);
+    const d = updated.data() as any;
+    const rl = d.resultado_lider;
+    const rd = d.resultado_desafiante;
+
+    if (rl && rd) {
+      if (rl === rd) {
+        if (rl === "desafiante") {
+          const gRef = doc(db, "ginasios", desafio.ginasio_id);
+          const gSnap = await getDoc(gRef);
+          const gData = gSnap.exists() ? (gSnap.data() as any) : null;
+
+          await addDoc(collection(db, "insignias"), {
+            usuario_uid: desafio.desafiante_uid,
+            ginasio_id: desafio.ginasio_id,
+            ginasio_nome: gData?.nome || "",
+            ginasio_tipo: gData?.tipo || "",
+            liga: gData?.liga || d.liga || "",
+            lider_derrotado_uid: desafio.lider_uid,
+            insignia_icon: gData?.insignia_icon || "",
+            temporada_id: temporada?.id || "",
+            temporada_nome: temporada?.nome || "",
+            createdAt: Date.now(),
+          });
+
+          await addDoc(collection(db, "bloqueios_ginasio"), {
+            ginasio_id: desafio.ginasio_id,
+            desafiante_uid: desafio.desafiante_uid,
+            proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
+          });
+
+          if (gSnap.exists()) {
+            let derrotas = gData?.derrotas_seguidas ?? 0;
+            derrotas += 1;
+            if (derrotas >= 3) {
+              await addDoc(collection(db, "disputas_ginasio"), {
+                ginasio_id: desafio.ginasio_id,
+                status: "inscricoes",
+                liga: gData?.liga || d.liga || "",
+                tipo_original: gData?.tipo || "",
+                lider_anterior_uid: gData?.lider_uid || "",
+                temporada_id: temporada?.id || "",
+                temporada_nome: temporada?.nome || "",
+                createdAt: Date.now(),
+              });
+              await updateDoc(gRef, {
+                lider_uid: "",
+                em_disputa: true,
+                derrotas_seguidas: 0,
+              });
+            } else {
+              await updateDoc(gRef, {
+                derrotas_seguidas: derrotas,
+              });
+            }
+          }
+        } else {
+          const gRef = doc(db, "ginasios", desafio.ginasio_id);
+          const gSnap = await getDoc(gRef);
+          if (gSnap.exists()) {
+            await updateDoc(gRef, {
+              derrotas_seguidas: 0,
+            });
+          }
+          await addDoc(collection(db, "bloqueios_ginasio"), {
+            ginasio_id: desafio.ginasio_id,
+            desafiante_uid: desafio.desafiante_uid,
+            proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
+          });
+        }
+
+        await updateDoc(ref, { status: "concluido" });
+      } else {
+        await updateDoc(ref, { status: "conflito" });
+        await addDoc(collection(db, "alertas_conflito"), {
+          desafio_id: desafio.id,
+          ginasio_id: desafio.ginasio_id,
+          lider_uid: desafio.lider_uid,
+          desafiante_uid: desafio.desafiante_uid,
+          createdAt: Date.now(),
+        });
+      }
+    }
+  };
 
   const agora = Date.now();
 
   if (loading) return <p className="p-8">Carregando...</p>;
 
+  // filtrar ginásios da liga
   const ginasiosFiltrados =
     selectedLiga && selectedLiga !== ""
       ? ginasios.filter((g) => (g.liga || "") === selectedLiga)
@@ -419,20 +504,6 @@ export default function GinasiosPage() {
       </div>
 
       {ginasiosFiltrados.map((g) => {
-        // disputa aberta pra ESSE ginásio e MESMA liga
-        const disputaDoGinasio = disputas.find(
-          (d) =>
-            d.ginasio_id === g.id &&
-            d.status === "inscricoes" &&
-            (d.liga || "") === (g.liga || selectedLiga || "")
-        );
-
-        const jaNaDisputa = disputaDoGinasio
-          ? participacoesDisputa.some(
-              (p) => p.disputa_id === disputaDoGinasio.id
-            )
-          : false;
-
         const meuDesafio = desafios.find(
           (d) =>
             d.ginasio_id === g.id &&
@@ -444,6 +515,17 @@ export default function GinasiosPage() {
           (b) => b.ginasio_id === g.id && b.desafiante_uid === userUid
         );
         const bloqueado = meuBloqueio ? meuBloqueio.proximo_desafio > agora : false;
+
+        // disputa EM INSCRIÇÕES para esse ginásio
+        const disputaDoGinasio = disputas.find(
+          (d) => d.ginasio_id === g.id && d.status === "inscricoes"
+        );
+
+        const jaNaDisputa = disputaDoGinasio
+          ? participacoesDisputa.some(
+              (p) => p.disputa_id === disputaDoGinasio.id
+            )
+          : false;
 
         const semLider = !g.lider_uid;
 
@@ -494,17 +576,12 @@ export default function GinasiosPage() {
             </div>
 
             <div className="flex flex-col gap-2 items-end">
-              {/* PRIORIDADE: se tem disputa aberta, mostra entrar na disputa
-                  mesmo que tenha líder */}
+              {/* PRIORIDADE: se tem disputa em inscrições -> sempre mostrar isso */}
               {disputaDoGinasio ? (
                 <>
                   {jaNaDisputa ? (
                     <span className="text-xs text-gray-500">
                       Você já está na disputa
-                    </span>
-                  ) : userUid === g.lider_uid ? (
-                    <span className="text-xs text-gray-500">
-                      Você é o líder
                     </span>
                   ) : (
                     <button
@@ -523,10 +600,20 @@ export default function GinasiosPage() {
                 </>
               ) : meuDesafio && meuDesafio.status === "pendente" ? (
                 <div className="flex flex-col gap-2 items-end">
-                  {/* aqui ficaria o declarar resultado, mantive estrutura */}
-                  <span className="text-xs text-gray-500">
-                    Você tem um desafio pendente.
-                  </span>
+                  <button
+                    onClick={() => handleDeclarar(meuDesafio, "desafiante")}
+                    className="px-3 py-1 bg-green-500 text-white rounded text-sm"
+                  >
+                    Eu ganhei
+                  </button>
+                  <button
+                    onClick={() => handleDeclarar(meuDesafio, "lider")}
+                    className="px-3 py-1 bg-red-500 text-white rounded text-sm"
+                  >
+                    {meuDesafio.lider_uid === userUid
+                      ? "Desafiante perdeu"
+                      : "Líder ganhou"}
+                  </button>
                 </div>
               ) : (
                 <button
@@ -542,10 +629,10 @@ export default function GinasiosPage() {
                   {g.lider_uid === userUid
                     ? "Você é o líder"
                     : semLider
-                    ? "Sem líder"
-                    : jaTemInsignia
-                    ? "Já ganhou"
-                    : "Desafiar"}
+                      ? "Sem líder"
+                      : jaTemInsignia
+                        ? "Já ganhou"
+                        : "Desafiar"}
                 </button>
               )}
             </div>

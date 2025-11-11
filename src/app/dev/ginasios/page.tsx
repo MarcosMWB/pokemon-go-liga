@@ -27,6 +27,7 @@ type Disputa = {
   id: string;
   ginasio_id: string;
   status: "inscricoes" | "batalhando" | "finalizado";
+  tipo_original?: string;
 };
 
 type Liga = {
@@ -36,14 +37,15 @@ type Liga = {
 
 export default function DevGinasiosPage() {
   const router = useRouter();
-  const [userUid, setUserUid] = useState<string | null>(null);
+
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [ginasios, setGinasios] = useState<Ginasio[]>([]);
   const [disputas, setDisputas] = useState<Disputa[]>([]);
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  // checar admin
+  // 1) auth + checar superusers
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
@@ -51,46 +53,46 @@ export default function DevGinasiosPage() {
         return;
       }
 
-      // só superuser
+      // confere se tá na coleção superusers
       const q = query(
         collection(db, "superusers"),
         where("uid", "==", user.uid)
       );
       const snap = await getDocs(q);
       if (snap.empty) {
+        setIsAdmin(false);
         router.replace("/");
         return;
       }
 
-      setUserUid(user.uid);
+      setIsAdmin(true);
     });
+
     return () => unsub();
   }, [router]);
 
-  // carregar ligas
+  // 2) carregar ligas
   useEffect(() => {
-    if (!userUid) return;
+    if (isAdmin !== true) return;
     (async () => {
       const snap = await getDocs(collection(db, "ligas"));
-      const list: Liga[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          nome: data.nome || d.id,
-        };
-      });
+      const list: Liga[] = snap.docs.map((d) => ({
+        id: d.id,
+        nome: (d.data() as any).nome || d.id,
+      }));
       setLigas(list);
       if (list.length > 0) {
         setLigaSelecionada(list[0].nome);
       }
     })();
-  }, [userUid]);
+  }, [isAdmin]);
 
-  // carregar dados
+  // 3) carregar ginasios + disputas
   useEffect(() => {
-    if (!userUid) return;
+    if (isAdmin !== true) return;
 
     async function loadAll() {
+      // ginasios
       const gSnap = await getDocs(collection(db, "ginasios"));
       const gList: Ginasio[] = gSnap.docs.map((d) => {
         const data = d.data() as any;
@@ -105,6 +107,7 @@ export default function DevGinasiosPage() {
         };
       });
 
+      // disputas abertas ou em andamento
       const dSnap = await getDocs(
         query(
           collection(db, "disputas_ginasio"),
@@ -117,6 +120,7 @@ export default function DevGinasiosPage() {
           id: d.id,
           ginasio_id: data.ginasio_id,
           status: data.status,
+          tipo_original: data.tipo_original || "",
         };
       });
 
@@ -126,11 +130,12 @@ export default function DevGinasiosPage() {
     }
 
     loadAll();
-  }, [userUid]);
+  }, [isAdmin]);
 
   const getDisputaDoGinasio = (gId: string) =>
     disputas.find((d) => d.ginasio_id === gId);
 
+  // criar disputa manual
   const handleCriarDisputa = async (g: Ginasio) => {
     const ja = getDisputaDoGinasio(g.id);
     if (ja) return;
@@ -138,7 +143,6 @@ export default function DevGinasiosPage() {
     const nova = await addDoc(collection(db, "disputas_ginasio"), {
       ginasio_id: g.id,
       status: "inscricoes",
-      liga: g.liga || "",
       tipo_original: g.tipo || "",
       lider_anterior_uid: g.lider_uid || "",
       temporada_id: "",
@@ -151,7 +155,12 @@ export default function DevGinasiosPage() {
 
     setDisputas((prev) => [
       ...prev,
-      { id: nova.id, ginasio_id: g.id, status: "inscricoes" },
+      {
+        id: nova.id,
+        ginasio_id: g.id,
+        status: "inscricoes",
+        tipo_original: g.tipo || "",
+      },
     ]);
     setGinasios((prev) =>
       prev.map((gg) =>
@@ -160,12 +169,12 @@ export default function DevGinasiosPage() {
     );
   };
 
+  // iniciar disputa: remove quem não escolheu tipo
   const handleIniciarDisputa = async (g: Ginasio) => {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa) return;
     if (disputa.status !== "inscricoes") return;
 
-    // remove quem não escolheu tipo
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
@@ -194,51 +203,37 @@ export default function DevGinasiosPage() {
     );
   };
 
+  // encerrar disputa: agora trata empate e seta tipo do ginásio corretamente
   const handleEncerrarDisputa = async (g: Ginasio) => {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa) return;
 
+    // participantes
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
-        where("disputa_id", "==", disputa.id),
-        where("removido", "==", false)
+        where("disputa_id", "==", disputa.id)
       )
-    ).catch(async () => {
-      // caso não tenha o campo removido
-      const p2 = await getDocs(
-        query(
-          collection(db, "disputas_ginasio_participantes"),
-          where("disputa_id", "==", disputa.id)
-        )
-      );
-      return p2;
-    });
+    );
+    const participantes = partSnap.docs
+      .map((p) => {
+        const d = p.data() as any;
+        if (d.removido) return null;
+        return {
+          usuario_uid: d.usuario_uid as string,
+          tipo_escolhido: d.tipo_escolhido as string,
+        };
+      })
+      .filter(Boolean) as { usuario_uid: string; tipo_escolhido: string }[];
 
-    const participantes = partSnap.docs.map((p) => {
-      const d = p.data() as any;
-      return {
-        usuario_uid: d.usuario_uid as string,
-        tipo_escolhido: d.tipo_escolhido as string,
-      };
-    });
-
+    // resultados
     const resSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_resultados"),
         where("disputa_id", "==", disputa.id),
-        where("status", "!=", "contestado")
+        where("status", "==", "confirmado")
       )
-    ).catch(async () => {
-      const r2 = await getDocs(
-        query(
-          collection(db, "disputas_ginasio_resultados"),
-          where("disputa_id", "==", disputa.id)
-        )
-      );
-      return r2;
-    });
-
+    );
     const resultados = resSnap.docs.map((r) => {
       const d = r.data() as any;
       return {
@@ -247,7 +242,6 @@ export default function DevGinasiosPage() {
         tipo: d.tipo as string | undefined,
         jogador1_uid: d.jogador1_uid as string | undefined,
         jogador2_uid: d.jogador2_uid as string | undefined,
-        status: d.status as string | undefined,
       };
     });
 
@@ -256,8 +250,8 @@ export default function DevGinasiosPage() {
     participantes.forEach((p) => {
       pontos[p.usuario_uid] = 0;
     });
+
     resultados.forEach((r) => {
-      if (r.status && r.status !== "confirmado") return;
       if (r.tipo === "empate") {
         if (r.jogador1_uid) pontos[r.jogador1_uid] = (pontos[r.jogador1_uid] || 0) + 1;
         if (r.jogador2_uid) pontos[r.jogador2_uid] = (pontos[r.jogador2_uid] || 0) + 1;
@@ -266,86 +260,119 @@ export default function DevGinasiosPage() {
       }
     });
 
-    // descobrir maior pontuação
+    // achar maior pontuação
     let maior = -1;
     for (const uid in pontos) {
       if (pontos[uid] > maior) maior = pontos[uid];
     }
+
+    // quem ficou com o maior
     const empatados = Object.keys(pontos).filter((uid) => pontos[uid] === maior);
 
-    if (empatados.length === 1) {
-      // temos campeão
-      const vencedorUid = empatados[0];
-      const participanteVencedor = participantes.find(
-        (p) => p.usuario_uid === vencedorUid
-      );
-
-      await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-        status: "finalizado",
-        encerradaEm: Date.now(),
-        vencedor_uid: vencedorUid,
-      });
-
-      await updateDoc(doc(db, "ginasios", g.id), {
-        lider_uid: vencedorUid,
-        tipo: participanteVencedor?.tipo_escolhido || g.tipo || "",
-        em_disputa: false,
-      });
-
-      setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
-      setGinasios((prev) =>
-        prev.map((gg) =>
-          gg.id === g.id ? { ...gg, em_disputa: false, lider_uid: vencedorUid } : gg
-        )
-      );
-    } else {
-      // deu empate -> criar nova disputa SÓ com empatados
-      await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-        status: "finalizado",
-        encerradaEm: Date.now(),
-        vencedor_uid: "",
-        empate: true,
-      });
-
+    if (empatados.length > 1) {
+      // EMPATE: cria nova disputa só com empatados e mantém ginásio em disputa
       const nova = await addDoc(collection(db, "disputas_ginasio"), {
         ginasio_id: g.id,
         status: "inscricoes",
-        liga: g.liga || "",
-        tipo_original: g.tipo || "",
+        tipo_original: disputa.tipo_original || g.tipo || "",
         lider_anterior_uid: g.lider_uid || "",
-        temporada_id: "",
+        reaberta_por_empate: true,
         createdAt: Date.now(),
-        motivo: "desempate",
       });
 
-      // reinsere apenas os empatados
+      // reinscreve só os empatados
       for (const uid of empatados) {
         const partOrig = participantes.find((p) => p.usuario_uid === uid);
         await addDoc(collection(db, "disputas_ginasio_participantes"), {
           disputa_id: nova.id,
           ginasio_id: g.id,
           usuario_uid: uid,
-          tipo_escolhido: partOrig?.tipo_escolhido || "",
+          tipo_escolhido:
+            partOrig?.tipo_escolhido ||
+            disputa.tipo_original ||
+            g.tipo ||
+            "",
           createdAt: Date.now(),
         });
       }
+
+      // fecha a disputa antiga
+      await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+        status: "finalizado",
+        encerradaEm: Date.now(),
+      });
+
+      // atualiza estado local
+      setDisputas((prev) => {
+        const semAntiga = prev.filter((d) => d.id !== disputa.id);
+        return [
+          ...semAntiga,
+          {
+            id: nova.id,
+            ginasio_id: g.id,
+            status: "inscricoes",
+            tipo_original: disputa.tipo_original || g.tipo || "",
+          },
+        ];
+      });
 
       // mantém ginásio em disputa
       await updateDoc(doc(db, "ginasios", g.id), {
         em_disputa: true,
       });
 
-      // atualiza tela
-      setDisputas((prev) =>
-        prev
-          .filter((d) => d.id !== disputa.id)
-          .concat([{ id: nova.id, ginasio_id: g.id, status: "inscricoes" }])
-      );
+      return;
     }
+
+    // VENCEDOR ÚNICO
+    const vencedorUid = empatados[0];
+
+    const participanteVencedor = participantes.find(
+      (p) => p.usuario_uid === vencedorUid
+    );
+
+    // ordem pra achar o tipo
+    const tipoDoVencedor =
+      participanteVencedor?.tipo_escolhido ||
+      (participanteVencedor as any)?.tipo ||
+      disputa.tipo_original ||
+      g.tipo ||
+      "";
+
+    // fecha disputa
+    await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+      status: "finalizado",
+      encerradaEm: Date.now(),
+      vencedor_uid: vencedorUid,
+    });
+
+    // atualiza ginásio
+    await updateDoc(doc(db, "ginasios", g.id), {
+      lider_uid: vencedorUid,
+      tipo: tipoDoVencedor,
+      em_disputa: false,
+    });
+
+    // atualiza estado local
+    setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
+    setGinasios((prev) =>
+      prev.map((gg) =>
+        gg.id === g.id
+          ? { ...gg, em_disputa: false, lider_uid: vencedorUid, tipo: tipoDoVencedor }
+          : gg
+      )
+    );
   };
 
-  if (loading) return <p className="p-8">Carregando...</p>;
+  if (isAdmin === null || loading) {
+    return <p className="p-8">Carregando...</p>;
+  }
 
+  if (isAdmin === false) {
+    return null;
+  }
+
+  // aplica filtro de liga
   const ginasiosFiltrados = ginasios.filter((g) => {
     if (!ligaSelecionada) return true;
     const nomeLigaDoGinasio = g.liga_nome || g.liga || "";
@@ -358,7 +385,7 @@ export default function DevGinasiosPage() {
         <div>
           <h1 className="text-2xl font-bold">DEV / Ginásios</h1>
           <p className="text-sm text-gray-500">
-            Aqui você força abrir/começar/encerrar disputas.
+            Abrir / iniciar / encerrar disputas manualmente.
           </p>
         </div>
         <div>
@@ -388,10 +415,10 @@ export default function DevGinasiosPage() {
             className="border rounded p-4 flex justify-between items-center bg-white"
           >
             <div>
-              <h2 className="font-semibold">
-                {g.nome}{" "}
+              <h2 className="font-semibold flex items-center gap-2">
+                {g.nome}
                 {g.em_disputa && (
-                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded ml-2">
+                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
                     em disputa
                   </span>
                 )}
@@ -415,11 +442,11 @@ export default function DevGinasiosPage() {
             <div className="flex gap-2">
               {!disputa && (
                 <button
-                    onClick={() => handleCriarDisputa(g)}
-                    className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
-                  >
-                    Criar disputa
-                  </button>
+                  onClick={() => handleCriarDisputa(g)}
+                  className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
+                >
+                  Criar disputa
+                </button>
               )}
               {disputa && disputa.status === "inscricoes" && (
                 <button
@@ -432,7 +459,7 @@ export default function DevGinasiosPage() {
               {disputa && (
                 <button
                   onClick={() => handleEncerrarDisputa(g)}
-                  className="bg-gray-400 text-white px-3 py-1 rounded text-sm"
+                  className="bg-gray-500 text-white px-3 py-1 rounded text-sm"
                 >
                   Encerrar disputa
                 </button>
