@@ -150,7 +150,7 @@ export default function GinasiosPage() {
     loadGinasios();
   }, []);
 
-  // 4) abrir disputa automática se ginásio vago
+  /*// 4) abrir disputa automática se ginásio vago
   useEffect(() => {
     if (!userUid) return;
     if (!ginasios.length) return;
@@ -186,6 +186,7 @@ export default function GinasiosPage() {
 
     abrir();
   }, [userUid, ginasios, temporada, selectedLiga]);
+  */
 
   // 5) disputas abertas
   useEffect(() => {
