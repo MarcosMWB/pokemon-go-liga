@@ -42,6 +42,8 @@ export default function DevLojaPage() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState("");
 
+  const BASE_IMG = "https://raw.githubusercontent.com/MarcosMWB/StoreImage/main/";
+
   // 1) auth + superuser
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
@@ -181,14 +183,37 @@ export default function DevLojaPage() {
               placeholder="Ex: Capa Pokéball"
             />
           </div>
+
           <div>
-            <label className="text-xs text-gray-500">Imagem...</label>
+            <label className="text-xs text-gray-500">
+              Coloque o nome da imagem no qual fez upload{" "}
+              <a
+                href="https://github.com/MarcosMWB/StoreImage"
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-600 underline"
+              >
+                aqui
+              </a>
+            </label>
             <input
-              value={imagem}
-              onChange={(e) => setImagem(e.target.value)}
+              value={imagem.replace(BASE_IMG, "")}
+              onChange={(e) => {
+                const nome = e.target.value.trim();
+                // se a pessoa apagar, zera
+                if (!nome) {
+                  setImagem("");
+                  return;
+                }
+                // monta a URL completa
+                setImagem(`${BASE_IMG}${nome}`);
+              }}
               className="w-full border rounded px-2 py-1"
-              placeholder="/produtos/produto.png"
+              placeholder="image.jpg"
             />
+            <p className="text-[10px] text-gray-400 mt-1">
+              Vamos usar: {imagem ? imagem : BASE_IMG + "<nome-do-arquivo>"}
+            </p>
           </div>
           <div>
             <label className="text-xs text-gray-500">Preço</label>
