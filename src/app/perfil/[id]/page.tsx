@@ -107,7 +107,6 @@ export default function PerfilPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatOtherName, setChatOtherName] = useState('Treinador');
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
-  const [chatMyFC, setChatMyFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
@@ -360,7 +359,6 @@ export default function PerfilPage() {
       setSouLiderNoChat(d.lider_uid === logadoUid);
 
       const meSnap = await getDoc(doc(db, 'usuarios', logadoUid));
-      setChatMyFC(meSnap.exists() ? (meSnap.data() as any).friend_code || null : null);
 
       let nome = 'Treinador';
       let fc: string | null = null;
@@ -819,39 +817,6 @@ export default function PerfilPage() {
                   </>
                 ) : (
                   <p className="text-xs text-amber-600">O outro jogador não cadastrou FC.</p>
-                )}
-              </div>
-
-              <div className="border rounded-lg p-3">
-                <p className="text-xs text-slate-500">Seu código:</p>
-                {chatMyFC ? (
-                  <>
-                    <p className="text-sm font-semibold">FC: {chatMyFC}</p>
-                    {(() => {
-                      const { native, androidIntent } = buildPoGoFriendLinks(chatMyFC!);
-                      const deep = isAndroid ? androidIntent : native;
-                      return (
-                        <div className="mt-2 flex flex-col items-start gap-2">
-                          <a href={deep} className="text-blue-600 text-sm hover:underline">
-                            Abrir meu link no Pokémon GO
-                          </a>
-                          <img
-                            src={qrSrc(native)}
-                            alt="QR do seu FC"
-                            className="w-40 h-40 border rounded"
-                          />
-                          <button
-                            onClick={() => navigator.clipboard?.writeText(chatMyFC!)}
-                            className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                          >
-                            Copiar meu FC
-                          </button>
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <p className="text-xs text-amber-600">Cadastre seu FC em “usuários”.</p>
                 )}
               </div>
             </div>
