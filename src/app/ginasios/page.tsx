@@ -612,6 +612,10 @@ export default function GinasiosPage() {
           (d) => d.ginasio_id === g.id && d.status === 'inscricoes'
         );
 
+        const disputaBatalhandoGinasio = disputas.find(
+          (d) => d.ginasio_id === g.id && d.status === 'batalhando'
+        );
+
         const jaNaDisputa = disputaDoGinasio
           ? participacoesDisputa.some((p) => p.disputa_id === disputaDoGinasio.id)
           : false;
@@ -677,6 +681,14 @@ export default function GinasiosPage() {
                     Ver disputa
                   </Link>
                 </>
+              ) : disputaBatalhandoGinasio ? (
+                // NOVO: mostrar o "Ver disputa" quando estiver batalhando
+                <Link
+                  href={`/ginasios/${g.id}/disputa`}
+                  className="text-xs text-blue-600 underline"
+                >
+                  Ver disputa
+                </Link>
               ) : meuDesafio && meuDesafio.status === 'pendente' ? (
                 <div className="flex flex-col gap-2 items-end">
                   <button

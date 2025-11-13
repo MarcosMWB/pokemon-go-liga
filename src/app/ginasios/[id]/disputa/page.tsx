@@ -18,24 +18,8 @@ import {
 } from "firebase/firestore";
 
 const TIPOS = [
-  "normal",
-  "fire",
-  "water",
-  "grass",
-  "electric",
-  "ice",
-  "fighting",
-  "poison",
-  "ground",
-  "flying",
-  "psychic",
-  "bug",
-  "rock",
-  "ghost",
-  "dragon",
-  "dark",
-  "steel",
-  "fairy",
+  "normal","fire","water","grass","electric","ice","fighting","poison","ground","flying",
+  "psychic","bug","rock","ghost","dragon","dark","steel","fairy",
 ];
 
 type Ginasio = {
@@ -90,15 +74,13 @@ export default function DisputaGinasioPage() {
   const [salvandoTipo, setSalvandoTipo] = useState(false);
   const [declarando, setDeclarando] = useState(false);
   const [oponente, setOponente] = useState("");
+  const [avisoTipoInvalidado, setAvisoTipoInvalidado] = useState<string | null>(null);
 
-  // helper pra renderizar ícone
   const renderTipoIcon = (tipo?: string, size = 28) => {
     if (!tipo) return null;
     const src = TYPE_ICONS[tipo];
     if (!src) return <span className="text-xs text-gray-500">{tipo}</span>;
-    return (
-      <Image src={src} alt={tipo} width={size} height={size} className="inline-block" />
-    );
+    return <Image src={src} alt={tipo} width={size} height={size} className="inline-block" />;
   };
 
   // 1) auth
@@ -117,7 +99,6 @@ export default function DisputaGinasioPage() {
   useEffect(() => {
     if (!ginasioId) return;
 
-    // ginásio
     const unsubG = onSnapshot(doc(db, "ginasios", ginasioId), (snap) => {
       if (!snap.exists()) return;
       const d = snap.data() as any;
@@ -129,7 +110,6 @@ export default function DisputaGinasioPage() {
       });
     });
 
-    // disputa do ginásio
     const qDisputa = query(
       collection(db, "disputas_ginasio"),
       where("ginasio_id", "==", ginasioId),
@@ -160,7 +140,7 @@ export default function DisputaGinasioPage() {
     };
   }, [ginasioId]);
 
-  // 3) ouvir participantes da disputa
+  // 3) ouvir participantes
   useEffect(() => {
     if (!disputa) return;
 
@@ -208,7 +188,7 @@ export default function DisputaGinasioPage() {
     return () => unsub();
   }, [disputa]);
 
-  // 4) ouvir resultados da disputa
+  // 4) ouvir resultados
   useEffect(() => {
     if (!disputa) return;
 
@@ -239,34 +219,28 @@ export default function DisputaGinasioPage() {
     return () => unsub();
   }, [disputa]);
 
-  // 5) carregar tipos ocupados, MAS agora filtra pela liga da disputa
+  // === NOVO: ouvir tipos ocupados em TEMPO REAL (mesma liga, exceto o próprio ginásio) ===
   useEffect(() => {
     if (!disputa) return;
 
-    (async () => {
-      const all = await getDocs(collection(db, "ginasios"));
+    const ligaDaDisputa = disputa.liga || disputa.liga_nome || "";
+    const unsub = onSnapshot(collection(db, "ginasios"), (snap) => {
       const v: string[] = [];
-
-      const ligaDaDisputa = disputa.liga || disputa.liga_nome || "";
-
-      all.forEach((g) => {
+      snap.forEach((g) => {
         const d = g.data() as any;
-        // não comparar com o próprio ginásio da disputa
         if (g.id === disputa.ginasio_id) return;
 
         const ligaDoGinasio = d.liga || d.liga_nome || "";
-
-        // se a disputa tem liga definida, só bloqueia tipos de ginásios da MESMA liga
         if (ligaDaDisputa) {
-          if (!ligaDoGinasio) return; // ginásio sem liga não interfere
-          if (ligaDoGinasio !== ligaDaDisputa) return; // liga diferente, ignora
+          if (!ligaDoGinasio) return;
+          if (ligaDoGinasio !== ligaDaDisputa) return;
         }
-
         if (d.tipo) v.push(d.tipo);
       });
-
       setOcupados(v);
-    })();
+    });
+
+    return () => unsub();
   }, [disputa]);
 
   const disputaTravada = disputa?.status === "batalhando";
@@ -307,11 +281,10 @@ export default function DisputaGinasioPage() {
         createdAt: Date.now(),
       });
     } else {
-      await updateDoc(snap.docs[0].ref, {
-        tipo_escolhido: tipo,
-      });
+      await updateDoc(snap.docs[0].ref, { tipo_escolhido: tipo });
     }
 
+    setAvisoTipoInvalidado(null);
     setSalvandoTipo(false);
   };
 
@@ -376,6 +349,54 @@ export default function DisputaGinasioPage() {
     });
   };
 
+  // Meu participante (usar acima de efeitos que dependem dele)
+  const meuParticipante = userUid
+    ? participantes.find((p) => p.usuario_uid === userUid)
+    : null;
+
+  // === NOVO: se o meu tipo virou indisponível ANTES de iniciar (inscricoes), limpa e avisa ===
+  useEffect(() => {
+    if (
+      !disputa ||
+      disputa.status !== "inscricoes" ||
+      !userUid ||
+      !meuParticipante?.id ||
+      !meuParticipante?.tipo_escolhido
+    ) {
+      return;
+    }
+
+    const escolhido = meuParticipante.tipo_escolhido;
+    const ocupou = escolhido !== disputa.tipo_original && ocupados.includes(escolhido);
+
+    if (ocupou) {
+      (async () => {
+        try {
+          await updateDoc(
+            doc(db, "disputas_ginasio_participantes", meuParticipante.id),
+            {
+              tipo_escolhido: "",
+              invalidado: true,
+              invalidado_motivo: "tipo_indisponivel",
+              invalidadoEm: Date.now(),
+            }
+          );
+          setAvisoTipoInvalidado(
+            `Seu tipo "${escolhido}" ficou indisponível na liga e foi removido. Escolha outro.`
+          );
+        } catch (e) {
+          console.error("falha ao invalidar tipo", e);
+        }
+      })();
+    }
+  }, [
+    disputa,
+    userUid,
+    meuParticipante?.id,
+    meuParticipante?.tipo_escolhido,
+    ocupados,
+  ]);
+
   if (loading) return <p className="p-8">Carregando disputa...</p>;
   if (!ginasio) return <p className="p-8">Ginásio não encontrado.</p>;
   if (!disputa) {
@@ -392,15 +413,11 @@ export default function DisputaGinasioPage() {
     );
   }
 
-  // agora os tipos permitidos consideram apenas os ocupados da MESMA liga
+  // tipos permitidos = tudo menos ocupados da mesma liga (exceto o tipo_original do próprio ginásio)
   const tiposPermitidos = TIPOS.filter((t) => {
     if (t === disputa.tipo_original) return true;
     return !ocupados.includes(t);
   });
-
-  const meuParticipante = userUid
-    ? participantes.find((p) => p.usuario_uid === userUid)
-    : null;
 
   const pendentesParaMim =
     userUid
@@ -411,7 +428,6 @@ export default function DisputaGinasioPage() {
           if (r.tipo === "empate") {
             return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
           }
-
           return r.perdedor_uid === userUid;
         })
       : [];
@@ -440,9 +456,7 @@ export default function DisputaGinasioPage() {
       <h1 className="text-2xl font-bold">
         Disputa do ginásio {ginasio.nome}
         {disputa.liga_nome ? (
-          <span className="ml-2 text-sm text-gray-500">
-            ({disputa.liga_nome})
-          </span>
+          <span className="ml-2 text-sm text-gray-500">({disputa.liga_nome})</span>
         ) : null}
       </h1>
 
@@ -455,6 +469,12 @@ export default function DisputaGinasioPage() {
       <p className="text-gray-600">
         Status: {disputa.status === "inscricoes" ? "inscrições abertas" : disputa.status}
       </p>
+
+      {avisoTipoInvalidado && (
+        <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
+          {avisoTipoInvalidado}
+        </div>
+      )}
 
       {/* escolher tipo */}
       <div className="bg-white border rounded p-4">
@@ -481,11 +501,15 @@ export default function DisputaGinasioPage() {
             </button>
           ))}
         </div>
-        {meuParticipante?.tipo_escolhido && (
+        {meuParticipante?.tipo_escolhido ? (
           <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
             Você escolheu:
             {renderTipoIcon(meuParticipante.tipo_escolhido, 24)}
             <span className="capitalize">{meuParticipante.tipo_escolhido}</span>
+          </p>
+        ) : (
+          <p className="text-xs text-gray-500 mt-2">
+            Escolha um tipo disponível da liga para participar.
           </p>
         )}
       </div>
