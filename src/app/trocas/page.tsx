@@ -85,7 +85,6 @@ export default function TrocasPage() {
   const [chatMatchId, setChatMatchId] = useState<string | null>(null)
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([])
   const [chatInput, setChatInput] = useState('')
-  const [chatOtherUserId, setChatOtherUserId] = useState<string | null>(null)
   const [chatOtherName, setChatOtherName] = useState<string>('Treinador')
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null)
   const [chatMyFC, setChatMyFC] = useState<string | null>(null)
@@ -554,34 +553,6 @@ export default function TrocasPage() {
     })
   }
 
-  const updateOferecoDetalhe = (
-    nome: string,
-    campo: 'shiny' | 'dynamax' | 'especial' | 'nota',
-    valor: boolean | string
-  ) => {
-    setOferecoDetalhes((prev) => ({
-      ...prev,
-      [nome]: {
-        ...prev[nome],
-        [campo]: valor,
-      },
-    }))
-  }
-
-  const updateQueroDetalhe = (
-    nome: string,
-    campo: 'shiny' | 'dynamax' | 'especial' | 'nota',
-    valor: boolean | string
-  ) => {
-    setQueroDetalhes((prev) => ({
-      ...prev,
-      [nome]: {
-        ...prev[nome],
-        [campo]: valor,
-      },
-    }))
-  }
-
   async function openChatByMatchId(matchId: string) {
     if (!user) return
     if (chatUnsubRef.current) chatUnsubRef.current()
@@ -597,7 +568,6 @@ export default function TrocasPage() {
       const mData = mDoc.data() as any
       const usersArr: string[] = mData.users || []
       const otherId = usersArr.find((u) => u !== user.uid) || null
-      setChatOtherUserId(otherId)
 
       let myFC = chatMyFC
       if (!myFC && minhaOferta?.friendCode) myFC = minhaOferta.friendCode
@@ -688,7 +658,6 @@ export default function TrocasPage() {
     setChatMatchId(null)
     setChatMsgs([])
     setChatInput('')
-    setChatOtherUserId(null)
     setChatOtherFC(null)
   }
 
