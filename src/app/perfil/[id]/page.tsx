@@ -358,8 +358,6 @@ export default function PerfilPage() {
       const otherUid = d.lider_uid === logadoUid ? d.desafiante_uid : d.lider_uid;
       setSouLiderNoChat(d.lider_uid === logadoUid);
 
-      const meSnap = await getDoc(doc(db, 'usuarios', logadoUid));
-
       let nome = 'Treinador';
       let fc: string | null = null;
       const uSnap = await getDoc(doc(db, 'usuarios', otherUid));
