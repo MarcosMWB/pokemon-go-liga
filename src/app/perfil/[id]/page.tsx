@@ -829,9 +829,8 @@ export default function PerfilPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${
-                          mine ? 'self-end bg-blue-600 text-white' : 'self-start bg-white border'
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded ${mine ? 'self-end bg-blue-600 text-white' : 'self-start bg-white border'
+                          }`}
                       >
                         <p className="text-xs">{m.text}</p>
                       </div>
@@ -840,35 +839,44 @@ export default function PerfilPage() {
                 </div>
               )}
             </div>
+            <div className="mt-3 space-y-2">
+              {/* linha do input + enviar */}
+              <div className="flex items-center gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()}
+                  className="flex-1 border rounded px-3 py-2 text-sm"
+                  placeholder="Escreva uma mensagem..."
+                />
+                <button
+                  onClick={sendChatMessage}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded"
+                  type="button"
+                >
+                  Enviar
+                </button>
+              </div>
 
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()}
-                className="flex-1 border rounded px-3 py-2 text-sm"
-                placeholder="Escreva uma mensagem..."
-              />
-              <button
-                onClick={sendChatMessage}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded"
-              >
-                Enviar
-              </button>
-              <button
-                onClick={declareResultadoVenci}
-                className="bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
-                title="Você declara que VENCEU"
-              >
-                Venci
-              </button>
-              <button
-                onClick={declareResultadoFuiDerrotado}
-                className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
-                title="Você declara que FOI DERROTADO"
-              >
-                Fui derrotado
-              </button>
+              {/* linha de declaração de resultado (abaixo do enviar) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={declareResultadoVenci}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
+                  title="Você declara que VENCEU"
+                  type="button"
+                >
+                  🏆 Venci
+                </button>
+                <button
+                  onClick={declareResultadoFuiDerrotado}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
+                  title="Você declara que FOI DERROTADO"
+                  type="button"
+                >
+                  Fui derrotado
+                </button>
+              </div>
             </div>
           </div>
         </div>
