@@ -794,20 +794,22 @@ export default function GinasiosPage() {
               >
                 Enviar
               </button>
-              <button
-                onClick={declareResultadoVenci}
-                className="bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
-                title="Você declara que VENCEU"
-              >
-                Venci
-              </button>
-              <button
-                onClick={declareResultadoFuiDerrotado}
-                className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
-                title="Você declara que FOI DERROTADO"
-              >
-                Fui derrotado
-              </button>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={declareResultadoVenci}
+                  className="bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
+                  title="Você declara que VENCEU"
+                >
+                  Venci
+                </button>
+                <button
+                  onClick={declareResultadoFuiDerrotado}
+                  className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
+                  title="Você declara que FOI DERROTADO"
+                >
+                  Fui derrotado
+                </button>
+              </div>
             </div>
           </div>
         </div>
