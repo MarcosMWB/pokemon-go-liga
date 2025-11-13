@@ -110,89 +110,63 @@ export default function DevDesafiosPage() {
     return () => unsub();
   }, [isAdmin]);
 
-  // GINÁSIOS (nome + liga) — evita loop infinito
+  // antes: useEffect que usava gMap/ligasDisponiveis dentro
   useEffect(() => {
     if (isAdmin !== true) return;
-
     const ids = Array.from(new Set(desafios.map((d) => d.ginasio_id))).filter(Boolean);
-    let cancelled = false;
 
     (async () => {
-      const updates: Record<string, GymInfo> = {};
-      const ligasSet = new Set<string>(ligasDisponiveis);
-
-      for (const gid of ids) {
-        if (!gMap[gid]) {
+      // monta tudo do zero, sem ler estados atuais -> sem dependências faltantes
+      const entries: Array<[string, { nome: string; liga?: string }]> = await Promise.all(
+        ids.map(async (gid) => {
           const g = await getDoc(doc(db, "ginasios", gid));
           if (g.exists()) {
             const gd = g.data() as any;
-            updates[gid] = { nome: gd.nome || gid, liga: gd.liga || "" };
-            if (gd.liga) ligasSet.add(gd.liga);
-          } else {
-            updates[gid] = { nome: gid };
+            return [gid, { nome: gd.nome || gid, liga: gd.liga || "" }] as const;
           }
-        } else if (gMap[gid].liga) {
-          ligasSet.add(gMap[gid].liga!);
-        }
+          return [gid, { nome: gid }] as const;
+        })
+      );
+
+      const nextMap: Record<string, { nome: string; liga?: string }> = {};
+      const ligasSet = new Set<string>();
+
+      for (const [gid, info] of entries) {
+        nextMap[gid] = info;
+        if (info.liga) ligasSet.add(info.liga);
       }
 
-      if (cancelled) return;
-
-      if (Object.keys(updates).length) {
-        setGMap((prev) => ({ ...prev, ...updates }));
-      }
-
-      const arr = Array.from(ligasSet).sort();
-      setLigasDisponiveis((prev) => {
-        const prevKey = prev.join("|");
-        const newKey = arr.join("|");
-        return prevKey === newKey ? prev : arr;
-      });
+      setGMap(nextMap);
+      setLigasDisponiveis(Array.from(ligasSet).sort());
     })();
+  }, [desafios, isAdmin]);
 
-    return () => {
-      cancelled = true;
-    };
-    // deps só no que realmente dispara novas buscas
-  }, [desafios, isAdmin]); // <- sem gMap/ligasDisponiveis
 
-  // USUÁRIOS (nomes) — evita loop infinito
   useEffect(() => {
     if (isAdmin !== true) return;
 
-    const uids = new Set<string>();
-    desafios.forEach((d) => {
-      if (d.lider_uid) uids.add(d.lider_uid);
-      if (d.desafiante_uid) uids.add(d.desafiante_uid);
-    });
-
-    let cancelled = false;
+    const uids = Array.from(
+      new Set(
+        desafios.flatMap((d) => [d.lider_uid, d.desafiante_uid].filter(Boolean) as string[])
+      )
+    );
 
     (async () => {
-      const updates: Record<string, UserInfo> = {};
-
-      for (const uid of uids) {
-        if (!uMap[uid]) {
+      const kvs = await Promise.all(
+        uids.map(async (uid) => {
           const u = await getDoc(doc(db, "usuarios", uid));
           if (u.exists()) {
             const ud = u.data() as any;
-            updates[uid] = { display: ud.nome || ud.email || uid };
-          } else {
-            updates[uid] = { display: uid };
+            return [uid, { display: ud.nome || ud.email || uid }] as const;
           }
-        }
-      }
-
-      if (cancelled) return;
-      if (Object.keys(updates).length) {
-        setUMap((prev) => ({ ...prev, ...updates }));
-      }
+          return [uid, { display: uid }] as const;
+        })
+      );
+      const next: Record<string, { display: string }> = {};
+      for (const [k, v] of kvs) next[k] = v;
+      setUMap(next);
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [desafios, isAdmin]); // <- sem uMap
+  }, [desafios, isAdmin]);
 
   const filtrados = useMemo(() => {
     return desafios.filter((d) => {
@@ -289,9 +263,8 @@ export default function DevDesafiosPage() {
             return (
               <div
                 key={d.id}
-                className={`bg-white rounded shadow p-4 flex items-center justify-between ${
-                  d.status === "conflito" ? "border border-red-300" : ""
-                }`}
+                className={`bg-white rounded shadow p-4 flex items-center justify-between ${d.status === "conflito" ? "border border-red-300" : ""
+                  }`}
               >
                 <div className="space-y-1">
                   <p className="font-semibold">
@@ -304,13 +277,12 @@ export default function DevDesafiosPage() {
                   <p className="text-xs text-gray-600">
                     Status:{" "}
                     <span
-                      className={`px-2 py-0.5 rounded text-white ${
-                        d.status === "pendente"
-                          ? "bg-blue-600"
-                          : d.status === "conflito"
+                      className={`px-2 py-0.5 rounded text-white ${d.status === "pendente"
+                        ? "bg-blue-600"
+                        : d.status === "conflito"
                           ? "bg-red-600"
                           : "bg-green-600"
-                      }`}
+                        }`}
                     >
                       {d.status}
                     </span>{" "}
