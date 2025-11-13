@@ -21,6 +21,7 @@ import {
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { PokemonSelect } from '@/components/PokemonSelect'
 import type { Unsubscribe } from 'firebase/firestore'
+import Image from 'next/image'
 
 type DetalhePokemon = {
   shiny?: boolean
@@ -1078,7 +1079,7 @@ export default function TrocasPage() {
                           <a href={deep} className="text-blue-600 text-sm hover:underline">
                             Abrir no Pokémon GO
                           </a>
-                          <img
+                          <Image
                             src={qrSrc(native)}
                             alt="QR para adicionar no Pokémon GO"
                             className="w-40 h-40 border rounded"

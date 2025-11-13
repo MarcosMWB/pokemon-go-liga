@@ -798,7 +798,7 @@ export default function PerfilPage() {
                           <a href={deep} className="text-blue-600 text-sm hover:underline">
                             Abrir no Pokémon GO
                           </a>
-                          <img
+                          <Image
                             src={qrSrc(native)}
                             alt="QR para adicionar"
                             className="w-40 h-40 border rounded"
@@ -859,7 +859,7 @@ export default function PerfilPage() {
               </div>
 
               {/* linha de declaração de resultado (abaixo do enviar) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={declareResultadoVenci}
                   className="w-full bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
