@@ -25,26 +25,31 @@ export default function LoginPage() {
       const cred = await signInWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // se ainda não confirmou o e-mail
+      // 🟡 Se o e-mail ainda não foi verificado:
       if (!user.emailVerified) {
         try {
           await sendEmailVerification(user);
-        } catch {
-          // se der erro pra reenviar, a gente só não quebra o fluxo
+          setMsg(
+            "Seu e-mail ainda não foi confirmado. Enviamos um novo link para sua caixa de entrada."
+          );
+        } catch (error) {
+          console.error("Erro ao reenviar verificação:", error);
+          setMsg("Seu e-mail não está verificado e houve um erro ao reenviar o link.");
         }
-        setMsg("Seu e-mail ainda não foi confirmado. Veja sua caixa de entrada.");
+
+        // Sai da conta pra evitar acesso sem verificação
         await signOut(auth);
         return;
       }
 
-      // aqui o e-mail está verificado no Auth → vamos marcar no Firestore
+      // 🟢 Se o e-mail está verificado, atualiza o Firestore
       try {
         const userRef = doc(db, "usuarios", user.uid);
         const snap = await getDoc(userRef);
+
         if (snap.exists()) {
           await updateDoc(userRef, { verificado: true });
         } else {
-          // caso raro: não exista doc (alguém apagou no painel)
           await setDoc(userRef, {
             email: user.email || "",
             verificado: true,
@@ -52,10 +57,10 @@ export default function LoginPage() {
           });
         }
       } catch (e) {
-        // não bloqueia o login se der erro pra escrever
-        console.warn("não foi possível marcar verificado no firestore", e);
+        console.warn("Não foi possível marcar como verificado no Firestore:", e);
       }
 
+      // Redireciona pro perfil
       router.push(`/perfil/${user.uid}`);
     } catch (err: any) {
       setMsg(err.message || "Erro ao fazer login.");
