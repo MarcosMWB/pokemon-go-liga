@@ -760,39 +760,6 @@ export default function GinasiosPage() {
                   <p className="text-xs text-amber-600">O outro jogador não cadastrou FC.</p>
                 )}
               </div>
-
-              <div className="border rounded-lg p-3">
-                <p className="text-xs text-slate-500">Seu código:</p>
-                {chatMyFC ? (
-                  <>
-                    <p className="text-sm font-semibold">FC: {chatMyFC}</p>
-                    {(() => {
-                      const { native, androidIntent } = buildPoGoFriendLinks(chatMyFC!);
-                      const deep = isAndroid ? androidIntent : native;
-                      return (
-                        <div className="mt-2 flex flex-col items-start gap-2">
-                          <a href={deep} className="text-blue-600 text-sm hover:underline">
-                            Abrir meu link no Pokémon GO
-                          </a>
-                          <img
-                            src={qrSrc(native)}
-                            alt="QR do seu FC"
-                            className="w-40 h-40 border rounded"
-                          />
-                          <button
-                            onClick={() => navigator.clipboard?.writeText(chatMyFC!)}
-                            className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                          >
-                            Copiar meu FC
-                          </button>
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <p className="text-xs text-amber-600">Cadastre seu FC em “usuários”.</p>
-                )}
-              </div>
             </div>
 
             <div className="mt-4 border rounded-lg p-3 max-h-72 overflow-auto bg-slate-50">
