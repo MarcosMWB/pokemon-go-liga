@@ -97,7 +97,6 @@ export default function GinasiosPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatOtherName, setChatOtherName] = useState('Treinador');
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
-  const [chatMyFC, setChatMyFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
@@ -406,9 +405,6 @@ export default function GinasiosPage() {
       const d = dSnap.data() as any;
       const otherUid = d.lider_uid === userUid ? d.desafiante_uid : d.lider_uid;
       setSouLiderNoChat(d.lider_uid === userUid);
-
-      const meSnap = await getDoc(doc(db, 'usuarios', userUid));
-      setChatMyFC(meSnap.exists() ? (meSnap.data() as any).friend_code || null : null);
 
       let nome = 'Treinador';
       let fc: string | null = null;
