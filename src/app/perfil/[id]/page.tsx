@@ -98,7 +98,6 @@ export default function PerfilPage() {
   const [minhasInscricoes, setMinhasInscricoes] = useState<DisputaParticipante[]>([]);
   const [desafiosComoLider, setDesafiosComoLider] = useState<Desafio[]>([]);
   const [temporada, setTemporada] = useState<{ id: string; nome?: string } | null>(null);
-  const [insignias, setInsignias] = useState<Insignia[]>([]);
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -542,11 +541,6 @@ export default function PerfilPage() {
   const ginasiosFiltrados = ginasiosLider.filter((g) => {
     if (!ligaSelecionada) return true;
     return (g.liga || '') === ligaSelecionada;
-  });
-
-  const insigniasFiltradas = insignias.filter((ins) => {
-    if (!ligaSelecionada) return true;
-    return (ins.liga || '') === ligaSelecionada;
   });
 
   return (

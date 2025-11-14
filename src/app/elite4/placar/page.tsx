@@ -222,8 +222,6 @@ export default function Elite4PlacarPage() {
     return [...participantes].sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0));
   }, [participantes]);
 
-  const top4Uids = useMemo(() => new Set(ranking.slice(0, 4).map((r) => r.usuario_uid)), [ranking]);
-
   if (loadingBase) return <p className="p-6">Carregando…</p>;
 
   return (
