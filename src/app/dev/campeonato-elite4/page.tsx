@@ -29,7 +29,7 @@ type Participante = {
   nome?: string;
   ginasio_nome?: string;
 };
-type Elite4 = { id: string; liga: string; pos: 1|2|3|4; uid: string };
+type Elite4 = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string };
 type Ginasio = { id: string; nome: string; liga?: string; lider_uid?: string };
 
 /** Página */
@@ -50,7 +50,7 @@ export default function DevCampeonatoElite4() {
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) { router.replace("/login"); return; }
-      const sup = await getDocs(query(collection(db, "superusers"), where("uid","==",user.uid)));
+      const sup = await getDocs(query(collection(db, "superusers"), where("uid", "==", user.uid)));
       if (sup.empty) { setIsAdmin(false); router.replace("/"); return; }
       setIsAdmin(true);
     });
@@ -62,11 +62,12 @@ export default function DevCampeonatoElite4() {
     if (isAdmin !== true) return;
     (async () => {
       const snap = await getDocs(collection(db, "ligas"));
-      const ls: Liga[] = snap.docs.map((d)=>({id:d.id, nome:(d.data() as any).nome || d.id}));
+      const ls: Liga[] = snap.docs.map((d) => ({ id: d.id, nome: (d.data() as any).nome || d.id }));
       setLigas(ls);
-      if (!ligaSel && ls[0]?.nome) setLigaSel(ls[0].nome);
+      // evita depender de ligaSel
+      setLigaSel((prev) => prev || ls[0]?.nome || "");
     })();
-  }, [isAdmin]); // ligaSel setada depois
+  }, [isAdmin]);
 
   /** Carrega/escuta campeonato aberto da liga selecionada */
   useEffect(() => {
@@ -86,12 +87,12 @@ export default function DevCampeonatoElite4() {
     });
 
     // elite 4 atual dessa liga
-    const qElite = query(collection(db, "elite4"), where("liga","==",ligaSel));
+    const qElite = query(collection(db, "elite4"), where("liga", "==", ligaSel));
     const unsubElite = onSnapshot(qElite, (snap) => {
-      const map: Record<number, Elite4|undefined> = {};
-      snap.docs.forEach((dd)=>{
+      const map: Record<number, Elite4 | undefined> = {};
+      snap.docs.forEach((dd) => {
         const data = dd.data() as any;
-        if (data.pos >=1 && data.pos <=4) map[data.pos] = { id: dd.id, liga: data.liga, pos: data.pos, uid: data.uid };
+        if (data.pos >= 1 && data.pos <= 4) map[data.pos] = { id: dd.id, liga: data.liga, pos: data.pos, uid: data.uid };
       });
       setElite4Atual(map);
     });
@@ -104,7 +105,7 @@ export default function DevCampeonatoElite4() {
     if (!campeonato) return;
     const qPart = query(
       collection(db, "campeonatos_elite4_participantes"),
-      where("campeonato_id","==", campeonato.id)
+      where("campeonato_id", "==", campeonato.id)
     );
     const unsub = onSnapshot(qPart, async (snap) => {
       const base: Participante[] = [];
@@ -118,16 +119,16 @@ export default function DevCampeonatoElite4() {
           pontos: x.pontos ?? 0,
         };
         // Nome do usuário
-        const u = await getDoc(doc(db,"usuarios", p.usuario_uid));
+        const u = await getDoc(doc(db, "usuarios", p.usuario_uid));
         if (u.exists()) p.nome = (u.data() as any).nome || (u.data() as any).email || p.usuario_uid;
         // Nome do ginásio
-        const g = await getDoc(doc(db,"ginasios", p.ginasio_id));
+        const g = await getDoc(doc(db, "ginasios", p.ginasio_id));
         if (g.exists()) p.ginasio_nome = (g.data() as any).nome || p.ginasio_id;
         base.push(p);
       }
       // compacta por líder (se por acaso liderar >1 ginásio, mantém a maior pontuação)
       const byUid = new Map<string, Participante>();
-      base.forEach((p)=>{
+      base.forEach((p) => {
         const old = byUid.get(p.usuario_uid);
         if (!old || p.pontos > old.pontos) byUid.set(p.usuario_uid, p);
       });
@@ -142,21 +143,21 @@ export default function DevCampeonatoElite4() {
     setMsg(""); setSalvando(true);
     try {
       // cria doc campeonato
-      const campRef = await addDoc(collection(db,"campeonatos_elite4"), {
+      const campRef = await addDoc(collection(db, "campeonatos_elite4"), {
         liga: ligaSel,
         status: "aberto",
         createdAt: Date.now(),
       });
 
       // coleta líderes atuais da liga (um por líder)
-      const gs = await getDocs(query(collection(db,"ginasios"), where("liga","==",ligaSel), where("lider_uid","!=", "")));
+      const gs = await getDocs(query(collection(db, "ginasios"), where("liga", "==", ligaSel), where("lider_uid", "!=", "")));
       const seen = new Set<string>();
       for (const g of gs.docs) {
         const d = g.data() as any;
         const uid = d.lider_uid as string;
         if (!uid || seen.has(uid)) continue; // 1 por líder
         seen.add(uid);
-        await addDoc(collection(db,"campeonatos_elite4_participantes"), {
+        await addDoc(collection(db, "campeonatos_elite4_participantes"), {
           campeonato_id: campRef.id,
           usuario_uid: uid,
           ginasio_id: g.id,
@@ -165,7 +166,7 @@ export default function DevCampeonatoElite4() {
         });
       }
       setMsg("Campeonato criado e participantes carregados.");
-    } catch (e:any) {
+    } catch (e: any) {
       setMsg("Erro ao criar: " + e.message);
     } finally {
       setSalvando(false);
@@ -174,7 +175,7 @@ export default function DevCampeonatoElite4() {
 
   const atualizarPontos = async (p: Participante, novo: number) => {
     setMsg("");
-    await updateDoc(doc(db,"campeonatos_elite4_participantes", p.id), { pontos: novo });
+    await updateDoc(doc(db, "campeonatos_elite4_participantes", p.id), { pontos: novo });
   };
 
   const finalizarEPromover = async () => {
@@ -182,12 +183,12 @@ export default function DevCampeonatoElite4() {
     if (participantes.length < 4) { setMsg("Precisa de pelo menos 4 participantes."); return; }
 
     // ordena por pontos (desc) e pega top-4
-    const ordenados = [...participantes].sort((a,b)=> (b.pontos??0) - (a.pontos??0));
-    const top4 = ordenados.slice(0,4);
+    const ordenados = [...participantes].sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0));
+    const top4 = ordenados.slice(0, 4);
 
     if (!confirm(
       `Confirmar promoção para ELITE 4 da liga "${ligaSel}"?\n` +
-      top4.map((p,i)=> `${i+1}º: ${p.nome} (${p.ginasio_nome})`).join("\n") +
+      top4.map((p, i) => `${i + 1}º: ${p.nome} (${p.ginasio_nome})`).join("\n") +
       `\nLíderes promovidos deixam seus ginásios vagos e os antigos E4 assumem esses ginásios (mesma posição).`
     )) return;
 
@@ -198,18 +199,18 @@ export default function DevCampeonatoElite4() {
       // carrega ginásios dos promovidos (uma vez)
       const gCache = new Map<string, Ginasio>();
       for (const p of top4) {
-        const g = await getDoc(doc(db,"ginasios", p.ginasio_id));
+        const g = await getDoc(doc(db, "ginasios", p.ginasio_id));
         if (g.exists()) gCache.set(p.ginasio_id, { id: g.id, ...(g.data() as any) });
       }
 
       // aplica posição 1..4
-      for (let pos=1; pos<=4; pos++) {
-        const promoted = top4[pos-1];
+      for (let pos = 1; pos <= 4; pos++) {
+        const promoted = top4[pos - 1];
         const demoted = elite4Atual[pos];
 
         // 1) Atualiza/define ELITE 4 pos N
         const eliteDocId = demoted?.id || `${ligaSel}_pos${pos}`;
-        batch.set(doc(db,"elite4", eliteDocId), {
+        batch.set(doc(db, "elite4", eliteDocId), {
           liga: ligaSel,
           pos,
           uid: promoted.usuario_uid,
@@ -217,7 +218,7 @@ export default function DevCampeonatoElite4() {
         });
 
         // 2) Deixa o ginásio do promovido vago
-        batch.update(doc(db,"ginasios", promoted.ginasio_id), {
+        batch.update(doc(db, "ginasios", promoted.ginasio_id), {
           lider_uid: "",
           em_disputa: false,
           derrotas_seguidas: 0,
@@ -225,7 +226,7 @@ export default function DevCampeonatoElite4() {
 
         // 3) Se havia antigo E4 nessa posição, REBAIXA para o ginásio que ficou vago
         if (demoted?.uid) {
-          batch.update(doc(db,"ginasios", promoted.ginasio_id), {
+          batch.update(doc(db, "ginasios", promoted.ginasio_id), {
             lider_uid: demoted.uid,      // assume o ginásio do promovido
             em_disputa: false,
             derrotas_seguidas: 0,
@@ -234,19 +235,19 @@ export default function DevCampeonatoElite4() {
       }
 
       // fecha o campeonato
-      batch.update(doc(db,"campeonatos_elite4", campeonato.id), { status: "fechado", closedAt: Date.now() });
+      batch.update(doc(db, "campeonatos_elite4", campeonato.id), { status: "fechado", closedAt: Date.now() });
 
       // histórico simples
-      await addDoc(collection(db,"campeonatos_elite4_resultados"), {
+      await addDoc(collection(db, "campeonatos_elite4_resultados"), {
         campeonato_id: campeonato.id,
         liga: ligaSel,
-        top4: top4.map((p,i)=>({pos:i+1, uid:p.usuario_uid, nome:p.nome||p.usuario_uid, ginasio_id:p.ginasio_id, ginasio_nome:p.ginasio_nome||p.ginasio_id, pontos:p.pontos})),
+        top4: top4.map((p, i) => ({ pos: i + 1, uid: p.usuario_uid, nome: p.nome || p.usuario_uid, ginasio_id: p.ginasio_id, ginasio_nome: p.ginasio_nome || p.ginasio_id, pontos: p.pontos })),
         appliedAt: Date.now(),
       });
 
       await batch.commit();
       setMsg("Promoções aplicadas com sucesso.");
-    } catch (e:any) {
+    } catch (e: any) {
       setMsg("Erro ao aplicar promoções: " + e.message);
     } finally {
       setSalvando(false);
@@ -256,7 +257,7 @@ export default function DevCampeonatoElite4() {
   const emAberto = Boolean(campeonato && campeonato.status === "aberto");
 
   const topPreview = useMemo(() => {
-    return [...participantes].sort((a,b)=> (b.pontos??0)-(a.pontos??0)).slice(0,4);
+    return [...participantes].sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0)).slice(0, 4);
   }, [participantes]);
 
   if (isAdmin === null) return <p className="p-6">Carregando…</p>;
@@ -268,11 +269,11 @@ export default function DevCampeonatoElite4() {
         <div>
           <h1 className="text-2xl font-bold">Campeonato dos Líderes → ELITE 4</h1>
           <p className="text-sm text-gray-500">
-            Periodicamente, promova os 4 melhores líderes da liga selecionada para a ELITE 4. 
+            Periodicamente, promova os 4 melhores líderes da liga selecionada para a ELITE 4.
             Os antigos E4 (mesmas posições) assumem os ginásios dos promovidos.
           </p>
         </div>
-        <button onClick={()=>router.push("/dev")} className="text-sm text-blue-600 underline">Voltar ao painel</button>
+        <button onClick={() => router.push("/dev")} className="text-sm text-blue-600 underline">Voltar ao painel</button>
       </div>
 
       {msg && <div className="p-3 bg-yellow-50 border border-yellow-200 rounded text-sm">{msg}</div>}
@@ -283,7 +284,7 @@ export default function DevCampeonatoElite4() {
           <label className="text-xs text-gray-500">Liga</label>
           <select
             value={ligaSel}
-            onChange={(e)=>setLigaSel(e.target.value)}
+            onChange={(e) => setLigaSel(e.target.value)}
             className="border rounded px-2 py-1 text-sm"
           >
             {ligas.map(l => <option key={l.id} value={l.nome}>{l.nome}</option>)}
@@ -318,7 +319,7 @@ export default function DevCampeonatoElite4() {
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">ELITE 4 atual — {ligaSel || "—"}</h2>
         <ol className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {[1,2,3,4].map((pos)=>(
+          {[1, 2, 3, 4].map((pos) => (
             <li key={pos} className="p-3 bg-gray-50 rounded flex justify-between items-center">
               <span className="text-sm">Posição {pos}</span>
               <span className="text-sm font-medium">
@@ -347,21 +348,21 @@ export default function DevCampeonatoElite4() {
                 </thead>
                 <tbody>
                   {participantes
-                    .sort((a,b)=> (b.pontos??0)-(a.pontos??0))
-                    .map((p)=>(
-                    <tr key={p.id} className="border-b">
-                      <td className="py-2 pr-3">{p.nome || p.usuario_uid}</td>
-                      <td className="py-2 pr-3">{p.ginasio_nome || p.ginasio_id}</td>
-                      <td className="py-2 pr-3">
-                        <input
-                          type="number"
-                          value={p.pontos ?? 0}
-                          onChange={(e)=>atualizarPontos(p, Number(e.target.value))}
-                          className="w-24 border rounded px-2 py-1"
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                    .sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0))
+                    .map((p) => (
+                      <tr key={p.id} className="border-b">
+                        <td className="py-2 pr-3">{p.nome || p.usuario_uid}</td>
+                        <td className="py-2 pr-3">{p.ginasio_nome || p.ginasio_id}</td>
+                        <td className="py-2 pr-3">
+                          <input
+                            type="number"
+                            value={p.pontos ?? 0}
+                            onChange={(e) => atualizarPontos(p, Number(e.target.value))}
+                            className="w-24 border rounded px-2 py-1"
+                          />
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -374,16 +375,16 @@ export default function DevCampeonatoElite4() {
         <div className="bg-white p-4 rounded shadow">
           <h2 className="text-lg font-semibold mb-2">Pré-via do TOP-4</h2>
           <ol className="space-y-1">
-            {topPreview.map((p,i)=>(
+            {topPreview.map((p, i) => (
               <li key={p.id} className="text-sm">
-                {i+1}º — <span className="font-medium">{p.nome || p.usuario_uid}</span>
+                {i + 1}º — <span className="font-medium">{p.nome || p.usuario_uid}</span>
                 {" · "} {p.ginasio_nome || p.ginasio_id}
                 {" · "} {p.pontos ?? 0} pts
               </li>
             ))}
           </ol>
           <p className="text-xs text-gray-500 mt-2">
-            Ao finalizar, estes 4 assumem as posições 1–4 da ELITE 4. 
+            Ao finalizar, estes 4 assumem as posições 1–4 da ELITE 4.
             Os antigos E4 (se houver) assumem os ginásios dos promovidos.
           </p>
         </div>

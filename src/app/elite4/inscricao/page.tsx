@@ -33,7 +33,7 @@ export default function Elite4InscricaoPage() {
   const router = useRouter();
 
   const [uid, setUid] = useState<string | null>(null);
-  const [ligas, setLigas] = useState<Liga[]>([]);
+  const [, setLigas] = useState<Liga[]>([]);
   const [meusGinasios, setMeusGinasios] = useState<Ginasio[]>([]);
   const [abertosPorLiga, setAbertosPorLiga] = useState<Record<string, Campeonato | null>>({});
   const [minhasInscricoes, setMinhasInscricoes] = useState<Participacao[]>([]);
