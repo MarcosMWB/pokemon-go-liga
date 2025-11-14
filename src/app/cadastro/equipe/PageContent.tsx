@@ -417,7 +417,7 @@ export default function PageContent() {
           >
             ℹ️
           </button>
-          <span>⬅️⬅Atenção ao regulamento da liga {liga}</span>
+          <span>Atenção ao regulamento da liga {liga}</span>
         </div>
 
         {showInfo && (
@@ -449,7 +449,7 @@ export default function PageContent() {
                 return (
                   <li
                     key={p}
-                    className="flex justify-between items-center bg-yellow-100 px-3 py-1 rounded"
+                    className="flex flex-col items-center bg-yellow-100 px-3 py-1 rounded"
                   >
                     <span className="flex items-center gap-2 text-blue-800 font-bold">
                       <PokemonMini displayName={p} baseId={baseId} size={24} />

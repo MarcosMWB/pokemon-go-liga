@@ -90,7 +90,6 @@ export default function TrocasPage() {
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null)
   const [chatMyFC, setChatMyFC] = useState<string | null>(null)
 
-  // filtros rápidos – idioma selecionado
   const [chatFilterLang, setChatFilterLang] = useState<'pt' | 'en'>('pt')
   const [chatOtherQuero, setChatOtherQuero] = useState<string[]>([])
   const [chatMyQuero, setChatMyQuero] = useState<string[]>([])
@@ -99,6 +98,8 @@ export default function TrocasPage() {
   const matchUnsubRef = useRef<Unsubscribe | null>(null)
   const matchesListenerRef = useRef<Unsubscribe | null>(null)
   const chatInputRef = useRef<HTMLInputElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
+  const chatEndRef = useRef<HTMLDivElement>(null)
 
   const renderPokemonChip = (nome: string, det?: DetalhePokemon, extraClass = '') => (
     <span
@@ -124,33 +125,31 @@ export default function TrocasPage() {
     return { native, androidIntent }
   }
 
-  // NOVO: gera filtros múltiplos; trata *-gmax separadamente e acrescenta !trocado/!traded, !sombroso/!shadow, !mitíco/!mythical e !4*
+  // gmax agregados em UMA linha
   const buildFilters = (list: string[], lang: 'pt' | 'en'): string[] => {
     const extras =
       lang === 'pt'
         ? ' & !trocado & !sombroso & !mitíco & !4*'
         : ' & !traded & !shadow & !mythical & !4*'
+    const giga = lang === 'pt' ? 'gigamax' : 'gigantamax'
 
     const normals: string[] = []
-    const gmaxFilters: string[] = []
+    const gmaxBases: string[] = []
 
     for (const raw of list || []) {
       const n = (raw || '').toLowerCase().trim()
       if (!n) continue
       if (/-gmax$/.test(n)) {
         const base = n.replace(/-gmax$/, '')
-        const giga = lang === 'pt' ? 'gigamax' : 'gigantamax'
-        gmaxFilters.push(`${base} & ${giga}${extras}`)
+        if (base) gmaxBases.push(base)
       } else {
         normals.push(n)
       }
     }
 
     const out: string[] = []
-    if (normals.length > 0) {
-      out.push(`${normals.join(', ')}${extras}`)
-    }
-    out.push(...gmaxFilters)
+    if (normals.length > 0) out.push(`${normals.join(', ')}${extras}`)
+    if (gmaxBases.length > 0) out.push(`${gmaxBases.join(', ')} & ${giga}${extras}`)
     return out
   }
 
@@ -502,7 +501,6 @@ export default function TrocasPage() {
           seededBy: user.uid,
         })
 
-        // mensagem padrão com filtros (PT/EN), agora com regras *-gmax e extras
         await seedFilterMessage(matchRef.id)
 
         await carregarTudo(user.uid)
@@ -535,10 +533,7 @@ export default function TrocasPage() {
   }
 
   async function seedFilterMessage(matchId: string) {
-
-    const texto =
-      `Mensagens com o outro treinador:\n`
-
+    const texto = `Mensagens com o outro treinador:\n`
     await addDoc(collection(db, 'trocas_matches', matchId, 'mensagens'), {
       from: 'system',
       text: texto,
@@ -629,7 +624,11 @@ export default function TrocasPage() {
         return { id: d.id, from: x.from, text: x.text, createdAt: x.createdAt }
       })
       setChatMsgs(arr)
-      setTimeout(() => chatInputRef.current?.focus(), 50)
+      // foco e rolagem
+      setTimeout(() => {
+        chatInputRef.current?.focus()
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      }, 50)
     })
 
     matchUnsubRef.current = onSnapshot(doc(db, 'trocas_matches', matchId), async (d) => {
@@ -682,6 +681,16 @@ export default function TrocasPage() {
     )
     await Promise.all(batchDeletes)
   }
+
+  // auto-scroll para a última mensagem
+  useEffect(() => {
+    if (!chatOpen) return
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [chatOpen])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [chatMsgs])
 
   if (loading) return <p className="p-6">Carregando...</p>
 
@@ -1042,7 +1051,7 @@ export default function TrocasPage() {
       {chatOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={closeChat} />
-          <div className="relative bg-white w-full max-w-2xl rounded-xl shadow-xl p-4 md:p-6">
+          <div className="relative bg-white w-full max-w-2xl rounded-xl shadow-xl p-4 md:p-6 max-h-[90vh] overflow-y-auto overscroll-contain">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Troca & Chat</h3>
@@ -1057,34 +1066,36 @@ export default function TrocasPage() {
 
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* FC do outro */}
-              <div className="border rounded-lg p-3">
-                <p className="text-xs text-slate-500">Adicionar {chatOtherName}:</p>
+              <div className="border rounded-lg p-3 md:col-span-2">
                 {chatOtherFC ? (
                   <>
-                    <p className="text-sm font-semibold">FC: {chatOtherFC}</p>
                     {(() => {
                       const { native, androidIntent } = buildPoGoFriendLinks(chatOtherFC!)
                       const deep = isAndroid ? androidIntent : native
+
                       return (
-                        <div className="mt-2 flex flex-col items-start gap-2">
-                          <a href={deep} className="text-blue-600 text-sm hover:underline">
-                            Abrir no Pokémon GO
-                          </a>
+                        // grid com 2 colunas, itens alinhados no topo
+                        <div className="grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1">
+                          {/* Coluna esquerda: título + ações */}
+                          <div className="flex flex-col gap-1">
+                            <p className="text-xs text-slate-500">Adicionar {chatOtherName}:</p>
+                            <p className="text-sm font-semibold">Código: <button
+                              onClick={() => navigator.clipboard?.writeText(chatOtherFC!)}
+                              className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                            >{chatOtherFC}</button></p>
+                            <a href={deep} className="text-blue-600 text-sm hover:underline">
+                              Abrir no Pokémon GO
+                            </a>
+                          </div>
+
+                          {/* Coluna direita: QR sem espaço extra (block + self-start) */}
                           <Image
                             src={qrSrc(native)}
                             alt="QR para adicionar no Pokémon GO"
                             width={160}
                             height={160}
-                            className="w-40 h-40 border rounded"
+                            className="block w-40 h-40 border rounded self-start justify-self-end m-0"
                           />
-                          <button
-                            onClick={() => {
-                              navigator.clipboard?.writeText(chatOtherFC!)
-                            }}
-                            className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                          >
-                            Copiar FC
-                          </button>
                         </div>
                       )
                     })()}
@@ -1095,7 +1106,7 @@ export default function TrocasPage() {
               </div>
             </div>
 
-            {/* Filtros rápidos (PT/EN) – AGORA EM LINHAS SEPARADAS, COM TRATAMENTO DE *-gmax */}
+            {/* Filtros rápidos (PT/EN) – gmax agrupado em uma linha */}
             <div className="mt-4 border rounded-lg p-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-800">Filtros rápidos</p>
@@ -1171,8 +1182,13 @@ export default function TrocasPage() {
               </div>
             </div>
 
-            {/* Mensagens */}
-            <div className="mt-4 border rounded-lg p-3 max-h-72 overflow-auto bg-slate-50">
+            {/* Mensagens (scroll interno + ancoragem no fim) */}
+            <div
+              ref={chatScrollRef}
+              className="mt-4 border rounded-lg p-3 bg-slate-50 h-64 md:h-72 overflow-y-auto scroll-smooth"
+              role="log"
+              aria-live="polite"
+            >
               {chatMsgs.length === 0 ? (
                 <p className="text-xs text-slate-500">Nenhuma mensagem ainda.</p>
               ) : (
@@ -1194,34 +1210,41 @@ export default function TrocasPage() {
                       </div>
                     )
                   })}
+                  {/* sentinela para auto-scroll */}
+                  <div ref={chatEndRef} />
                 </div>
               )}
             </div>
 
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                ref={chatInputRef}
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') sendChatMessage()
-                }}
-                className="flex-1 border rounded px-3 py-2 text-sm"
-                placeholder="Escreva uma mensagem..."
-              />
-              <button
-                onClick={sendChatMessage}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded"
-              >
-                Enviar
-              </button>
-              <button
-                onClick={finalizeMatch}
-                className="bg-red-600 hover:bg-red-700 text-white text-sm px-4 py-2 rounded"
-                title="Finaliza a troca, invalida o match e apaga o chat"
-              >
-                Finalizar troca
-              </button>
+            {/* Barra de envio sticky no rodapé do modal */}
+            <div className="mt-3 sticky bottom-0 pt-2 bg-white">
+              <div className="flex flex-col md:flex-row md:items-center gap-2 border-t pt-3">
+                <input
+                  ref={chatInputRef}
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') sendChatMessage()
+                  }}
+                  className="flex-1 border rounded px-3 py-2 text-sm"
+                  placeholder="Escreva uma mensagem..."
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={sendChatMessage}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded"
+                  >
+                    Enviar
+                  </button>
+                  <button
+                    onClick={finalizeMatch}
+                    className="bg-red-600 hover:bg-red-700 text-white text-sm px-4 py-2 rounded"
+                    title="Finaliza a troca, invalida o match e apaga o chat"
+                  >
+                    Finalizar troca
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
