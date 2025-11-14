@@ -3,9 +3,17 @@ const nextConfig = {
   images: {
     remotePatterns: [
       // Ícones/imagens servidas direto do GitHub (raw)
+      // loja
       {
         protocol: 'https',
         hostname: 'raw.githubusercontent.com',
+        pathname: '/MarcosMWB/StoreImage/main/**',
+      },
+      // sprites da PokeAPI
+      {
+        protocol: 'https',
+        hostname: 'raw.githubusercontent.com',
+        pathname: '/PokeAPI/sprites/master/sprites/pokemon/**',
       },
       // QR code do chat/desafio
       {

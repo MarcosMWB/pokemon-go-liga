@@ -801,6 +801,8 @@ export default function PerfilPage() {
                           <Image
                             src={qrSrc(native)}
                             alt="QR para adicionar"
+                            width={160}
+                            height={160}
                             className="w-40 h-40 border rounded"
                           />
                           <button

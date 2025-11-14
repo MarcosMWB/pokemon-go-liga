@@ -541,11 +541,7 @@ export default function TrocasPage() {
     const enOther = buildFilters(otherQuero, 'en').map((f) => `- ${f}`).join('\n')
 
     const texto =
-      `Filtros rápidos para facilitar a troca:\n` +
-      `• Para você pesquisar o que EU quero (PT):\n${ptMine}\n` +
-      `• (EN):\n${enMine}\n` +
-      `• Para eu pesquisar o que VOCÊ quer (PT):\n${ptOther}\n` +
-      `• (EN):\n${enOther}`
+      `Mensagens com o outro treinador:\n`
 
     await addDoc(collection(db, 'trocas_matches', matchId, 'mensagens'), {
       from: 'system',
@@ -890,9 +886,8 @@ export default function TrocasPage() {
             <h2 className="text-lg font-semibold text-slate-900">Ofertas compatíveis</h2>
             <button
               onClick={() => setMostrarPorNecessidade((v) => !v)}
-              className={`text-xs px-3 py-1 rounded ${
-                mostrarPorNecessidade ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-800'
-              }`}
+              className={`text-xs px-3 py-1 rounded ${mostrarPorNecessidade ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-800'
+                }`}
             >
               {mostrarPorNecessidade ? 'Mostrar só matches reais' : 'Ver quem tem o que quero'}
             </button>
@@ -1082,6 +1077,8 @@ export default function TrocasPage() {
                           <Image
                             src={qrSrc(native)}
                             alt="QR para adicionar no Pokémon GO"
+                            width={160}
+                            height={160}
                             className="w-40 h-40 border rounded"
                           />
                           <button
@@ -1190,13 +1187,12 @@ export default function TrocasPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${
-                          system
+                        className={`max-w-[85%] px-3 py-2 rounded ${system
                             ? 'self-center bg-yellow-100 text-slate-800 border'
                             : mine
-                            ? 'self-end bg-blue-600 text-white'
-                            : 'self-start bg-white border'
-                        }`}
+                              ? 'self-end bg-blue-600 text-white'
+                              : 'self-start bg-white border'
+                          }`}
                       >
                         <p className="text-xs whitespace-pre-wrap">{m.text}</p>
                       </div>
