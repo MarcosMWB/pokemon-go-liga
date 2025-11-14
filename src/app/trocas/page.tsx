@@ -503,7 +503,7 @@ export default function TrocasPage() {
         })
 
         // mensagem padrão com filtros (PT/EN), agora com regras *-gmax e extras
-        await seedFilterMessage(matchRef.id, minhaOferta?.quero || [], oferta.quero || [])
+        await seedFilterMessage(matchRef.id)
 
         await carregarTudo(user.uid)
         openChatByMatchId(matchRef.id)
@@ -534,11 +534,7 @@ export default function TrocasPage() {
     await carregarTudo(user.uid!)
   }
 
-  async function seedFilterMessage(matchId: string, myQuero: string[], otherQuero: string[]) {
-    const ptMine = buildFilters(myQuero, 'pt').map((f) => `- ${f}`).join('\n')
-    const enMine = buildFilters(myQuero, 'en').map((f) => `- ${f}`).join('\n')
-    const ptOther = buildFilters(otherQuero, 'pt').map((f) => `- ${f}`).join('\n')
-    const enOther = buildFilters(otherQuero, 'en').map((f) => `- ${f}`).join('\n')
+  async function seedFilterMessage(matchId: string) {
 
     const texto =
       `Mensagens com o outro treinador:\n`
