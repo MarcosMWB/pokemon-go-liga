@@ -31,7 +31,7 @@ function slugifyBase(displayBase: string) {
 }
 
 // traduz sufixo entre parênteses para token de forma
-function suffixToToken(suf: string, base: string) {
+function suffixToToken(suf: string) {
   const s = suf.trim().toLowerCase();
   if (s === "alola") return "alola";
   if (s === "galar") return "galar";
@@ -52,7 +52,7 @@ function buildFormSlug(displayName: string): string | null {
   const m = displayName.match(/^(.*)\((.+)\)\s*$/);
   if (!m) return null;
   const base = slugifyBase(m[1]);
-  const token = suffixToToken(m[2], m[1]);
+  const token = suffixToToken(m[2]);
   // casos pontuais com nomes compostos na base
   // mr. mime -> mr-mime (slugify já cobre), farfetch’d -> farfetchd (slugify cobre)
   // maioria é: base-token

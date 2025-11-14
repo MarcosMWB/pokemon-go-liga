@@ -535,10 +535,10 @@ export default function TrocasPage() {
   }
 
   async function seedFilterMessage(matchId: string, myQuero: string[], otherQuero: string[]) {
-    const ptMine = buildFilters(myQuero, 'pt').map((f) => `- ${f}`).join('\n')
+    /*const ptMine = buildFilters(myQuero, 'pt').map((f) => `- ${f}`).join('\n')
     const enMine = buildFilters(myQuero, 'en').map((f) => `- ${f}`).join('\n')
     const ptOther = buildFilters(otherQuero, 'pt').map((f) => `- ${f}`).join('\n')
-    const enOther = buildFilters(otherQuero, 'en').map((f) => `- ${f}`).join('\n')
+    const enOther = buildFilters(otherQuero, 'en').map((f) => `- ${f}`).join('\n')*/
 
     const texto =
       `Mensagens com o outro treinador:\n`
