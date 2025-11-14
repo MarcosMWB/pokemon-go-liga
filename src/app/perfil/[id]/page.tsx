@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { auth, db } from '@/lib/firebase';
 import {
@@ -78,6 +79,14 @@ type Liga = {
   nome: string;
 };
 
+type Elite4Participacao = {
+  id: string; // doc em campeonatos_elite4_participantes
+  campeonato_id: string;
+  liga: string;
+  status: 'aberto' | 'fechado';
+  pontos: number;
+};
+
 export default function PerfilPage() {
   const params = useParams();
   const router = useRouter();
@@ -93,6 +102,8 @@ export default function PerfilPage() {
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>('');
   const [loading, setLoading] = useState(true);
+
+  const [eliteParts, setEliteParts] = useState<Elite4Participacao[]>([]);
 
   const [ginasiosMap, setGinasiosMap] = useState<Record<string, { nome: string; liga: string }>>(
     {}
@@ -311,37 +322,39 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
-  // insígnias do jogador
+  // participação em CAMPEONATOS/ELITE 4 (por usuário)
   useEffect(() => {
     if (!perfilUid) return;
-    const qIns = query(
-      collection(db, 'insignias'),
-      where('usuario_uid', '==', perfilUid),
-      orderBy('createdAt', 'desc')
+    const qP = query(
+      collection(db, 'campeonatos_elite4_participantes'),
+      where('usuario_uid', '==', perfilUid)
     );
-    const unsub = onSnapshot(qIns, (snap) => {
-      const list: Insignia[] = snap.docs.map((d) => {
+    const unsub = onSnapshot(qP, async (snap) => {
+      const rows: Elite4Participacao[] = [];
+      for (const d of snap.docs) {
         const data = d.data() as any;
-        return {
+        const campId = data.campeonato_id as string;
+        const pontos = Number(data.pontos ?? 0);
+        // pega liga/status do campeonato
+        const c = await getDoc(doc(db, 'campeonatos_elite4', campId));
+        if (!c.exists()) continue;
+        const cd = c.data() as any;
+        rows.push({
           id: d.id,
-          ginasio_id: data.ginasio_id,
-          ginasio_nome: data.ginasio_nome,
-          ginasio_tipo: data.ginasio_tipo,
-          insignia_icon: data.insignia_icon,
-          temporada_id: data.temporada_id,
-          temporada_nome: data.temporada_nome,
-          liga: data.liga || '',
-          createdAt: data.createdAt,
-        };
-      });
-      setInsignias(list);
+          campeonato_id: campId,
+          liga: cd.liga || '',
+          status: (cd.status as 'aberto' | 'fechado') || 'aberto',
+          pontos,
+        });
+      }
+      setEliteParts(rows);
     });
     return () => unsub();
   }, [perfilUid]);
 
   const ehMeuPerfil = logadoUid === perfilUid;
 
-  // CHAT handlers (iguais aos da página de ginásios, adaptados ao UID local)
+  // CHAT handlers
   async function openDesafioChat(desafioId: string) {
     if (!logadoUid) return;
     chatUnsubRef.current?.();
@@ -585,7 +598,7 @@ export default function PerfilPage() {
               ginasiosFiltrados.map((g) => (
                 <div
                   key={g.id}
-                  className="bg-white p-4 rounded shadow flex justify-between items-center"
+                  className="bg-white p-4 rounded shadow flex justify-between items-center gap-3"
                 >
                   <div>
                     <p className="font-semibold">{g.nome}</p>
@@ -606,29 +619,37 @@ export default function PerfilPage() {
                     <p className="text-xs text-gray-400">Derrotas seguidas: {g.derrotas_seguidas ?? 0} / 3</p>
                     {g.em_disputa && <p className="text-xs text-red-500">Em disputa</p>}
                   </div>
-                  <button
-                    onClick={async () => {
-                      await addDoc(collection(db, 'disputas_ginasio'), {
-                        ginasio_id: g.id,
-                        status: 'inscricoes',
-                        tipo_original: g.tipo || '',
-                        lider_anterior_uid: g.lider_uid || '',
-                        temporada_id: temporada?.id || '',
-                        temporada_nome: temporada?.nome || '',
-                        liga: g.liga || '',
-                        createdAt: Date.now(),
-                      });
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        await addDoc(collection(db, 'disputas_ginasio'), {
+                          ginasio_id: g.id,
+                          status: 'inscricoes',
+                          tipo_original: g.tipo || '',
+                          lider_anterior_uid: g.lider_uid || '',
+                          temporada_id: temporada?.id || '',
+                          temporada_nome: temporada?.nome || '',
+                          liga: g.liga || '',
+                          createdAt: Date.now(),
+                        });
 
-                      await updateDoc(doc(db, 'ginasios', g.id), {
-                        lider_uid: '',
-                        em_disputa: true,
-                        derrotas_seguidas: 0,
-                      });
-                    }}
-                    className="bg-red-500 text-white px-3 py-1 rounded text-sm"
-                  >
-                    Renunciar
-                  </button>
+                        await updateDoc(doc(db, 'ginasios', g.id), {
+                          lider_uid: '',
+                          em_disputa: true,
+                          derrotas_seguidas: 0,
+                        });
+                      }}
+                      className="bg-red-500 text-white px-3 py-1 rounded text-sm"
+                    >
+                      Renunciar
+                    </button>
+                    <Link
+                      href={`/elite4/inscricao${g.liga ? `?liga=${encodeURIComponent(g.liga)}` : ''}`}
+                      className="bg-purple-700 text-white px-3 py-1 rounded text-sm"
+                    >
+                      Elite 4
+                    </Link>
+                  </div>
                 </div>
               ))
             )}
@@ -673,8 +694,39 @@ export default function PerfilPage() {
 
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">Disputas que participa</h2>
+
+        {/* CAMPEONATO / ELITE 4 */}
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold text-purple-700 mb-1">Campeonato / ELITE 4</h3>
+          {eliteParts.filter(e => !ligaSelecionada || e.liga === ligaSelecionada).length === 0 ? (
+            <p className="text-xs text-gray-500">Nenhuma participação em campeonato nesta liga.</p>
+          ) : (
+            <ul className="space-y-2">
+              {eliteParts
+                .filter(e => !ligaSelecionada || e.liga === ligaSelecionada)
+                .map((e) => (
+                  <li key={e.id} className="flex justify-between items-center bg-purple-50 px-3 py-2 rounded">
+                    <div>
+                      <p className="text-sm font-medium">
+                        Liga {e.liga} — {e.status === 'aberto' ? 'Em andamento' : 'Encerrado'}
+                      </p>
+                      <p className="text-xs text-gray-600">Pontos: {e.pontos}</p>
+                    </div>
+                    <Link
+                      href={`/elite4/inscricao?liga=${encodeURIComponent(e.liga)}`}
+                      className="bg-purple-700 text-white px-3 py-1 rounded text-sm"
+                    >
+                      Abrir
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+
+        {/* DISPUTAS DE GINÁSIO */}
         {minhasInscricoes.length === 0 ? (
-          <p className="text-sm text-gray-500">Nenhuma disputa encontrada.</p>
+          <p className="text-sm text-gray-500">Nenhuma disputa de ginásio encontrada.</p>
         ) : (
           <ul className="space-y-2">
             {minhasInscricoes.map((p) => (
@@ -831,8 +883,9 @@ export default function PerfilPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${mine ? 'self-end bg-blue-600 text-white' : 'self-start bg-white border'
-                          }`}
+                        className={`max-w-[85%] px-3 py-2 rounded ${
+                          mine ? 'self-end bg-blue-600 text-white' : 'self-start bg-white border'
+                        }`}
                       >
                         <p className="text-xs">{m.text}</p>
                       </div>
@@ -842,7 +895,6 @@ export default function PerfilPage() {
               )}
             </div>
             <div className="mt-3 space-y-2">
-              {/* linha do input + enviar */}
               <div className="flex items-center gap-2">
                 <input
                   value={chatInput}
@@ -860,7 +912,6 @@ export default function PerfilPage() {
                 </button>
               </div>
 
-              {/* linha de declaração de resultado (abaixo do enviar) */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={declareResultadoVenci}
