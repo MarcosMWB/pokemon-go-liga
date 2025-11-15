@@ -393,7 +393,7 @@ export default function DevDisputasPage() {
         });
 
         if (gSnap.exists()) {
-          let derrotas = Number(gData?.derrotas_seguidas ?? 0) + 1;
+          const derrotas = Number(gData?.derrotas_seguidas ?? 0) + 1;
           if (derrotas >= 3) {
             await addDoc(collection(db, "disputas_ginasio"), {
               ginasio_id: d.ginasio_id,
