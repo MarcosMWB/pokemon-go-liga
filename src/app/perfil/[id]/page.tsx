@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { auth, db } from '@/lib/firebase';
 import {
@@ -20,7 +21,10 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 import { TYPE_ICONS } from '@/utils/typeIcons';
-import Image from 'next/image';
+
+/* =======================
+   Types
+======================= */
 
 type Usuario = {
   id: string;
@@ -72,6 +76,8 @@ type Insignia = {
   temporada_nome?: string;
   liga?: string;
   createdAt?: number;
+  lider_derrotado_uid?: string; // <- para “Líder à época”
+  usuario_uid?: string;
 };
 
 type Liga = {
@@ -87,42 +93,62 @@ type Elite4Participacao = {
   pontos: number;
 };
 
+type Temporada = {
+  id: string;
+  nome?: string;
+  ativa?: boolean;
+  createdAt?: number;
+};
+
+/* =======================
+   Page
+======================= */
+
 export default function PerfilPage() {
   const params = useParams();
   const router = useRouter();
   const perfilUid = params?.id as string;
 
+  /* Auth / user */
   const [logadoUid, setLogadoUid] = useState<string | null>(null);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
+
+  /* Gym / disputes (mantidos do seu perfil original) */
   const [ginasiosLider, setGinasiosLider] = useState<Ginasio[]>([]);
   const [minhasInscricoes, setMinhasInscricoes] = useState<DisputaParticipante[]>([]);
   const [desafiosComoLider, setDesafiosComoLider] = useState<Desafio[]>([]);
-  const [temporada, setTemporada] = useState<{ id: string; nome?: string } | null>(null);
-  const [insignias] = useState<Insignia[]>([]);
+  const [eliteParts, setEliteParts] = useState<Elite4Participacao[]>([]);
+  const [ginasiosMap, setGinasiosMap] = useState<Record<string, { nome: string; liga: string }>>({});
+
+  /* Ligas e filtro (opcional, mantido) */
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>('');
-  const [loading, setLoading] = useState(true);
 
-  const [eliteParts, setEliteParts] = useState<Elite4Participacao[]>([]);
+  /* Temporadas e filtro (NOVO) */
+  const [temporadas, setTemporadas] = useState<Temporada[]>([]);
+  const [temporadasMap, setTemporadasMap] = useState<Record<string, Temporada>>({});
+  const [temporadaSelecionada, setTemporadaSelecionada] = useState<string>(''); // '' = Todas
 
-  const [ginasiosMap, setGinasiosMap] = useState<Record<string, { nome: string; liga: string }>>(
-    {}
-  );
+  /* Temporada ativa (mantido) */
+  const [temporadaAtiva, setTemporadaAtiva] = useState<{ id: string; nome?: string } | null>(null);
 
-  // CHAT do desafio
+  /* Insígnias (completo e reativo) */
+  const [insignias, setInsignias] = useState<Insignia[]>([]);
+
+  /* Leader names para “Líder à época” */
+  const [liderNomes, setLiderNomes] = useState<Record<string, string>>({});
+
+  /* Chat (mantido) */
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDesafioId, setChatDesafioId] = useState<string | null>(null);
-  const [chatMsgs, setChatMsgs] = useState<{ id: string; from: string; text: string; createdAt: any }[]>(
-    []
-  );
+  const [chatMsgs, setChatMsgs] = useState<{ id: string; from: string; text: string; createdAt: any }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatOtherName, setChatOtherName] = useState('Treinador');
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
-  const isAndroid =
-    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
   const qrSrc = (data: string) =>
     `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(data)}`;
   const buildPoGoFriendLinks = (fc: string) => {
@@ -133,7 +159,13 @@ export default function PerfilPage() {
     return { native, androidIntent };
   };
 
-  // quem está logado
+  const [loading, setLoading] = useState(true);
+  const ehMeuPerfil = logadoUid === perfilUid;
+
+  /* =======================
+     Effects: auth / lookups
+  ======================= */
+
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
       if (user) setLogadoUid(user.uid);
@@ -141,19 +173,44 @@ export default function PerfilPage() {
     return () => unsub();
   }, []);
 
-  // carregar ligas
+  /* Ligas */
   useEffect(() => {
     (async () => {
       const snap = await getDocs(collection(db, 'ligas'));
-      const list: Liga[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return { id: d.id, nome: data.nome || d.id };
-      });
+      const list: Liga[] = snap.docs.map((d) => ({ id: d.id, nome: (d.data() as any).nome || d.id }));
       setLigas(list);
     })();
   }, []);
 
-  // temporada ativa
+  /* Temporadas (lista para dropdown + map) */
+  useEffect(() => {
+    (async () => {
+      const snap = await getDocs(collection(db, 'temporadas'));
+      const list: Temporada[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          nome: data.nome || d.id,
+          ativa: !!data.ativa,
+          createdAt: data.createdAt || 0,
+        };
+      });
+
+      // Ordena: ativa primeiro, depois por createdAt desc
+      list.sort((a, b) => {
+        if (a.ativa && !b.ativa) return -1;
+        if (!a.ativa && b.ativa) return 1;
+        const ca = a.createdAt || 0;
+        const cb = b.createdAt || 0;
+        return cb - ca;
+      });
+
+      setTemporadas(list);
+      setTemporadasMap(Object.fromEntries(list.map((t) => [t.id, t])));
+    })();
+  }, []);
+
+  /* Temporada ativa (mantido) */
   useEffect(() => {
     (async () => {
       try {
@@ -162,15 +219,15 @@ export default function PerfilPage() {
         if (!snap.empty) {
           const d = snap.docs[0];
           const data = d.data() as any;
-          setTemporada({ id: d.id, nome: data.nome });
+          setTemporadaAtiva({ id: d.id, nome: data.nome });
         }
       } catch (e) {
-        console.warn('erro carregando temporada', e);
+        console.warn('erro carregando temporada ativa', e);
       }
     })();
   }, []);
 
-  // dados do usuário do perfil
+  /* Usuário do perfil */
   useEffect(() => {
     if (!perfilUid) return;
     (async () => {
@@ -178,17 +235,11 @@ export default function PerfilPage() {
         const uSnap = await getDoc(doc(db, 'usuarios', perfilUid));
         if (uSnap.exists()) {
           const d = uSnap.data() as any;
-          setUsuario({
-            id: perfilUid,
-            nome: d.nome,
-            email: d.email,
-            friend_code: d.friend_code,
-          });
+          setUsuario({ id: perfilUid, nome: d.nome, email: d.email, friend_code: d.friend_code });
         } else {
           setUsuario({ id: perfilUid });
         }
-      } catch (e) {
-        console.error('erro carregando usuário', e);
+      } catch {
         setUsuario({ id: perfilUid });
       } finally {
         setLoading(false);
@@ -196,7 +247,7 @@ export default function PerfilPage() {
     })();
   }, [perfilUid]);
 
-  // ginásios que ele lidera
+  /* Ginásios que lidera (realtime) */
   useEffect(() => {
     if (!perfilUid) return;
     const qG = query(collection(db, 'ginasios'), where('lider_uid', '==', perfilUid));
@@ -219,55 +270,42 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
-  // carrega TODOS os ginásios pra montar o map id -> {nome, liga}
+  /* Carrega TODOS os ginásios pra map id->nome/liga (auxiliar) */
   useEffect(() => {
-    async function loadGinasios() {
+    (async () => {
       const snap = await getDocs(collection(db, 'ginasios'));
-      const map: Record<string, { nome: string; liga: string }> = {};
-      snap.forEach((docSnap) => {
-        const data = docSnap.data() as any;
-        map[docSnap.id] = {
-          nome: data.nome || docSnap.id,
-          liga: data.liga || data.liga_nome || '',
-        };
+      const mp: Record<string, { nome: string; liga: string }> = {};
+      snap.forEach((g) => {
+        const data = g.data() as any;
+        mp[g.id] = { nome: data.nome || g.id, liga: data.liga || data.liga_nome || '' };
       });
-      setGinasiosMap(map);
-    }
-    loadGinasios();
+      setGinasiosMap(mp);
+    })();
   }, []);
 
-  // disputas que ele participa
+  /* Disputas que participa (realtime) */
   useEffect(() => {
     if (!perfilUid) return;
-
-    const qP = query(
-      collection(db, 'disputas_ginasio_participantes'),
-      where('usuario_uid', '==', perfilUid)
-    );
-
+    const qP = query(collection(db, 'disputas_ginasio_participantes'), where('usuario_uid', '==', perfilUid));
     const unsub = onSnapshot(qP, (snap) => {
       (async () => {
         const enriched: DisputaParticipante[] = [];
-
-        for (const docPart of snap.docs) {
-          const data = docPart.data() as any;
-          const disputaId = data.disputa_id;
-          const ginasioId = data.ginasio_id;
+        for (const d of snap.docs) {
+          const data = d.data() as any;
+          const disputaId = data.disputa_id as string;
+          const ginasioId = data.ginasio_id as string;
 
           const dSnap = await getDoc(doc(db, 'disputas_ginasio', disputaId));
           if (!dSnap.exists()) continue;
           const dData = dSnap.data() as any;
           if (dData.status === 'finalizado') continue;
 
-          let ginasio_nome: string | undefined = undefined;
+          let ginasio_nome: string | undefined;
           const gSnap = await getDoc(doc(db, 'ginasios', ginasioId));
-          if (gSnap.exists()) {
-            const gData = gSnap.data() as any;
-            ginasio_nome = gData.nome;
-          }
+          if (gSnap.exists()) ginasio_nome = (gSnap.data() as any).nome;
 
           enriched.push({
-            id: docPart.id,
+            id: d.id,
             disputa_id: disputaId,
             ginasio_id: ginasioId,
             tipo_escolhido: data.tipo_escolhido,
@@ -275,29 +313,25 @@ export default function PerfilPage() {
             disputa_status: dData.status,
           });
         }
-
         setMinhasInscricoes(enriched);
       })();
     });
-
     return () => unsub();
   }, [perfilUid]);
 
-  // desafios pendentes para o LÍDER (dono do perfil)
+  /* Desafios pendentes para o LÍDER (realtime) */
   useEffect(() => {
     if (!perfilUid) return;
-
     const qD = query(
       collection(db, 'desafios_ginasio'),
       where('lider_uid', '==', perfilUid),
       where('status', '==', 'pendente')
     );
-
     const unsub = onSnapshot(qD, async (snap) => {
       const list: Desafio[] = [];
       for (const d of snap.docs) {
         const data = d.data() as any;
-        let desafiante_nome: string | undefined = undefined;
+        let desafiante_nome: string | undefined;
         const uSnap = await getDoc(doc(db, 'usuarios', data.desafiante_uid));
         if (uSnap.exists()) {
           const u = uSnap.data() as any;
@@ -318,24 +352,19 @@ export default function PerfilPage() {
       }
       setDesafiosComoLider(list);
     });
-
     return () => unsub();
   }, [perfilUid]);
 
-  // participação em CAMPEONATOS/ELITE 4 (por usuário)
+  /* Participação em Elite4 (realtime) */
   useEffect(() => {
     if (!perfilUid) return;
-    const qP = query(
-      collection(db, 'campeonatos_elite4_participantes'),
-      where('usuario_uid', '==', perfilUid)
-    );
+    const qP = query(collection(db, 'campeonatos_elite4_participantes'), where('usuario_uid', '==', perfilUid));
     const unsub = onSnapshot(qP, async (snap) => {
       const rows: Elite4Participacao[] = [];
       for (const d of snap.docs) {
         const data = d.data() as any;
         const campId = data.campeonato_id as string;
         const pontos = Number(data.pontos ?? 0);
-        // pega liga/status do campeonato
         const c = await getDoc(doc(db, 'campeonatos_elite4', campId));
         if (!c.exists()) continue;
         const cd = c.data() as any;
@@ -352,9 +381,115 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
-  const ehMeuPerfil = logadoUid === perfilUid;
+  /* Insígnias do jogador (realtime) */
+  useEffect(() => {
+    if (!perfilUid) return;
+    const qIns = query(collection(db, 'insignias'), where('usuario_uid', '==', perfilUid));
+    const unsub = onSnapshot(qIns, (snap) => {
+      const list: Insignia[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          ginasio_id: data.ginasio_id,
+          ginasio_nome: data.ginasio_nome || '',
+          ginasio_tipo: data.ginasio_tipo || '',
+          insignia_icon: data.insignia_icon || '',
+          temporada_id: data.temporada_id || '',
+          temporada_nome: data.temporada_nome || '',
+          liga: data.liga || '',
+          createdAt: data.createdAt || 0,
+          lider_derrotado_uid: data.lider_derrotado_uid || '',
+          usuario_uid: data.usuario_uid,
+        };
+      });
+      setInsignias(list);
+    });
+    return () => unsub();
+  }, [perfilUid]);
 
-  // CHAT handlers
+  /* Resolver nomes dos líderes “à época” usados nas insígnias */
+  useEffect(() => {
+    (async () => {
+      const uids = Array.from(
+        new Set(insignias.map((i) => i.lider_derrotado_uid).filter(Boolean) as string[])
+      );
+      if (uids.length === 0) return;
+
+      const map: Record<string, string> = {};
+      for (const uid of uids) {
+        try {
+          const u = await getDoc(doc(db, 'usuarios', uid));
+          if (u.exists()) {
+            const d = u.data() as any;
+            map[uid] = d.nome || d.email || uid;
+          } else {
+            map[uid] = uid;
+          }
+        } catch {
+          map[uid] = uid;
+        }
+      }
+      setLiderNomes((prev) => ({ ...prev, ...map }));
+    })();
+  }, [insignias]);
+
+  /* =======================
+     Helpers / Derivations
+  ======================= */
+
+  const ginasiosFiltrados = useMemo(() => {
+    return ginasiosLider.filter((g) => (!ligaSelecionada ? true : (g.liga || '') === ligaSelecionada));
+  }, [ginasiosLider, ligaSelecionada]);
+
+  const insigniasFiltradasLiga = useMemo(() => {
+    return insignias.filter((ins) => (!ligaSelecionada ? true : (ins.liga || '') === ligaSelecionada));
+  }, [insignias, ligaSelecionada]);
+
+  const insigniasFiltradasTemporada = useMemo(() => {
+    if (!temporadaSelecionada) return insigniasFiltradasLiga;
+    return insigniasFiltradasLiga.filter((ins) => (ins.temporada_id || '') === temporadaSelecionada);
+  }, [insigniasFiltradasLiga, temporadaSelecionada]);
+
+  // Agrupamento por temporada quando "Todas"
+  const gruposPorTemporada = useMemo(() => {
+    const map: Record<string, Insignia[]> = {};
+    for (const ins of insigniasFiltradasLiga) {
+      const key = ins.temporada_id || '__sem_temporada__';
+      if (!map[key]) map[key] = [];
+      map[key].push(ins);
+    }
+    // Ordenar cada grupo por createdAt desc
+    Object.values(map).forEach((arr) => arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+    // Ordenar os grupos: ativa primeiro, depois por createdAt mais recente do grupo
+    const entries = Object.entries(map).sort((a, b) => {
+      const [ta, arrA] = a;
+      const [tb, arrB] = b;
+      // ativa primeiro se houver id que bate com temporadaAtiva
+      if (temporadaAtiva?.id) {
+        if (ta === temporadaAtiva.id && tb !== temporadaAtiva.id) return -1;
+        if (tb === temporadaAtiva.id && ta !== temporadaAtiva.id) return 1;
+      }
+      const maxA = Math.max(...arrA.map((x) => x.createdAt || 0));
+      const maxB = Math.max(...arrB.map((x) => x.createdAt || 0));
+      return maxB - maxA;
+    });
+    return entries; // [ [temporadaId, Insignia[]], ... ]
+  }, [insigniasFiltradasLiga, temporadaAtiva]);
+
+  function formatDate(ts?: number) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch {
+      return '';
+    }
+  }
+
+  /* =======================
+     Chat handlers (mantidos)
+  ======================= */
+
   async function openDesafioChat(desafioId: string) {
     if (!logadoUid) return;
     chatUnsubRef.current?.();
@@ -465,10 +600,10 @@ export default function PerfilPage() {
           ginasio_id: d.ginasio_id,
           ginasio_nome: gData?.nome || '',
           ginasio_tipo: gData?.tipo || '',
-          lider_derrotado_uid: d.lider_uid,
+          lider_derrotado_uid: d.lider_uid, // <- salva “líder à época”
           insignia_icon: gData?.insignia_icon || '',
-          temporada_id: temporada?.id || '',
-          temporada_nome: temporada?.nome || '',
+          temporada_id: temporadaAtiva?.id || '',
+          temporada_nome: temporadaAtiva?.nome || '',
           liga: gData?.liga || d.liga || '',
           createdAt: Date.now(),
         });
@@ -488,16 +623,12 @@ export default function PerfilPage() {
               status: 'inscricoes',
               tipo_original: gData?.tipo || '',
               lider_anterior_uid: gData?.lider_uid || '',
-              temporada_id: temporada?.id || '',
-              temporada_nome: temporada?.nome || '',
+              temporada_id: temporadaAtiva?.id || '',
+              temporada_nome: temporadaAtiva?.nome || '',
               liga: gData?.liga || d.liga || '',
               createdAt: Date.now(),
             });
-            await updateDoc(gRef, {
-              lider_uid: '',
-              em_disputa: true,
-              derrotas_seguidas: 0,
-            });
+            await updateDoc(gRef, { lider_uid: '', em_disputa: true, derrotas_seguidas: 0 });
           } else {
             await updateDoc(gRef, { derrotas_seguidas: derrotas });
           }
@@ -507,7 +638,7 @@ export default function PerfilPage() {
         await addDoc(collection(db, 'bloqueios_ginasio'), {
           ginasio_id: d.ginasio_id,
           desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 15 * 24 * 60 * 60 * 1000, // 15 dias
+          proximo_desafio: Date.now() + 15 * 24 * 60 * 60 * 1000,
         });
       }
 
@@ -531,51 +662,64 @@ export default function PerfilPage() {
   async function clearDesafioChat(desafioId: string) {
     const snap = await getDocs(collection(db, 'desafios_ginasio', desafioId, 'mensagens'));
     await Promise.all(
-      snap.docs.map((m) =>
-        deleteDoc(doc(db, 'desafios_ginasio', desafioId, 'mensagens', m.id))
-      )
+      snap.docs.map((m) => deleteDoc(doc(db, 'desafios_ginasio', desafioId, 'mensagens', m.id)))
     );
   }
 
+  /* =======================
+     Render
+  ======================= */
+
   if (loading) return <p className="p-6">Carregando...</p>;
-
-  const ginasiosFiltrados = ginasiosLider.filter((g) => {
-    if (!ligaSelecionada) return true;
-    return (g.liga || '') === ligaSelecionada;
-  });
-
-  const insigniasFiltradas = insignias.filter((ins) => {
-    if (!ligaSelecionada) return true;
-    return (ins.liga || '') === ligaSelecionada;
-  });
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
+      {/* Cabeçalho do perfil */}
       <div className="bg-white p-4 rounded shadow space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold">{usuario?.nome || usuario?.email || 'Jogador'}</h1>
             <p className="text-sm text-gray-500">UID: {perfilUid}</p>
-            {usuario?.friend_code && (
-              <p className="text-sm mt-1">Friend code: {usuario.friend_code}</p>
-            )}
+            {usuario?.friend_code && <p className="text-sm mt-1">Friend code: {usuario.friend_code}</p>}
           </div>
-          <div>
-            <label className="text-xs block mb-1 text-gray-500">Liga</label>
-            <select
-              value={ligaSelecionada}
-              onChange={(e) => setLigaSelecionada(e.target.value)}
-              className="border rounded px-2 py-1 text-sm"
-            >
-              <option value="">Todas</option>
-              {ligas.map((l) => (
-                <option key={l.nome} value={l.nome}>
-                  {l.nome}
-                </option>
-              ))}
-            </select>
+
+          <div className="flex items-end gap-3">
+            {/* Filtro por Liga (opcional, mantido) */}
+            <div>
+              <label className="text-xs block mb-1 text-gray-500">Liga</label>
+              <select
+                value={ligaSelecionada}
+                onChange={(e) => setLigaSelecionada(e.target.value)}
+                className="border rounded px-2 py-1 text-sm"
+              >
+                <option value="">Todas</option>
+                {ligas.map((l) => (
+                  <option key={l.nome} value={l.nome}>
+                    {l.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro por Temporada (NOVO) */}
+            <div>
+              <label className="text-xs block mb-1 text-gray-500">Temporada</label>
+              <select
+                value={temporadaSelecionada}
+                onChange={(e) => setTemporadaSelecionada(e.target.value)}
+                className="border rounded px-2 py-1 text-sm"
+              >
+                <option value="">Todas</option>
+                {temporadas.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.nome || t.id} {t.ativa ? ' (ativa)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
+
         <button
           onClick={() => router.push(`/equipes/${perfilUid}`)}
           className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
@@ -584,126 +728,116 @@ export default function PerfilPage() {
         </button>
       </div>
 
+      {/* Ginásios liderados (mantido) */}
       {ehMeuPerfil && (
-        <>
-          <div className="space-y-3">
-            <h2 className="text-xl font-semibold">Seus ginásios</h2>
-            {ginasiosFiltrados.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                {ligaSelecionada
-                  ? 'Você não é líder de ginásio nessa liga.'
-                  : 'Você não é líder de nenhum ginásio.'}
-              </p>
-            ) : (
-              ginasiosFiltrados.map((g) => (
-                <div
-                  key={g.id}
-                  className="bg-white p-4 rounded shadow flex justify-between items-center gap-3"
-                >
-                  <div>
-                    <p className="font-semibold">{g.nome}</p>
-                    <p className="text-xs text-gray-400">{g.liga || 'Sem liga'}</p>
-                    <p className="text-sm text-gray-500 flex items-center gap-2">
-                      Tipo:
-                      {g.tipo ? (
-                        <>
-                          {TYPE_ICONS[g.tipo] && (
-                            <Image src={TYPE_ICONS[g.tipo]} alt={g.tipo} width={20} height={20} />
-                          )}
-                          <span>{g.tipo}</span>
-                        </>
-                      ) : (
-                        <span>não definido</span>
-                      )}
-                    </p>
-                    <p className="text-xs text-gray-400">Derrotas seguidas: {g.derrotas_seguidas ?? 0} / 3</p>
-                    {g.em_disputa && <p className="text-xs text-red-500">Em disputa</p>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        await addDoc(collection(db, 'disputas_ginasio'), {
-                          ginasio_id: g.id,
-                          status: 'inscricoes',
-                          tipo_original: g.tipo || '',
-                          lider_anterior_uid: g.lider_uid || '',
-                          temporada_id: temporada?.id || '',
-                          temporada_nome: temporada?.nome || '',
-                          liga: g.liga || '',
-                          createdAt: Date.now(),
-                        });
-
-                        await updateDoc(doc(db, 'ginasios', g.id), {
-                          lider_uid: '',
-                          em_disputa: true,
-                          derrotas_seguidas: 0,
-                        });
-                      }}
-                      className="bg-red-500 text-white px-3 py-1 rounded text-sm"
-                    >
-                      Renunciar
-                    </button>
-                    <Link
-                      href={`/elite4/inscricao${g.liga ? `?liga=${encodeURIComponent(g.liga)}` : ''}`}
-                      className="bg-purple-700 text-white px-3 py-1 rounded text-sm"
-                    >
-                      Elite 4
-                    </Link>
-                  </div>
+        <div className="space-y-3">
+          <h2 className="text-xl font-semibold">Seus ginásios</h2>
+          {ginasiosFiltrados.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              {ligaSelecionada ? 'Você não é líder de ginásio nessa liga.' : 'Você não é líder de nenhum ginásio.'}
+            </p>
+          ) : (
+            ginasiosFiltrados.map((g) => (
+              <div key={g.id} className="bg-white p-4 rounded shadow flex justify-between items-center gap-3">
+                <div>
+                  <p className="font-semibold">{g.nome}</p>
+                  <p className="text-xs text-gray-400">{g.liga || 'Sem liga'}</p>
+                  <p className="text-sm text-gray-500 flex items-center gap-2">
+                    Tipo:
+                    {g.tipo ? (
+                      <>
+                        {TYPE_ICONS[g.tipo] && <Image src={TYPE_ICONS[g.tipo]} alt={g.tipo} width={20} height={20} />}
+                        <span>{g.tipo}</span>
+                      </>
+                    ) : (
+                      <span>não definido</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-gray-400">Derrotas seguidas: {g.derrotas_seguidas ?? 0} / 3</p>
+                  {g.em_disputa && <p className="text-xs text-red-500">Em disputa</p>}
                 </div>
-              ))
-            )}
-          </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      await addDoc(collection(db, 'disputas_ginasio'), {
+                        ginasio_id: g.id,
+                        status: 'inscricoes',
+                        tipo_original: g.tipo || '',
+                        lider_anterior_uid: g.lider_uid || '',
+                        temporada_id: temporadaAtiva?.id || '',
+                        temporada_nome: temporadaAtiva?.nome || '',
+                        liga: g.liga || '',
+                        createdAt: Date.now(),
+                      });
 
-          <div className="bg-white p-4 rounded shadow">
-            <h2 className="text-lg font-semibold mb-2">Desafios pendentes para você</h2>
-            {desafiosComoLider.length === 0 ? (
-              <p className="text-sm text-gray-500">Nenhum desafio pendente.</p>
-            ) : (
-              <div className="space-y-2">
-                {desafiosComoLider.map((d) => {
-                  const gin = ginasiosMap[d.ginasio_id];
-                  return (
-                    <div
-                      key={d.id}
-                      className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
-                    >
-                      <div>
-                        <p className="text-sm">
-                          {d.desafiante_nome || d.desafiante_uid} desafiou {gin ? gin.nome : d.ginasio_id}
-                          {gin?.liga ? ` na liga ${gin.liga}` : ''}
-                        </p>
-                        <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => openDesafioChat(d.id)}
-                          className="bg-slate-800 text-white px-2 py-1 rounded text-xs"
-                        >
-                          Abrir chat
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                      await updateDoc(doc(db, 'ginasios', g.id), {
+                        lider_uid: '',
+                        em_disputa: true,
+                        derrotas_seguidas: 0,
+                      });
+                    }}
+                    className="bg-red-500 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Renunciar
+                  </button>
+                  <Link
+                    href={`/elite4/inscricao${g.liga ? `?liga=${encodeURIComponent(g.liga)}` : ''}`}
+                    className="bg-purple-700 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Elite 4
+                  </Link>
+                </div>
               </div>
-            )}
-          </div>
-        </>
+            ))
+          )}
+        </div>
       )}
 
+      {/* Desafios pendentes para você (mantido) */}
+      {ehMeuPerfil && (
+        <div className="bg-white p-4 rounded shadow">
+          <h2 className="text-lg font-semibold mb-2">Desafios pendentes para você</h2>
+          {desafiosComoLider.length === 0 ? (
+            <p className="text-sm text-gray-500">Nenhum desafio pendente.</p>
+          ) : (
+            <div className="space-y-2">
+              {desafiosComoLider.map((d) => {
+                const gin = ginasiosMap[d.ginasio_id];
+                return (
+                  <div key={d.id} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded">
+                    <div>
+                      <p className="text-sm">
+                        {d.desafiante_nome || d.desafiante_uid} desafiou {gin ? gin.nome : d.ginasio_id}
+                        {gin?.liga ? ` na liga ${gin.liga}` : ''}
+                      </p>
+                      <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => openDesafioChat(d.id)} className="bg-slate-800 text-white px-2 py-1 rounded text-xs">
+                        Abrir chat
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Disputas que participa (mantido) */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">Disputas que participa</h2>
 
         {/* CAMPEONATO / ELITE 4 */}
         <div className="mb-4">
           <h3 className="text-sm font-semibold text-purple-700 mb-1">Campeonato / ELITE 4</h3>
-          {eliteParts.filter(e => !ligaSelecionada || e.liga === ligaSelecionada).length === 0 ? (
+          {eliteParts.filter((e) => !ligaSelecionada || e.liga === ligaSelecionada).length === 0 ? (
             <p className="text-xs text-gray-500">Nenhuma participação em campeonato nesta liga.</p>
           ) : (
             <ul className="space-y-2">
               {eliteParts
-                .filter(e => !ligaSelecionada || e.liga === ligaSelecionada)
+                .filter((e) => !ligaSelecionada || e.liga === ligaSelecionada)
                 .map((e) => (
                   <li key={e.id} className="flex justify-between items-center bg-purple-50 px-3 py-2 rounded">
                     <div>
@@ -730,10 +864,7 @@ export default function PerfilPage() {
         ) : (
           <ul className="space-y-2">
             {minhasInscricoes.map((p) => (
-              <li
-                key={p.id}
-                className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
-              >
+              <li key={p.id} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded">
                 <div>
                   <p className="text-sm font-medium">{p.ginasio_nome || p.ginasio_id}</p>
                   <p className="text-xs text-gray-500">Status: {p.disputa_status}</p>
@@ -741,12 +872,7 @@ export default function PerfilPage() {
                     <p className="text-xs text-gray-500 flex items-center gap-2">
                       Tipo:
                       {TYPE_ICONS[p.tipo_escolhido] && (
-                        <Image
-                          src={TYPE_ICONS[p.tipo_escolhido]}
-                          alt={p.tipo_escolhido}
-                          width={18}
-                          height={18}
-                        />
+                        <Image src={TYPE_ICONS[p.tipo_escolhido]} alt={p.tipo_escolhido} width={18} height={18} />
                       )}
                       <span>{p.tipo_escolhido}</span>
                     </p>
@@ -764,61 +890,80 @@ export default function PerfilPage() {
         )}
       </div>
 
+      {/* =======================
+          INSÍGNIAS (NOVO)
+         ======================= */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-3">Insígnias</h2>
-        {insigniasFiltradas.length === 0 ? (
-          <p className="text-sm text-gray-500">
-            {ligaSelecionada ? 'Nenhuma insígnia nessa liga.' : 'Nenhuma insígnia conquistada ainda.'}
-          </p>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {insigniasFiltradas.map((ins) => (
-              <div key={ins.id} className="flex items-center gap-3 bg-gray-50 rounded p-2">
-                {ins.insignia_icon ? (
-                  <Image
-                    src={ins.insignia_icon}
-                    alt={ins.ginasio_nome || 'insígnia'}
-                    width={48}
-                    height={48}
-                    className="rounded"
+
+        {/* Quando uma temporada específica é escolhida, mostra lista simples filtrada */}
+        {temporadaSelecionada ? (
+          insigniasFiltradasTemporada.length === 0 ? (
+            <p className="text-sm text-gray-500">Nenhuma insígnia nesta temporada.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {insigniasFiltradasTemporada
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+                .map((ins) => (
+                  <InsigniaCard
+                    key={ins.id}
+                    ins={ins}
+                    TYPE_ICONS={TYPE_ICONS}
+                    liderNomes={liderNomes}
+                    temporadasMap={temporadasMap}
+                    formatDate={formatDate}
                   />
-                ) : (
-                  <div className="w-12 h-12 bg-gray-300 rounded" />
-                )}
-                <div className="text-sm">
-                  <p className="font-semibold">{ins.ginasio_nome || ins.ginasio_id}</p>
-                  {ins.liga && <p className="text-xs text-gray-500">{ins.liga}</p>}
-                  {ins.temporada_nome && (
-                    <p className="text-xs text-gray-500">Temporada: {ins.temporada_nome}</p>
-                  )}
-                  {ins.ginasio_tipo && TYPE_ICONS[ins.ginasio_tipo] && (
-                    <Image
-                      src={TYPE_ICONS[ins.ginasio_tipo]}
-                      alt={ins.ginasio_tipo}
-                      width={16}
-                      height={16}
-                      className="mt-1"
-                    />
-                  )}
-                </div>
+                ))}
+            </div>
+          )
+        ) : (
+          /* “Todas”: agrupar por temporada */
+          <>
+            {gruposPorTemporada.length === 0 ? (
+              <p className="text-sm text-gray-500">Nenhuma insígnia conquistada ainda.</p>
+            ) : (
+              <div className="space-y-5">
+                {gruposPorTemporada.map(([tempId, arr]) => {
+                  const titulo =
+                    tempId === '__sem_temporada__'
+                      ? 'Sem temporada'
+                      : temporadasMap[tempId]?.nome || arr[0]?.temporada_nome || tempId;
+
+                  return (
+                    <div key={tempId}>
+                      <h3 className="text-sm font-semibold text-gray-700 mb-2">{titulo}</h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {arr.map((ins) => (
+                          <InsigniaCard
+                            key={ins.id}
+                            ins={ins}
+                            TYPE_ICONS={TYPE_ICONS}
+                            liderNomes={liderNomes}
+                            temporadasMap={temporadasMap}
+                            formatDate={formatDate}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
 
+      {/* Histórico (placeholder) */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">Histórico de campeonatos</h2>
         <p className="text-sm text-gray-500">Aqui vão campeonatos, hall da fama, títulos.</p>
       </div>
 
-      <button
-        onClick={() => router.push('/jogadores')}
-        className="bg-gray-200 text-gray-800 px-3 py-2 rounded text-sm"
-      >
+      <button onClick={() => router.push('/jogadores')} className="bg-gray-200 text-gray-800 px-3 py-2 rounded text-sm">
         Voltar
       </button>
 
+      {/* Modal Chat (mantido) */}
       {chatOpen && chatDesafioId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={closeDesafioChat} />
@@ -828,10 +973,7 @@ export default function PerfilPage() {
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
                 <p className="text-sm text-slate-600">Converse e finalize o resultado.</p>
               </div>
-              <button
-                className="text-slate-500 hover:text-slate-800 text-sm"
-                onClick={closeDesafioChat}
-              >
+              <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={closeDesafioChat}>
                 Fechar
               </button>
             </div>
@@ -894,6 +1036,7 @@ export default function PerfilPage() {
                 </div>
               )}
             </div>
+
             <div className="mt-3 space-y-2">
               <div className="flex items-center gap-2">
                 <input
@@ -934,6 +1077,59 @@ export default function PerfilPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* =======================
+   Subcomponentes
+======================= */
+
+function InsigniaCard({
+  ins,
+  TYPE_ICONS,
+  liderNomes,
+  temporadasMap,
+  formatDate,
+}: {
+  ins: Insignia;
+  TYPE_ICONS: Record<string, string>;
+  liderNomes: Record<string, string>;
+  temporadasMap: Record<string, Temporada>;
+  formatDate: (ts?: number) => string;
+}) {
+  const tipo = ins.ginasio_tipo || '';
+  const tipoIcon = tipo && TYPE_ICONS[tipo] ? TYPE_ICONS[tipo] : null;
+  const temporadaNome = ins.temporada_nome || (ins.temporada_id ? temporadasMap[ins.temporada_id]?.nome : '');
+  const liderNome = ins.lider_derrotado_uid ? (liderNomes[ins.lider_derrotado_uid] || ins.lider_derrotado_uid) : 'indisponível';
+
+  return (
+    <div className="flex items-center gap-3 bg-gray-50 rounded p-3">
+      {ins.insignia_icon ? (
+        <Image src={ins.insignia_icon} alt={ins.ginasio_nome || 'insígnia'} width={48} height={48} className="rounded" />
+      ) : (
+        <div className="w-12 h-12 bg-gray-300 rounded" />
+      )}
+
+      <div className="text-sm">
+        <p className="font-semibold">{ins.ginasio_nome || ins.ginasio_id}</p>
+        {ins.liga && <p className="text-xs text-gray-500">Liga: {ins.liga}</p>}
+        {temporadaNome && <p className="text-xs text-gray-500">Temporada: {temporadaNome}</p>}
+
+        <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
+          <span>Tipo à época:</span>
+          {tipoIcon && <Image src={tipoIcon} alt={tipo} width={16} height={16} />}
+          <span>{tipo || '—'}</span>
+        </div>
+
+        <p className="text-xs text-gray-600">
+          Líder à época: <span className="font-medium">{liderNome}</span>
+        </p>
+
+        {ins.createdAt ? (
+          <p className="text-[11px] text-gray-400 mt-1">Conquistada em: {formatDate(ins.createdAt)}</p>
+        ) : null}
+      </div>
     </div>
   );
 }

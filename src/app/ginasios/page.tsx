@@ -500,6 +500,7 @@ export default function GinasiosPage() {
           ginasio_id: d.ginasio_id,
           ginasio_nome: gData?.nome || '',
           ginasio_tipo: gData?.tipo || '',
+          lider_derrotado_uid: d.lider_uid,
           insignia_icon: gData?.insignia_icon || '',
           temporada_id: temporada?.id || '',
           temporada_nome: temporada?.nome || '',
