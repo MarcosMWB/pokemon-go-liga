@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { TYPE_ICONS } from "@/utils/typeIcons";
 import Image from "next/image";
@@ -27,6 +27,7 @@ type Ginasio = {
   nome: string;
   tipo: string;
   lider_uid?: string;
+  liga?: string;
 };
 
 type Disputa = {
@@ -36,6 +37,7 @@ type Disputa = {
   tipo_original: string;
   liga?: string;
   liga_nome?: string;
+  finalizacao_aplicada?: boolean; // NOVO: marcador para evitar duplicidade
 };
 
 type Participante = {
@@ -107,13 +109,14 @@ export default function DisputaGinasioPage() {
         nome: d.nome,
         tipo: d.tipo || "",
         lider_uid: d.lider_uid || "",
+        liga: d.liga || d.liga_nome || "",
       });
     });
 
     const qDisputa = query(
       collection(db, "disputas_ginasio"),
       where("ginasio_id", "==", ginasioId),
-      where("status", "in", ["inscricoes", "batalhando"])
+      where("status", "in", ["inscricoes", "batalhando", "finalizado"])
     );
     const unsubD = onSnapshot(qDisputa, (snap) => {
       if (snap.empty) {
@@ -121,6 +124,7 @@ export default function DisputaGinasioPage() {
         setLoading(false);
         return;
       }
+      // assume 1 ativa/relevante por ginásio
       const dDoc = snap.docs[0];
       const dData = dDoc.data() as any;
       setDisputa({
@@ -130,6 +134,7 @@ export default function DisputaGinasioPage() {
         tipo_original: dData.tipo_original || "",
         liga: dData.liga || dData.liga_nome || "",
         liga_nome: dData.liga_nome || dData.liga || "",
+        finalizacao_aplicada: dData.finalizacao_aplicada === true,
       });
       setLoading(false);
     });
@@ -219,7 +224,7 @@ export default function DisputaGinasioPage() {
     return () => unsub();
   }, [disputa]);
 
-  // === NOVO: ouvir tipos ocupados em TEMPO REAL (mesma liga, exceto o próprio ginásio) ===
+  // === tipos ocupados em tempo real (mesma liga, exceto o próprio ginásio) ===
   useEffect(() => {
     if (!disputa) return;
 
@@ -349,12 +354,12 @@ export default function DisputaGinasioPage() {
     });
   };
 
-  // Meu participante (usar acima de efeitos que dependem dele)
+  // Meu participante
   const meuParticipante = userUid
     ? participantes.find((p) => p.usuario_uid === userUid)
     : null;
 
-  // === NOVO: se o meu tipo virou indisponível ANTES de iniciar (inscricoes), limpa e avisa ===
+  // Invalidar tipo se ficou indisponível durante inscrições
   useEffect(() => {
     if (
       !disputa ||
@@ -397,6 +402,108 @@ export default function DisputaGinasioPage() {
     ocupados,
   ]);
 
+  // ===== PERFIL: aplicar finalização → definir novo líder + abrir "ginasios_lideratos" (início) =====
+  const pontos = useMemo(() => {
+    const map: Record<string, number> = {};
+    participantes.forEach((p) => (map[p.usuario_uid] = 0));
+    resultados.forEach((r) => {
+      if (r.status !== "confirmado") return;
+      if (r.tipo === "empate") {
+        if (r.jogador1_uid) map[r.jogador1_uid] = (map[r.jogador1_uid] || 0) + 1;
+        if (r.jogador2_uid) map[r.jogador2_uid] = (map[r.jogador2_uid] || 0) + 1;
+      } else if (r.vencedor_uid) {
+        map[r.vencedor_uid] = (map[r.vencedor_uid] || 0) + 3;
+      }
+    });
+    return map;
+  }, [participantes, resultados]);
+
+  const ranking = useMemo(() => {
+    return [...participantes].sort((a, b) => {
+      const pa = pontos[a.usuario_uid] || 0;
+      const pb = pontos[b.usuario_uid] || 0;
+      return pb - pa;
+    });
+  }, [participantes, pontos]);
+
+  // Guardar início de liderança se ainda não existe um período aberto para (ginásio, líder)
+  async function iniciarLideratoSeNaoExiste(ginasio_id: string, lider_uid: string, liga?: string, tipo?: string, ginasio_nome?: string) {
+    const qAberto = query(
+      collection(db, "ginasios_lideratos"),
+      where("ginasio_id", "==", ginasio_id),
+      where("lider_uid", "==", lider_uid)
+    );
+    const snap = await getDocs(qAberto);
+    const jaAberto = snap.docs.some((d) => {
+      const x = d.data() as any;
+      return x.fim === null || x.fim === undefined;
+    });
+    if (!jaAberto) {
+      await addDoc(collection(db, "ginasios_lideratos"), {
+        ginasio_id,
+        lider_uid,
+        inicio: Date.now(),
+        fim: null,
+        liga: liga || "",
+        tipo: tipo || "",
+        ginasio_nome: ginasio_nome || "",
+      });
+    }
+  }
+
+  // Quando uma disputa for marcada como "finalizado" e ainda não aplicada, define o novo líder e marca finalização
+  useEffect(() => {
+    if (!disputa || !ginasio) return;
+    if (disputa.status !== "finalizado") return;
+    if (disputa.finalizacao_aplicada) return;
+
+    (async () => {
+      try {
+        // vencedor = topo do ranking (desempate simples: primeiro da lista)
+        if (ranking.length === 0) return;
+
+        const topo = ranking[0];
+        const pTopo = pontos[topo.usuario_uid] || 0;
+
+        // Verifica empate no topo
+        const empatadosTopo = ranking.filter((p) => (pontos[p.usuario_uid] || 0) === pTopo);
+        if (empatadosTopo.length > 1) {
+          // Admin deve resolver manualmente; apenas marca que tentativa ocorreu
+          await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+            empate_no_topo: true,
+            finalizacao_aplicada: false,
+            tentativa_finalizacao_em: Date.now(),
+          });
+          return;
+        }
+
+        const novoLiderUid = topo.usuario_uid;
+        const tipoNovo = topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
+        const ligaDoGinasio = ginasio.liga || disputa.liga || disputa.liga_nome || "";
+
+        // Atualiza ginásio: define novo líder, tipo do líder, sai de disputa, zera derrotas
+        await updateDoc(doc(db, "ginasios", ginasio.id), {
+          lider_uid: novoLiderUid,
+          tipo: tipoNovo,
+          em_disputa: false,
+          derrotas_seguidas: 0,
+        });
+
+        // Abre período de liderança (para a página de perfil calcular duração)
+        await iniciarLideratoSeNaoExiste(ginasio.id, novoLiderUid, ligaDoGinasio, tipoNovo, ginasio.nome);
+
+        // Marca disputa como aplicada e registra vencedor
+        await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+          finalizacao_aplicada: true,
+          vencedor_uid: novoLiderUid,
+          aplicado_em: Date.now(),
+        });
+      } catch (e) {
+        console.warn("Falha ao aplicar finalização da disputa:", e);
+      }
+    })();
+  }, [disputa, ginasio, ranking, pontos]);
+
   if (loading) return <p className="p-8">Carregando disputa...</p>;
   if (!ginasio) return <p className="p-8">Ginásio não encontrado.</p>;
   if (!disputa) {
@@ -432,25 +539,6 @@ export default function DisputaGinasioPage() {
         })
       : [];
 
-  const pontos: Record<string, number> = {};
-  participantes.forEach((p) => {
-    pontos[p.usuario_uid] = 0;
-  });
-  resultados.forEach((r) => {
-    if (r.status !== "confirmado") return;
-    if (r.tipo === "empate") {
-      if (r.jogador1_uid) pontos[r.jogador1_uid] += 1;
-      if (r.jogador2_uid) pontos[r.jogador2_uid] += 1;
-    } else {
-      if (r.vencedor_uid) pontos[r.vencedor_uid] += 3;
-    }
-  });
-  const ranking = [...participantes].sort((a, b) => {
-    const pa = pontos[a.usuario_uid] || 0;
-    const pb = pontos[b.usuario_uid] || 0;
-    return pb - pa;
-  });
-
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">
@@ -468,6 +556,11 @@ export default function DisputaGinasioPage() {
 
       <p className="text-gray-600">
         Status: {disputa.status === "inscricoes" ? "inscrições abertas" : disputa.status}
+        {disputa.status === "finalizado" && (
+          <span className="ml-2 text-xs text-gray-500">
+            {disputa.finalizacao_aplicada ? " (aplicado)" : " (aguardando aplicação)"}
+          </span>
+        )}
       </p>
 
       {avisoTipoInvalidado && (
@@ -568,7 +661,7 @@ export default function DisputaGinasioPage() {
                     ? r.jogador2_uid
                     : r.jogador1_uid
                   : r.vencedor_uid;
-              const outro = participantes.find((p) => p.usuario_uid === outroUid);
+              const outro = participantes.find((p) => p.usuario_uid === (outroUid || ""));
               return (
                 <li key={r.id} className="flex justify-between items-center gap-2">
                   <span className="text-sm">

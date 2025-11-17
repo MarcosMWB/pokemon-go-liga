@@ -44,7 +44,25 @@ type Desafio = {
   createdAtMs: number | null;
 };
 
-type GymInfo = { nome: string; liga?: string; tipo?: string; lider_uid?: string; insignia_icon?: string; derrotas_seguidas?: number };
+type Renuncia = {
+  id: string;
+  ginasio_id: string;
+  liga?: string;
+  lider_uid: string;
+  status: "pendente" | "confirmado" | "cancelado";
+  createdAtMs: number | null;
+  motivo?: string;
+  criadoPorUid?: string;
+};
+
+type GymInfo = {
+  nome: string;
+  liga?: string;
+  tipo?: string;
+  lider_uid?: string;
+  insignia_icon?: string;
+  derrotas_seguidas?: number;
+};
 type UserInfo = { display: string };
 
 type Temporada = { id: string; nome?: string } | null;
@@ -74,30 +92,103 @@ function tempoRelativo(ms?: number | null) {
   return `${d}d`;
 }
 
+// --------- Helpers (purga + liderança) ----------
+async function purgeDisputa(disputaId: string) {
+  // participantes
+  const pSnap = await getDocs(
+    query(
+      collection(db, "disputas_ginasio_participantes"),
+      where("disputa_id", "==", disputaId)
+    )
+  );
+  for (const d of pSnap.docs) {
+    try {
+      await deleteDoc(d.ref);
+    } catch {
+      await updateDoc(d.ref, { removido: true });
+    }
+  }
+
+  // resultados
+  const rSnap = await getDocs(
+    query(
+      collection(db, "disputas_ginasio_resultados"),
+      where("disputa_id", "==", disputaId)
+    )
+  );
+  for (const d of rSnap.docs) {
+    try {
+      await deleteDoc(d.ref);
+    } catch {
+      await updateDoc(d.ref, { status: "limpo" });
+    }
+  }
+
+  // disputa
+  const dRef = doc(db, "disputas_ginasio", disputaId);
+  try {
+    await deleteDoc(dRef);
+  } catch {
+    await updateDoc(dRef, {
+      status: "finalizado",
+      encerradaEm: Date.now(),
+      purgada: true,
+    });
+  }
+}
+
+async function closeAndPurgeActiveDisputes(ginasioId: string) {
+  const snap = await getDocs(
+    query(
+      collection(db, "disputas_ginasio"),
+      where("ginasio_id", "==", ginasioId),
+      where("status", "in", ["inscricoes", "batalhando"])
+    )
+  );
+  for (const d of snap.docs) {
+    await purgeDisputa(d.id);
+  }
+}
+
+async function endActiveLeadership(ginasioId: string) {
+  const snap = await getDocs(
+    query(
+      collection(db, "ginasios_liderancas"),
+      where("ginasio_id", "==", ginasioId),
+      where("endedAt", "==", null)
+    )
+  );
+  for (const d of snap.docs) {
+    await updateDoc(d.ref, {
+      endedAt: Date.now(),
+      endedByAdminUid: auth.currentUser?.uid || null,
+    });
+  }
+}
+// ---------------------------------------------------
+
 export default function DevDisputasPage() {
   const router = useRouter();
 
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
-  // seção 1: resultados pendentes (disputas de liga)
+  // seção 1
   const [resultados, setResultados] = useState<Resultado[]>([]);
-
-  // seção 2: desafios com 1 lado declarado
+  // seção 2
   const [desafios1lado, setDesafios1lado] = useState<Desafio[]>([]);
+  // seção 3
+  const [renuncias, setRenuncias] = useState<Renuncia[]>([]);
 
-  // mapas auxiliares
   const [gMap, setGMap] = useState<Record<string, GymInfo>>({});
   const [uMap, setUMap] = useState<Record<string, UserInfo>>({});
 
-  // filtros
   const [ligaFiltro, setLigaFiltro] = useState<string>("");
   const [textoBusca, setTextoBusca] = useState<string>("");
   const [ligasDisponiveis, setLigasDisponiveis] = useState<string[]>([]);
 
-  // temporada ativa (para finalizar desafio)
   const [temporada, setTemporada] = useState<Temporada>(null);
 
-  // ==== Auth + superuser ====
+  // auth + super
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
@@ -116,7 +207,7 @@ export default function DevDisputasPage() {
     return () => unsub();
   }, [router]);
 
-  // ==== Temporada ativa ====
+  // temporada ativa
   useEffect(() => {
     if (isAdmin !== true) return;
     (async () => {
@@ -132,7 +223,7 @@ export default function DevDisputasPage() {
     })();
   }, [isAdmin]);
 
-  // ==== Seção 1: resultados pendentes (disputas_ginasio_resultados) ====
+  // resultados pendentes
   useEffect(() => {
     if (isAdmin !== true) return;
     const qRes = query(
@@ -147,7 +238,7 @@ export default function DevDisputasPage() {
           id: d.id,
           disputa_id: x.disputa_id,
           ginasio_id: x.ginasio_id,
-          tipo: x.tipo, // "empate" | undefined
+          tipo: x.tipo,
           vencedor_uid: x.vencedor_uid,
           perdedor_uid: x.perdedor_uid,
           jogador1_uid: x.jogador1_uid,
@@ -162,7 +253,7 @@ export default function DevDisputasPage() {
     return () => unsub();
   }, [isAdmin]);
 
-  // ==== Seção 2: desafios com 1 lado declarado (desafios_ginasio) ====
+  // desafios 1 lado
   useEffect(() => {
     if (isAdmin !== true) return;
     const qD = query(
@@ -189,19 +280,47 @@ export default function DevDisputasPage() {
         .filter((d) => {
           const a = d.resultado_lider;
           const b = d.resultado_desafiante;
-          return (a && !b) || (!a && b); // exatamente 1 lado declarou
+          return (a && !b) || (!a && b);
         });
       setDesafios1lado(list);
     });
     return () => unsub();
   }, [isAdmin]);
 
-  // ==== Carregar gyms e ligas (a partir de IDs usados em ambas seções) ====
+  // renúncias pendentes
+  useEffect(() => {
+    if (isAdmin !== true) return;
+    const qR = query(
+      collection(db, "renuncias_ginasio"),
+      where("status", "==", "pendente"),
+      orderBy("createdAt", "desc")
+    );
+    const unsub = onSnapshot(qR, (snap) => {
+      const list: Renuncia[] = snap.docs.map((d) => {
+        const x = d.data() as any;
+        return {
+          id: d.id,
+          ginasio_id: x.ginasio_id,
+          liga: x.liga || "",
+          lider_uid: x.lider_uid,
+          status: x.status || "pendente",
+          createdAtMs: toMillis(x.createdAt),
+          motivo: x.motivo || "",
+          criadoPorUid: x.criadoPorUid || "",
+        };
+      });
+      setRenuncias(list);
+    });
+    return () => unsub();
+  }, [isAdmin]);
+
+  // carregar gyms + ligas
   useEffect(() => {
     if (isAdmin !== true) return;
     const gymIds = new Set<string>();
     resultados.forEach((r) => gymIds.add(r.ginasio_id));
     desafios1lado.forEach((d) => gymIds.add(d.ginasio_id));
+    renuncias.forEach((r) => gymIds.add(r.ginasio_id));
 
     (async () => {
       const entries: Array<[string, GymInfo]> = await Promise.all(
@@ -234,9 +353,9 @@ export default function DevDisputasPage() {
       setGMap(next);
       setLigasDisponiveis(Array.from(ligas).sort());
     })();
-  }, [resultados, desafios1lado, isAdmin]);
+  }, [resultados, desafios1lado, renuncias, isAdmin]);
 
-  // ==== Carregar nomes dos usuários citados ====
+  // carregar nomes
   useEffect(() => {
     if (isAdmin !== true) return;
     const uids = new Set<string>();
@@ -250,6 +369,10 @@ export default function DevDisputasPage() {
     desafios1lado.forEach((d) => {
       uids.add(d.lider_uid);
       uids.add(d.desafiante_uid);
+    });
+    renuncias.forEach((r) => {
+      uids.add(r.lider_uid);
+      if (r.criadoPorUid) uids.add(r.criadoPorUid);
     });
 
     (async () => {
@@ -267,9 +390,9 @@ export default function DevDisputasPage() {
       for (const [k, v] of kvs) next[k] = v;
       setUMap(next);
     })();
-  }, [resultados, desafios1lado, isAdmin]);
+  }, [resultados, desafios1lado, renuncias, isAdmin]);
 
-  // ==== Filtros ====
+  // filtros
   const resultadosFiltrados = useMemo(() => {
     return resultados.filter((r) => {
       const liga = gMap[r.ginasio_id]?.liga || "";
@@ -278,10 +401,8 @@ export default function DevDisputasPage() {
       if (textoBusca.trim()) {
         const t = textoBusca.trim().toLowerCase();
         const gymName = (gMap[r.ginasio_id]?.nome || r.ginasio_id).toLowerCase();
-        const a =
-          (uMap[r.vencedor_uid || r.jogador1_uid || ""]?.display || "").toLowerCase();
-        const b =
-          (uMap[r.perdedor_uid || r.jogador2_uid || ""]?.display || "").toLowerCase();
+        const a = (uMap[r.vencedor_uid || r.jogador1_uid || ""]?.display || "").toLowerCase();
+        const b = (uMap[r.perdedor_uid || r.jogador2_uid || ""]?.display || "").toLowerCase();
         if (!gymName.includes(t) && !a.includes(t) && !b.includes(t)) return false;
       }
       return true;
@@ -304,7 +425,22 @@ export default function DevDisputasPage() {
     });
   }, [desafios1lado, gMap, uMap, ligaFiltro, textoBusca]);
 
-  // ==== Ações ADM — Resultados de DISPUTA (liga) ====
+  const renunciasFiltradas = useMemo(() => {
+    return renuncias.filter((r) => {
+      const liga = gMap[r.ginasio_id]?.liga || r.liga || "";
+      if (ligaFiltro && liga !== ligaFiltro) return false;
+
+      if (textoBusca.trim()) {
+        const t = textoBusca.trim().toLowerCase();
+        const gymName = (gMap[r.ginasio_id]?.nome || r.ginasio_id).toLowerCase();
+        const liderName = (uMap[r.lider_uid]?.display || "").toLowerCase();
+        if (!gymName.includes(t) && !liderName.includes(t)) return false;
+      }
+      return true;
+    });
+  }, [renuncias, gMap, uMap, ligaFiltro, textoBusca]);
+
+  // ações: resultados de disputa (liga)
   async function confirmarResultadoLiga(r: Resultado) {
     await updateDoc(doc(db, "disputas_ginasio_resultados", r.id), {
       status: "confirmado",
@@ -320,12 +456,10 @@ export default function DevDisputasPage() {
     });
   }
 
-  // ==== Ações ADM — DESAFIOS (jogador x líder) com 1 lado declarado ====
+  // ações: desafios 1 lado
   async function confirmarDesafio(d: Desafio) {
-    // Preenche o lado faltante com o mesmo valor declarado
-    const declarado = d.resultado_lider ?? d.resultado_desafiante; // o que já existe
+    const declarado = d.resultado_lider ?? d.resultado_desafiante;
     const ref = doc(db, "desafios_ginasio", d.id);
-
     if (!declarado) return;
 
     const patch: any = {};
@@ -335,7 +469,7 @@ export default function DevDisputasPage() {
     patch["confirmadoPorAdminEm"] = Date.now();
 
     await updateDoc(ref, patch);
-    await tentarFinalizarDesafio(ref); // finaliza/atribui efeitos
+    await tentarFinalizarDesafio(ref);
   }
 
   async function contestarDesafio(d: Desafio) {
@@ -356,7 +490,58 @@ export default function DevDisputasPage() {
     await clearDesafioChat(d.id);
   }
 
-  // ==== Finalização de desafio (igual à lógica do app do usuário) ====
+  // ações: renúncia
+  async function confirmarRenuncia(r: Renuncia) {
+    const renRef = doc(db, "renuncias_ginasio", r.id);
+
+    // encerra liderança atual
+    await endActiveLeadership(r.ginasio_id);
+
+    // limpa disputas abertas
+    await closeAndPurgeActiveDisputes(r.ginasio_id);
+
+    // info do ginásio
+    const gRef = doc(db, "ginasios", r.ginasio_id);
+    const gSnap = await getDoc(gRef);
+    const gData = gSnap.exists() ? (gSnap.data() as any) : null;
+
+    // abre disputa por renúncia (vazia/limpa)
+    await addDoc(collection(db, "disputas_ginasio"), {
+      ginasio_id: r.ginasio_id,
+      status: "inscricoes",
+      tipo_original: gData?.tipo || "",
+      lider_anterior_uid: gData?.lider_uid || r.lider_uid || "",
+      temporada_id: temporada?.id || "",
+      temporada_nome: temporada?.nome || "",
+      liga: gData?.liga || r.liga || "",
+      createdAt: Date.now(),
+      origem: "renuncia",
+    });
+
+    // zera liderança
+    await updateDoc(gRef, {
+      lider_uid: "",
+      em_disputa: true,
+      derrotas_seguidas: 0,
+    });
+
+    // fecha renúncia
+    await updateDoc(renRef, {
+      status: "confirmado",
+      confirmadoPorAdminUid: auth.currentUser?.uid || null,
+      confirmadoPorAdminEm: Date.now(),
+    });
+  }
+
+  async function cancelarRenuncia(r: Renuncia) {
+    await updateDoc(doc(db, "renuncias_ginasio", r.id), {
+      status: "cancelado",
+      canceladoPorAdminUid: auth.currentUser?.uid || null,
+      canceladoPorAdminEm: Date.now(),
+    });
+  }
+
+  // finalização do DESAFIO (badge/3 derrotas → abre disputa limpa)
   async function tentarFinalizarDesafio(ref: any) {
     const dSnap = await getDoc(ref);
     if (!dSnap.exists()) return;
@@ -395,6 +580,10 @@ export default function DevDisputasPage() {
         if (gSnap.exists()) {
           const derrotas = Number(gData?.derrotas_seguidas ?? 0) + 1;
           if (derrotas >= 3) {
+            // encerra liderança e limpa disputas abertas
+            await endActiveLeadership(d.ginasio_id);
+            await closeAndPurgeActiveDisputes(d.ginasio_id);
+
             await addDoc(collection(db, "disputas_ginasio"), {
               ginasio_id: d.ginasio_id,
               status: "inscricoes",
@@ -404,6 +593,7 @@ export default function DevDisputasPage() {
               temporada_nome: temporada?.nome || "",
               liga: gData?.liga || d.liga || "",
               createdAt: Date.now(),
+              origem: "3_derrotas",
             });
             await updateDoc(gRef, {
               lider_uid: "",
@@ -415,7 +605,6 @@ export default function DevDisputasPage() {
           }
         }
       } else {
-        // vitória do líder
         await updateDoc(gRef, { derrotas_seguidas: 0 });
         await addDoc(collection(db, "bloqueios_ginasio"), {
           ginasio_id: d.ginasio_id,
@@ -457,7 +646,7 @@ export default function DevDisputasPage() {
         <div>
           <h1 className="text-2xl font-bold">Dev / Disputas & Desafios (declarações pendentes)</h1>
           <p className="text-sm text-gray-500">
-            Resultados pendentes de disputa (liga) e desafios (jogador × líder) com um lado declarado.
+            Resultados pendentes de disputa (liga), desafios (jogador × líder) com um lado declarado e renúncias de liderança.
           </p>
         </div>
         <button onClick={() => router.push("/dev")} className="text-sm text-blue-600 underline">
@@ -476,9 +665,7 @@ export default function DevDisputasPage() {
           >
             <option value="">Todas</option>
             {ligasDisponiveis.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
+              <option key={l} value={l}>{l}</option>
             ))}
           </select>
         </div>
@@ -492,7 +679,7 @@ export default function DevDisputasPage() {
         </div>
       </div>
 
-      {/* ===== Seção A: Resultados de DISPUTA (liga) ===== */}
+      {/* A: Resultados de disputa */}
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">Disputas de liga — declarações pendentes</h2>
         {resultadosFiltrados.length === 0 ? (
@@ -529,9 +716,7 @@ export default function DevDisputasPage() {
                     )}
                   </p>
                   {r.tipo === "empate" && (
-                    <p className="text-sm text-gray-700">
-                      Jogadores: {aName} vs {bName}
-                    </p>
+                    <p className="text-sm text-gray-700">Jogadores: {aName} vs {bName}</p>
                   )}
                   <p className="text-sm text-gray-700">
                     Ginásio: <span className="font-medium">{gymName}</span>{" "}
@@ -544,12 +729,6 @@ export default function DevDisputasPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => router.push(`/ginasios/${r.ginasio_id}/disputa`)}
-                    className="px-3 py-1 rounded bg-gray-200 text-gray-800 text-sm"
-                  >
-                    Ver disputa
-                  </button>
                   <button
                     onClick={() => confirmarResultadoLiga(r)}
                     className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
@@ -571,7 +750,7 @@ export default function DevDisputasPage() {
         )}
       </div>
 
-      {/* ===== Seção B: DESAFIOS (jogador × líder) — 1 lado declarou ===== */}
+      {/* B: Desafios um lado declarou */}
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">Desafios — um lado declarou</h2>
         {desafiosFiltrados.length === 0 ? (
@@ -591,7 +770,7 @@ export default function DevDisputasPage() {
 
             const quemDeclarou =
               d.resultado_lider ? "Líder" : d.resultado_desafiante ? "Desafiante" : "—";
-            const valorDeclarado = d.resultado_lider || d.resultado_desafiante || "—"; // "lider" | "desafiante"
+            const valorDeclarado = d.resultado_lider || d.resultado_desafiante || "—";
 
             return (
               <div key={d.id} className="bg-white rounded shadow p-4 flex items-center justify-between">
@@ -624,6 +803,53 @@ export default function DevDisputasPage() {
                     title="Marcar como conflito"
                   >
                     Contestar
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* C: Renúncias pendentes */}
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold">Renúncias de liderança — pendentes</h2>
+        {renunciasFiltradas.length === 0 ? (
+          <p className="text-sm text-gray-500">Nenhuma renúncia pendente.</p>
+        ) : (
+          renunciasFiltradas.map((r) => {
+            const gym = gMap[r.ginasio_id];
+            const gymName = gym?.nome || r.ginasio_id;
+            const liga = gym?.liga || r.liga || "Sem liga";
+            const lider = uMap[r.lider_uid]?.display || r.lider_uid;
+            const criado = r.createdAtMs ? tempoRelativo(r.createdAtMs) : "indeterminado";
+
+            return (
+              <div key={r.id} className="bg-white rounded shadow p-4 flex items-center justify-between">
+                <div className="space-y-1">
+                  <p className="font-semibold">
+                    {lider} solicitou renúncia em <span className="text-gray-700">{gymName}</span>{" "}
+                    <span className="text-gray-500">· Liga: {liga}</span>
+                  </p>
+                  {r.motivo && <p className="text-sm text-gray-700">Motivo: {r.motivo}</p>}
+                  <p className="text-xs text-gray-600">Criado há {criado}</p>
+                  <p className="text-[10px] text-gray-400">ID renúncia: {r.id}</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => confirmarRenuncia(r)}
+                    className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
+                    title="Confirmar renúncia, abrir disputa e limpar liderança"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    onClick={() => cancelarRenuncia(r)}
+                    className="px-3 py-1 rounded bg-red-600 text-white text-sm"
+                    title="Cancelar a renúncia"
+                  >
+                    Cancelar
                   </button>
                 </div>
               </div>

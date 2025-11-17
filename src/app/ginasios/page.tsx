@@ -335,6 +335,29 @@ export default function GinasiosPage() {
     return () => unsub();
   }, [userUid]);
 
+  // ====== NOVO: util para encerrar período de liderança (para a página de Perfil calcular tempos) ======
+  async function encerrarLideratoSeAberto(ginasioId: string, liderUid: string) {
+    try {
+      const qAberto = query(
+        collection(db, 'ginasios_lideratos'),
+        where('ginasio_id', '==', ginasioId),
+        where('lider_uid', '==', liderUid)
+        // não filtramos 'fim == null' aqui porque alguns docs podem não ter o campo;
+        // filtramos em memória abaixo.
+      );
+      const snap = await getDocs(qAberto);
+      const pendentes = snap.docs.filter((d) => {
+        const x = d.data() as any;
+        return x.fim === null || x.fim === undefined;
+      });
+      await Promise.all(
+        pendentes.map((d) => updateDoc(doc(db, 'ginasios_lideratos', d.id), { fim: Date.now() }))
+      );
+    } catch (e) {
+      console.warn('Falha ao encerrar líderato aberto', e);
+    }
+  }
+
   const handleDesafiar = async (g: Ginasio) => {
     if (!userUid) return;
     if (!g.lider_uid) return;
@@ -495,12 +518,13 @@ export default function GinasiosPage() {
 
     if (rl === rd) {
       if (rl === 'desafiante') {
+        // vitória do desafiante → dá insígnia + bloqueio curto
         await addDoc(collection(db, 'insignias'), {
           usuario_uid: d.desafiante_uid,
           ginasio_id: d.ginasio_id,
           ginasio_nome: gData?.nome || '',
           ginasio_tipo: gData?.tipo || '',
-          lider_derrotado_uid: d.lider_uid,
+          lider_derrotado_uid: d.lider_uid, // “líder à época”
           insignia_icon: gData?.insignia_icon || '',
           temporada_id: temporada?.id || '',
           temporada_nome: temporada?.nome || '',
@@ -518,6 +542,7 @@ export default function GinasiosPage() {
           let derrotas = gData?.derrotas_seguidas ?? 0;
           derrotas += 1;
           if (derrotas >= 3) {
+            // 3 derrotas → abrir disputa e esvaziar ginásio
             await addDoc(collection(db, 'disputas_ginasio'), {
               ginasio_id: d.ginasio_id,
               status: 'inscricoes',
@@ -528,12 +553,19 @@ export default function GinasiosPage() {
               temporada_nome: temporada?.nome || '',
               createdAt: Date.now(),
             });
+
+            // NOVO: encerrar período de liderança vigente (para cálculo no perfil)
+            if (gData?.liger_uid || gData?.lider_uid) {
+              await encerrarLideratoSeAberto(d.ginasio_id, gData.lider_uid);
+            }
+
             await updateDoc(gRef, { lider_uid: '', em_disputa: true, derrotas_seguidas: 0 });
           } else {
             await updateDoc(gRef, { derrotas_seguidas: derrotas });
           }
         }
       } else {
+        // vitória do líder → zera derrotas + bloqueio mais longo ao desafiante
         await updateDoc(gRef, { derrotas_seguidas: 0 });
         await addDoc(collection(db, 'bloqueios_ginasio'), {
           ginasio_id: d.ginasio_id,
@@ -683,7 +715,7 @@ export default function GinasiosPage() {
                   </Link>
                 </>
               ) : disputaBatalhandoGinasio ? (
-                // NOVO: mostrar o "Ver disputa" quando estiver batalhando
+                // Mostrar "Ver disputa" quando estiver batalhando
                 <Link
                   href={`/ginasios/${g.id}/disputa`}
                   className="text-xs text-blue-600 underline"

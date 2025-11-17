@@ -100,6 +100,24 @@ type Temporada = {
   createdAt?: number;
 };
 
+/* === NOVOS TIPOS PARA HISTÓRICO === */
+type Liderato = {
+  id: string;
+  ginasio_id: string;
+  lider_uid: string;
+  inicio: number;
+  fim?: number | null;
+  liga?: string;
+};
+
+type EliteMandato = {
+  id: string;
+  usuario_uid: string;
+  liga?: string;
+  inicio: number;
+  fim?: number | null;
+};
+
 /* =======================
    Page
 ======================= */
@@ -161,6 +179,13 @@ export default function PerfilPage() {
 
   const [loading, setLoading] = useState(true);
   const ehMeuPerfil = logadoUid === perfilUid;
+
+  /* === NOVOS ESTADOS PARA HISTÓRICO === */
+  const [lideratos, setLideratos] = useState<Liderato[]>([]);
+  const [eliteMandatos, setEliteMandatos] = useState<EliteMandato[]>([]);
+
+  /* Controle de clique de renúncia (evitar duplo) */
+  const [renunciando, setRenunciando] = useState<string | null>(null);
 
   /* =======================
      Effects: auth / lookups
@@ -433,6 +458,55 @@ export default function PerfilPage() {
     })();
   }, [insignias]);
 
+  /* === NOVOS EFFECTS: carregar períodos de liderança/elite4 === */
+
+  // Liderato (ginasios_liderancas)
+  useEffect(() => {
+    if (!perfilUid) return;
+    const qL = query(
+      collection(db, 'ginasios_liderancas'),
+      where('lider_uid', '==', perfilUid)
+    );
+    const unsub = onSnapshot(qL, (snap) => {
+      const list: Liderato[] = snap.docs.map((d) => {
+        const x = d.data() as any;
+        // aceita ambos os nomes de campo
+        const inicio = Number(x.inicio ?? x.startedAt ?? 0);
+        const fim = (x.fim ?? x.endedAt ?? null) as number | null;
+        return {
+          id: d.id,
+          ginasio_id: x.ginasio_id,
+          lider_uid: x.lider_uid,
+          inicio,
+          fim,
+          liga: x.liga || '',
+        };
+      });
+      setLideratos(list);
+    });
+    return () => unsub();
+  }, [perfilUid]);
+
+  // Elite 4 (elite4_mandatos) — coleção opcional (graceful empty)
+  useEffect(() => {
+    if (!perfilUid) return;
+    const qE = query(collection(db, 'elite4_mandatos'), where('usuario_uid', '==', perfilUid));
+    const unsub = onSnapshot(qE, (snap) => {
+      const list: EliteMandato[] = snap.docs.map((d) => {
+        const x = d.data() as any;
+        return {
+          id: d.id,
+          usuario_uid: x.usuario_uid,
+          liga: x.liga || '',
+          inicio: Number(x.inicio || 0),
+          fim: x.fim ?? null,
+        };
+      });
+      setEliteMandatos(list);
+    });
+    return () => unsub();
+  }, [perfilUid]);
+
   /* =======================
      Helpers / Derivations
   ======================= */
@@ -458,13 +532,10 @@ export default function PerfilPage() {
       if (!map[key]) map[key] = [];
       map[key].push(ins);
     }
-    // Ordenar cada grupo por createdAt desc
     Object.values(map).forEach((arr) => arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
-    // Ordenar os grupos: ativa primeiro, depois por createdAt mais recente do grupo
     const entries = Object.entries(map).sort((a, b) => {
       const [ta, arrA] = a;
       const [tb, arrB] = b;
-      // ativa primeiro se houver id que bate com temporadaAtiva
       if (temporadaAtiva?.id) {
         if (ta === temporadaAtiva.id && tb !== temporadaAtiva.id) return -1;
         if (tb === temporadaAtiva.id && ta !== temporadaAtiva.id) return 1;
@@ -484,6 +555,59 @@ export default function PerfilPage() {
     } catch {
       return '';
     }
+  }
+
+  // === NOVO: cálculo de durações ===
+  const nowRef = Date.now();
+
+  const lideratosFiltrados = useMemo(() => {
+    return lideratos.filter((l) => (!ligaSelecionada ? true : (l.liga || '') === ligaSelecionada));
+  }, [lideratos, ligaSelecionada]);
+
+  const eliteMandatosFiltrados = useMemo(() => {
+    return eliteMandatos.filter((m) => (!ligaSelecionada ? true : (m.liga || '') === ligaSelecionada));
+  }, [eliteMandatos, ligaSelecionada]);
+
+  const totalLeaderByGym = useMemo(() => {
+    const acc: Record<string, number> = {};
+    for (const l of lideratosFiltrados) {
+      const fim = l.fim ?? nowRef;
+      const dur = Math.max(0, fim - (l.inicio || 0));
+      acc[l.ginasio_id] = (acc[l.ginasio_id] || 0) + dur;
+    }
+    return acc; // { ginasio_id: ms }
+  }, [lideratosFiltrados, nowRef]);
+
+  const totalLeaderMs = useMemo(
+    () => Object.values(totalLeaderByGym).reduce((a, b) => a + b, 0),
+    [totalLeaderByGym]
+  );
+
+  const totalEliteByLiga = useMemo(() => {
+    const acc: Record<string, number> = {};
+    for (const m of eliteMandatosFiltrados) {
+      const fim = m.fim ?? nowRef;
+      const dur = Math.max(0, fim - (m.inicio || 0));
+      const key = m.liga || '—';
+      acc[key] = (acc[key] || 0) + dur;
+    }
+    return acc; // { liga: ms }
+  }, [eliteMandatosFiltrados, nowRef]);
+
+  const totalEliteMs = useMemo(
+    () => Object.values(totalEliteByLiga).reduce((a, b) => a + b, 0),
+    [totalEliteByLiga]
+  );
+
+  function fmtDur(ms: number) {
+    if (!ms || ms <= 0) return '0h';
+    const daysTotal = Math.floor(ms / 86_400_000);
+    const months = Math.floor(daysTotal / 30);
+    const days = daysTotal % 30;
+    const hours = Math.floor((ms % 86_400_000) / 3_600_000);
+    if (months > 0) return `${months}m ${days}d`;
+    if (days > 0) return `${days}d ${hours}h`;
+    return `${hours}h`;
   }
 
   /* =======================
@@ -667,6 +791,54 @@ export default function PerfilPage() {
   }
 
   /* =======================
+     RENUNCIAR – FECHANDO MANDATO
+  ======================= */
+
+  async function handleRenunciar(g: Ginasio) {
+    if (renunciando) return;
+    setRenunciando(g.id);
+    try {
+      // 1) Fechar período aberto do líder atual em ginasios_liderancas
+      if (g.lider_uid) {
+        const qAberto = query(
+          collection(db, 'ginasios_liderancas'),
+          where('ginasio_id', '==', g.id),
+          where('lider_uid', '==', g.lider_uid),
+          where('fim', '==', null)
+        );
+        const snapAberto = await getDocs(qAberto);
+        await Promise.all(
+          snapAberto.docs.map((d) => updateDoc(d.ref, { fim: Date.now() }))
+        );
+      }
+
+      // 2) Criar disputa (inscrições) preservando metadados
+      await addDoc(collection(db, 'disputas_ginasio'), {
+        ginasio_id: g.id,
+        status: 'inscricoes',
+        tipo_original: g.tipo || '',
+        lider_anterior_uid: g.lider_uid || '',
+        temporada_id: temporadaAtiva?.id || '',
+        temporada_nome: temporadaAtiva?.nome || '',
+        liga: g.liga || '',
+        createdAt: Date.now(),
+      });
+
+      // 3) Liberar o ginásio
+      await updateDoc(doc(db, 'ginasios', g.id), {
+        lider_uid: '',
+        em_disputa: true,
+        derrotas_seguidas: 0,
+      });
+    } catch (e) {
+      console.error('Falha ao renunciar:', e);
+      alert('Não foi possível renunciar agora. Tente novamente.');
+    } finally {
+      setRenunciando(null);
+    }
+  }
+
+  /* =======================
      Render
   ======================= */
 
@@ -758,27 +930,11 @@ export default function PerfilPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={async () => {
-                      await addDoc(collection(db, 'disputas_ginasio'), {
-                        ginasio_id: g.id,
-                        status: 'inscricoes',
-                        tipo_original: g.tipo || '',
-                        lider_anterior_uid: g.lider_uid || '',
-                        temporada_id: temporadaAtiva?.id || '',
-                        temporada_nome: temporadaAtiva?.nome || '',
-                        liga: g.liga || '',
-                        createdAt: Date.now(),
-                      });
-
-                      await updateDoc(doc(db, 'ginasios', g.id), {
-                        lider_uid: '',
-                        em_disputa: true,
-                        derrotas_seguidas: 0,
-                      });
-                    }}
-                    className="bg-red-500 text-white px-3 py-1 rounded text-sm"
+                    onClick={() => handleRenunciar(g)}
+                    disabled={renunciando === g.id}
+                    className="bg-red-500 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
                   >
-                    Renunciar
+                    {renunciando === g.id ? 'Renunciando...' : 'Renunciar'}
                   </button>
                   <Link
                     href={`/elite4/inscricao${g.liga ? `?liga=${encodeURIComponent(g.liga)}` : ''}`}
@@ -953,10 +1109,73 @@ export default function PerfilPage() {
         )}
       </div>
 
-      {/* Histórico (placeholder) */}
+      {/* =======================
+          HISTÓRICO (NOVO)
+         ======================= */}
       <div className="bg-white p-4 rounded shadow">
-        <h2 className="text-lg font-semibold mb-2">Histórico de campeonatos</h2>
-        <p className="text-sm text-gray-500">Aqui vão campeonatos, hall da fama, títulos.</p>
+        <h2 className="text-lg font-semibold mb-2">Histórico</h2>
+
+        {/* Resumo de tempos */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <div className="bg-gray-50 rounded p-3">
+            <p className="text-xs text-gray-500">Tempo total como Líder</p>
+            <p className="text-lg font-semibold">{fmtDur(totalLeaderMs)}</p>
+          </div>
+          <div className="bg-gray-50 rounded p-3">
+            <p className="text-xs text-gray-500">Tempo total como Elite 4</p>
+            <p className="text-lg font-semibold">{fmtDur(totalEliteMs)}</p>
+          </div>
+        </div>
+
+        {/* Por ginásio (Líder) */}
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Líder — por ginásio</h3>
+          {Object.keys(totalLeaderByGym).length === 0 ? (
+            <p className="text-xs text-gray-500">Sem períodos de liderança registrados{ligaSelecionada ? ' nesta liga' : ''}.</p>
+          ) : (
+            <ul className="space-y-2">
+              {Object.entries(totalLeaderByGym)
+                .sort((a, b) => b[1] - a[1])
+                .map(([gId, ms]) => {
+                  const nome = ginasiosMap[gId]?.nome || gId;
+                  const liga = ginasiosMap[gId]?.liga || '';
+                  return (
+                    <li key={gId} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
+                      <div className="text-sm">
+                        <p className="font-medium">{nome}</p>
+                        {liga && <p className="text-xs text-gray-500">Liga: {liga}</p>}
+                      </div>
+                      <p className="text-sm font-semibold">{fmtDur(ms)}</p>
+                    </li>
+                  );
+                })}
+            </ul>
+          )}
+        </div>
+
+        {/* Por liga (Elite 4) */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Elite 4 — por liga</h3>
+          {Object.keys(totalEliteByLiga).length === 0 ? (
+            <p className="text-xs text-gray-500">Sem períodos de Elite 4 registrados{ligaSelecionada ? ' nesta liga' : ''}.</p>
+          ) : (
+            <ul className="space-y-2">
+              {Object.entries(totalEliteByLiga)
+                .sort((a, b) => b[1] - a[1])
+                .map(([liga, ms]) => (
+                  <li key={liga} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
+                    <p className="text-sm font-medium">{liga || '—'}</p>
+                    <p className="text-sm font-semibold">{fmtDur(ms)}</p>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+
+        {/* (Futuro) posições em campeonatos / Hall of Fame / Pokémon usados */}
+        <p className="text-[11px] text-gray-400 mt-3">
+          Em breve: posições por campeonato e Hall of Fame com equipes usadas.
+        </p>
       </div>
 
       <button onClick={() => router.push('/jogadores')} className="bg-gray-200 text-gray-800 px-3 py-2 rounded text-sm">
@@ -1000,7 +1219,7 @@ export default function PerfilPage() {
                             className="w-40 h-40 border rounded"
                           />
                           <button
-                            onClick={() => navigator.clipboard?.writeText(chatOtherFC!)}
+                            onClick={() => (navigator as any)?.clipboard?.writeText?.(chatOtherFC!)}
                             className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
                           >
                             Copiar FC
@@ -1025,9 +1244,8 @@ export default function PerfilPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${
-                          mine ? 'self-end bg-blue-600 text-white' : 'self-start bg-white border'
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded ${mine ? 'self-end bg-blue-600 text-white' : 'self-start bg-white border'
+                          }`}
                       >
                         <p className="text-xs">{m.text}</p>
                       </div>
