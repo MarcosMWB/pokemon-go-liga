@@ -102,7 +102,7 @@ async function startLeadership(
       liga = g.liga || g.liga_nome || "";
       if (!tipo) tipo = g.tipo || "";
     }
-  } catch {}
+  } catch { }
 
   await addDoc(collection(db, "ginasios_liderancas"), {
     ginasio_id: ginasioId,
@@ -478,8 +478,9 @@ export default function DevGinasiosPage() {
     });
 
     setRenunciasMap((prev) => {
-      const { [g.id]: _, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[g.id];
+      return next;
     });
   };
 
@@ -490,8 +491,9 @@ export default function DevGinasiosPage() {
       canceladoPorAdminEm: Date.now(),
     });
     setRenunciasMap((prev) => {
-      const { [g.id]: _, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[g.id];
+      return next;
     });
   };
 
