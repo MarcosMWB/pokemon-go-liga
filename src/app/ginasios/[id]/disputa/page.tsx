@@ -405,23 +405,23 @@ export default function DisputaGinasioPage() {
     ? participantes.find((p) => p.usuario_uid === userUid)
     : null;
 
-  // Invalidar tipo se ficou indisponível durante inscrições
+  // Invalidar tipo se ficou indisponível durante inscrições (sem IIFE)
   useEffect(() => {
-    if (
-      !disputa ||
-      disputa.status !== "inscricoes" ||
-      !userUid ||
-      !meuParticipante?.id ||
-      !meuParticipante?.tipo_escolhido
-    ) {
-      return;
-    }
+    const invalidarSeOcupou = async () => {
+      if (
+        !disputa ||
+        disputa.status !== "inscricoes" ||
+        !userUid ||
+        !meuParticipante?.id ||
+        !meuParticipante?.tipo_escolhido
+      ) {
+        return;
+      }
 
-    const escolhido = meuParticipante.tipo_escolhido;
-    const ocupou = escolhido !== disputa.tipo_original && ocupados.includes(escolhido);
+      const escolhido = meuParticipante.tipo_escolhido;
+      const ocupou = escolhido !== disputa.tipo_original && ocupados.includes(escolhido);
 
-    if (ocupou) {
-      (async () => {
+      if (ocupou) {
         try {
           await updateDoc(
             doc(db, "disputas_ginasio_participantes", meuParticipante.id),
@@ -438,8 +438,10 @@ export default function DisputaGinasioPage() {
         } catch (e) {
           console.error("falha ao invalidar tipo", e);
         }
-      })();
-    }
+      }
+    };
+
+    invalidarSeOcupou();
   }, [
     disputa,
     userUid,
@@ -472,7 +474,7 @@ export default function DisputaGinasioPage() {
     });
   }, [participantes, pontos]);
 
-  // ===== Finalização automática (igual você já tinha) =====
+  // ===== Finalização automática (sem IIFE)
   async function iniciarLideratoSeNaoExiste(
     ginasio_id: string,
     lider_uid: string,
@@ -503,21 +505,16 @@ export default function DisputaGinasioPage() {
     }
   }
 
-  // Quando uma disputa for marcada como "finalizado" e ainda não aplicada...
   useEffect(() => {
-    const applyFinalizacao = async () => {
+    const aplicarFinalizacao = async () => {
       if (!disputa || !ginasio) return;
       if (disputa.status !== "finalizado") return;
       if (disputa.finalizacao_aplicada) return;
 
       try {
-        // vencedor = topo do ranking (desempate simples: primeiro da lista)
         if (ranking.length === 0) return;
-
         const topo = ranking[0];
         const pTopo = pontos[topo.usuario_uid] || 0;
-
-        // Verifica empate no topo
         const empatadosTopo = ranking.filter((p) => (pontos[p.usuario_uid] || 0) === pTopo);
         if (empatadosTopo.length > 1) {
           await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
@@ -529,12 +526,9 @@ export default function DisputaGinasioPage() {
         }
 
         const novoLiderUid = topo.usuario_uid;
-        const tipoNovo =
-          topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
-        const ligaDoGinasio =
-          ginasio.liga || disputa.liga || disputa.liga_nome || "";
+        const tipoNovo = topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
+        const ligaDoGinasio = ginasio.liga || disputa.liga || disputa.liga_nome || "";
 
-        // Atualiza ginásio
         await updateDoc(doc(db, "ginasios", ginasio.id), {
           lider_uid: novoLiderUid,
           tipo: tipoNovo,
@@ -542,16 +536,8 @@ export default function DisputaGinasioPage() {
           derrotas_seguidas: 0,
         });
 
-        // Abre período de liderança
-        await iniciarLideratoSeNaoExiste(
-          ginasio.id,
-          novoLiderUid,
-          ligaDoGinasio,
-          tipoNovo,
-          ginasio.nome
-        );
+        await iniciarLideratoSeNaoExiste(ginasio.id, novoLiderUid, ligaDoGinasio, tipoNovo, ginasio.nome);
 
-        // Marca disputa como aplicada
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
           finalizacao_aplicada: true,
           vencedor_uid: novoLiderUid,
@@ -562,8 +548,7 @@ export default function DisputaGinasioPage() {
       }
     };
 
-    // chama a função assíncrona sem criar expressão solta
-    void applyFinalizacao();
+    aplicarFinalizacao();
   }, [disputa, ginasio, ranking, pontos]);
 
   // ====== CHAT: criar/abrir desafio ======
@@ -644,8 +629,8 @@ export default function DisputaGinasioPage() {
   }
 
   function closeDesafioChat() {
-    chatUnsubRef.current && chatUnsubRef.current();
-    desafioUnsubRef.current && desafioUnsubRef.current();
+    if (chatUnsubRef.current) { chatUnsubRef.current(); chatUnsubRef.current = null; }
+    if (desafioUnsubRef.current) { desafioUnsubRef.current(); desafioUnsubRef.current = null; }
     setChatOpen(false);
     setChatDesafioId(null);
     setChatMsgs([]);
@@ -695,6 +680,12 @@ export default function DisputaGinasioPage() {
       .slice()
       .sort((a, b) => ((a.nome || a.email || a.usuario_uid).localeCompare(b.nome || b.email || b.usuario_uid)));
   }, [participantes]);
+
+  // Links do amigo para o modal (evita IIFE no JSX)
+  const fc = chatOther?.friend_code || null;
+  const friendLinks = fc ? buildPoGoFriendLinks(fc) : null;
+  const deepLink = fc ? (isAndroid ? friendLinks!.androidIntent : friendLinks!.native) : null;
+  const qrLink = fc ? qrUrl(friendLinks!.native) : null;
 
   // ====== RENDER ======
   if (loading) return <p className="p-8">Carregando disputa...</p>;
@@ -758,8 +749,8 @@ export default function DisputaGinasioPage() {
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
               className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200"
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200"
                 } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
@@ -957,33 +948,31 @@ export default function DisputaGinasioPage() {
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="border rounded-lg p-3">
                 <p className="text-xs text-slate-500">Adicionar {chatOther?.nome || "Treinador"}:</p>
-                {chatOther?.friend_code ? (
+                {fc ? (
                   <>
-                    <p className="text-sm font-semibold">FC: {chatOther.friend_code}</p>
-                    {(() => {
-                      const { native, androidIntent } = buildPoGoFriendLinks(chatOther.friend_code!);
-                      const deep = isAndroid ? androidIntent : native;
-                      return (
-                        <div className="mt-2 flex flex-col items-start gap-2">
-                          <a href={deep} className="text-blue-600 text-sm hover:underline">
-                            Abrir no Pokémon GO
-                          </a>
-                          <Image
-                            src={qrUrl(native)}
-                            alt="QR para adicionar"
-                            width={160}
-                            height={160}
-                            className="w-40 h-40 border rounded"
-                          />
-                          <button
-                            onClick={() => (navigator as any)?.clipboard?.writeText?.(chatOther.friend_code!)}
-                            className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                          >
-                            Copiar FC
-                          </button>
-                        </div>
-                      );
-                    })()}
+                    <p className="text-sm font-semibold">FC: {fc}</p>
+                    <div className="mt-2 flex flex-col items-start gap-2">
+                      {deepLink && (
+                        <a href={deepLink} className="text-blue-600 text-sm hover:underline">
+                          Abrir no Pokémon GO
+                        </a>
+                      )}
+                      {qrLink && (
+                        <Image
+                          src={qrLink}
+                          alt="QR para adicionar"
+                          width={160}
+                          height={160}
+                          className="w-40 h-40 border rounded"
+                        />
+                      )}
+                      <button
+                        onClick={() => (navigator as any)?.clipboard?.writeText?.(fc)}
+                        className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                      >
+                        Copiar FC
+                      </button>
+                    </div>
                   </>
                 ) : (
                   <p className="text-xs text-amber-600">O oponente não cadastrou FC.</p>
