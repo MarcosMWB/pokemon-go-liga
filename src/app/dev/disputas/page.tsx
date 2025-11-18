@@ -14,12 +14,8 @@ import {
   orderBy,
   updateDoc,
   addDoc,
+  deleteDoc,
 } from "firebase/firestore";
-import {
-  aplicarFinalizacaoDeDisputa,
-  closeAndPurgeActiveDisputes,
-  endActiveLeadership,
-} from "@/lib/finalizacao";
 
 // ==== Tipos ====
 type Resultado = {
@@ -96,6 +92,79 @@ function tempoRelativo(ms?: number | null) {
   return `${d}d`;
 }
 
+// --------- Helpers (purga + liderança) ----------
+async function purgeDisputa(disputaId: string) {
+  // participantes
+  const pSnap = await getDocs(
+    query(
+      collection(db, "disputas_ginasio_participantes"),
+      where("disputa_id", "==", disputaId)
+    )
+  );
+  for (const d of pSnap.docs) {
+    try {
+      await deleteDoc(d.ref);
+    } catch {
+      await updateDoc(d.ref, { removido: true });
+    }
+  }
+
+  // resultados
+  const rSnap = await getDocs(
+    query(
+      collection(db, "disputas_ginasio_resultados"),
+      where("disputa_id", "==", disputaId)
+    )
+  );
+  for (const d of rSnap.docs) {
+    try {
+      await deleteDoc(d.ref);
+    } catch {
+      await updateDoc(d.ref, { status: "limpo" });
+    }
+  }
+
+  // disputa
+  const dRef = doc(db, "disputas_ginasio", disputaId);
+  try {
+    await deleteDoc(dRef);
+  } catch {
+    await updateDoc(dRef, {
+      status: "finalizado",
+      encerradaEm: Date.now(),
+      purgada: true,
+    });
+  }
+}
+
+async function closeAndPurgeActiveDisputes(ginasioId: string) {
+  const snap = await getDocs(
+    query(
+      collection(db, "disputas_ginasio"),
+      where("ginasio_id", "==", ginasioId),
+      where("status", "in", ["inscricoes", "batalhando"])
+    )
+  );
+  for (const d of snap.docs) {
+    await purgeDisputa(d.id);
+  }
+}
+
+async function endActiveLeadership(ginasioId: string) {
+  const snap = await getDocs(
+    query(
+      collection(db, "ginasios_liderancas"),
+      where("ginasio_id", "==", ginasioId),
+      where("endedAt", "==", null)
+    )
+  );
+  for (const d of snap.docs) {
+    await updateDoc(d.ref, {
+      endedAt: Date.now(),
+      endedByAdminUid: auth.currentUser?.uid || null,
+    });
+  }
+}
 // ---------------------------------------------------
 
 export default function DevDisputasPage() {
@@ -119,12 +188,7 @@ export default function DevDisputasPage() {
 
   const [temporada, setTemporada] = useState<Temporada>(null);
 
-  // Ferramentas Admin
-  const [ginasioIdManual, setGinasioIdManual] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  // auth + super (superusers/{uid})
+  // auth + super (compatível com as rules: superusers/{uid})
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
@@ -200,7 +264,7 @@ export default function DevDisputasPage() {
     const qD = query(
       collection(db, "desafios_ginasio"),
       where("status", "==", "pendente"),
-      orderBy("criadoEm", "desc")
+      orderBy("createdAt", "desc")
     );
     const unsub = onSnapshot(qD, (snap) => {
       const list: Desafio[] = snap.docs
@@ -215,7 +279,7 @@ export default function DevDisputasPage() {
             status: x.status,
             resultado_lider: x.resultado_lider ?? null,
             resultado_desafiante: x.resultado_desafiante ?? null,
-            createdAtMs: toMillis(x.criadoEm ?? x.createdAt),
+            createdAtMs: toMillis(x.createdAt),
           };
         })
         .filter((d) => {
@@ -255,7 +319,7 @@ export default function DevDisputasPage() {
     return () => unsub();
   }, [isAdmin]);
 
-  // carregar gyms + ligas dinamicamente
+  // carregar gyms + ligas
   useEffect(() => {
     if (isAdmin !== true) return;
     const gymIds = new Set<string>();
@@ -338,6 +402,7 @@ export default function DevDisputasPage() {
     return resultados.filter((r) => {
       const liga = gMap[r.ginasio_id]?.liga || "";
       if (ligaFiltro && liga !== ligaFiltro) return false;
+
       if (textoBusca.trim()) {
         const t = textoBusca.trim().toLowerCase();
         const gymName = (gMap[r.ginasio_id]?.nome || r.ginasio_id).toLowerCase();
@@ -353,6 +418,7 @@ export default function DevDisputasPage() {
     return desafios1lado.filter((d) => {
       const liga = gMap[d.ginasio_id]?.liga || d.liga || "";
       if (ligaFiltro && liga !== ligaFiltro) return false;
+
       if (textoBusca.trim()) {
         const t = textoBusca.trim().toLowerCase();
         const gymName = (gMap[d.ginasio_id]?.nome || d.ginasio_id).toLowerCase();
@@ -368,6 +434,7 @@ export default function DevDisputasPage() {
     return renuncias.filter((r) => {
       const liga = gMap[r.ginasio_id]?.liga || r.liga || "";
       if (ligaFiltro && liga !== ligaFiltro) return false;
+
       if (textoBusca.trim()) {
         const t = textoBusca.trim().toLowerCase();
         const gymName = (gMap[r.ginasio_id]?.nome || r.ginasio_id).toLowerCase();
@@ -425,20 +492,25 @@ export default function DevDisputasPage() {
       createdAt: Date.now(),
       marcadoPorAdminUid: auth.currentUser?.uid || null,
     });
-    // limpeza de chat acontecerá quando for tratado na página pública
+    await clearDesafioChat(d.id);
   }
 
   // ações: renúncia
   async function confirmarRenuncia(r: Renuncia) {
     const renRef = doc(db, "renuncias_ginasio", r.id);
 
+    // encerra liderança atual
     await endActiveLeadership(r.ginasio_id);
+
+    // limpa disputas abertas
     await closeAndPurgeActiveDisputes(r.ginasio_id);
 
+    // info do ginásio
     const gRef = doc(db, "ginasios", r.ginasio_id);
     const gSnap = await getDoc(gRef);
     const gData = gSnap.exists() ? (gSnap.data() as any) : null;
 
+    // abre disputa por renúncia (vazia/limpa)
     await addDoc(collection(db, "disputas_ginasio"), {
       ginasio_id: r.ginasio_id,
       status: "inscricoes",
@@ -451,12 +523,14 @@ export default function DevDisputasPage() {
       origem: "renuncia",
     });
 
+    // zera liderança
     await updateDoc(gRef, {
       lider_uid: "",
       em_disputa: true,
       derrotas_seguidas: 0,
     });
 
+    // fecha renúncia
     await updateDoc(renRef, {
       status: "confirmado",
       confirmadoPorAdminUid: auth.currentUser?.uid || null,
@@ -511,6 +585,7 @@ export default function DevDisputasPage() {
         if (gSnap.exists()) {
           const derrotas = Number(gData?.derrotas_seguidas ?? 0) + 1;
           if (derrotas >= 3) {
+            // encerra liderança e limpa disputas abertas
             await endActiveLeadership(d.ginasio_id);
             await closeAndPurgeActiveDisputes(d.ginasio_id);
 
@@ -544,6 +619,7 @@ export default function DevDisputasPage() {
       }
 
       await updateDoc(ref, { status: "concluido" });
+      await clearDesafioChat(ref.id);
     } else {
       await updateDoc(ref, { status: "conflito" });
       await addDoc(collection(db, "alertas_conflito"), {
@@ -553,7 +629,17 @@ export default function DevDisputasPage() {
         desafiante_uid: d.desafiante_uid,
         createdAt: Date.now(),
       });
+      await clearDesafioChat(ref.id);
     }
+  }
+
+  async function clearDesafioChat(desafioId: string) {
+    const snap = await getDocs(collection(db, "desafios_ginasio", desafioId, "mensagens"));
+    await Promise.all(
+      snap.docs.map((m) =>
+        deleteDoc(doc(db, "desafios_ginasio", desafioId, "mensagens", m.id))
+      )
+    );
   }
 
   if (isAdmin === null) return <p className="p-6">Carregando…</p>;
@@ -571,50 +657,6 @@ export default function DevDisputasPage() {
         <button onClick={() => router.push("/dev")} className="text-sm text-blue-600 underline">
           Voltar ao painel
         </button>
-      </div>
-
-      {/* Ferramentas do Admin (finalização manual e purga) */}
-      <div className="bg-white p-4 rounded shadow space-y-3">
-        <h2 className="text-lg font-semibold">Ferramentas do Admin</h2>
-        <div className="flex flex-col md:flex-row gap-2">
-          <input
-            value={ginasioIdManual}
-            onChange={(e) => setGinasioIdManual(e.target.value)}
-            placeholder="ID do ginásio"
-            className="border rounded px-2 py-1 text-sm w-full md:w-72"
-          />
-          <button
-            disabled={!ginasioIdManual.trim() || busy}
-            onClick={async () => {
-              setBusy(true); setMsg(null);
-              try {
-                const r = await aplicarFinalizacaoDeDisputa(ginasioIdManual.trim(), { purgeAfter: false });
-                setMsg(r?.vencedor ? `Finalizado. Novo líder: ${r.vencedor}.` : "Finalizado sem vencedor.");
-              } catch (e: any) {
-                setMsg(e?.message || "Falha ao aplicar finalização.");
-              } finally { setBusy(false); }
-            }}
-            className="bg-blue-600 text-white text-sm px-3 py-1 rounded disabled:opacity-50"
-          >
-            Aplicar finalização
-          </button>
-          <button
-            disabled={!ginasioIdManual.trim() || busy}
-            onClick={async () => {
-              setBusy(true); setMsg(null);
-              try {
-                const r = await aplicarFinalizacaoDeDisputa(ginasioIdManual.trim(), { purgeAfter: true });
-                setMsg(r?.vencedor ? `Finalizado e purgado. Novo líder: ${r.vencedor}.` : "Finalizado e purgado.");
-              } catch (e: any) {
-                setMsg(e?.message || "Falha ao finalizar/purgar.");
-              } finally { setBusy(false); }
-            }}
-            className="bg-red-600 text-white text-sm px-3 py-1 rounded disabled:opacity-50"
-          >
-            Aplicar e purgar disputa
-          </button>
-        </div>
-        {msg && <p className="text-xs text-gray-700">{msg}</p>}
       </div>
 
       {/* Filtros */}

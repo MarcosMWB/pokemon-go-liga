@@ -11,7 +11,7 @@ import {
   where,
   addDoc,
   updateDoc,
-  deleteDoc, // <-- IMPORTADO
+  deleteDoc,
   doc,
 } from "firebase/firestore";
 
@@ -90,7 +90,11 @@ async function endActiveLeadership(ginasioId: string) {
 async function startLeadership(
   ginasioId: string,
   leaderUid: string,
-  meta?: { origem?: "disputa" | "renuncia" | "3_derrotas" | "manual"; tipo?: string; temporada?: Temporada }
+  meta?: {
+    origem?: "disputa" | "renuncia" | "3_derrotas" | "manual";
+    tipo?: string;
+    temporada?: Temporada;
+  }
 ) {
   let liga = "";
   let tipo = meta?.tipo || "";
@@ -102,7 +106,7 @@ async function startLeadership(
       liga = g.liga || g.liga_nome || "";
       if (!tipo) tipo = g.tipo || "";
     }
-  } catch { }
+  } catch {}
 
   await addDoc(collection(db, "ginasios_liderancas"), {
     ginasio_id: ginasioId,
@@ -122,9 +126,40 @@ async function startLeadership(
 /** Apaga todos os participantes de uma disputa (limpa inscrição antiga). */
 async function deleteParticipantsOfDispute(disputaId: string) {
   const ps = await getDocs(
-    query(collection(db, "disputas_ginasio_participantes"), where("disputa_id", "==", disputaId))
+    query(
+      collection(db, "disputas_ginasio_participantes"),
+      where("disputa_id", "==", disputaId)
+    )
   );
   await Promise.all(ps.docs.map((d) => deleteDoc(d.ref)));
+}
+
+/** Fecha desafios pendentes do ginásio e limpa mensagens. */
+async function closePendingChallengesOfGym(ginasioId: string) {
+  try {
+    const pend = await getDocs(
+      query(
+        collection(db, "desafios_ginasio"),
+        where("ginasio_id", "==", ginasioId),
+        where("status", "==", "pendente")
+      )
+    );
+    for (const d of pend.docs) {
+      try {
+        await updateDoc(d.ref, {
+          status: "concluido",
+          fechadoPorAdminUid: auth.currentUser?.uid || null,
+          fechadoEm: Date.now(),
+        });
+      } catch {}
+      try {
+        const msgs = await getDocs(
+          collection(db, "desafios_ginasio", d.id, "mensagens")
+        );
+        await Promise.all(msgs.docs.map((m) => deleteDoc(m.ref)));
+      } catch {}
+    }
+  } catch {}
 }
 
 export default function DevGinasiosPage() {
@@ -177,7 +212,10 @@ export default function DevGinasiosPage() {
   useEffect(() => {
     if (isAdmin !== true) return;
     (async () => {
-      const qTemp = query(collection(db, "temporadas"), where("ativa", "==", true));
+      const qTemp = query(
+        collection(db, "temporadas"),
+        where("ativa", "==", true)
+      );
       const snap = await getDocs(qTemp);
       if (!snap.empty) {
         const d = snap.docs[0];
@@ -225,7 +263,10 @@ export default function DevGinasiosPage() {
       });
 
       const rSnap = await getDocs(
-        query(collection(db, "renuncias_ginasio"), where("status", "==", "pendente"))
+        query(
+          collection(db, "renuncias_ginasio"),
+          where("status", "==", "pendente")
+        )
       );
       const map: Record<string, Renuncia> = {};
       rSnap.docs.forEach((dd) => {
@@ -240,7 +281,8 @@ export default function DevGinasiosPage() {
           createdAtMs: toMillis(x.createdAt),
         };
         const cur = map[r.ginasio_id];
-        if (!cur || (r.createdAtMs || 0) > (cur.createdAtMs || 0)) map[r.ginasio_id] = r;
+        if (!cur || (r.createdAtMs || 0) > (cur.createdAtMs || 0))
+          map[r.ginasio_id] = r;
       });
 
       setGinasios(gList);
@@ -276,7 +318,12 @@ export default function DevGinasiosPage() {
 
     setDisputas((prev) => [
       ...prev,
-      { id: nova.id, ginasio_id: g.id, status: "inscricoes", tipo_original: g.tipo || "" },
+      {
+        id: nova.id,
+        ginasio_id: g.id,
+        status: "inscricoes",
+        tipo_original: g.tipo || "",
+      },
     ]);
     setGinasios((prev) =>
       prev.map((gg) => (gg.id === g.id ? { ...gg, em_disputa: true } : gg))
@@ -289,7 +336,10 @@ export default function DevGinasiosPage() {
     if (!disputa || disputa.status !== "inscricoes") return;
 
     const partSnap = await getDocs(
-      query(collection(db, "disputas_ginasio_participantes"), where("disputa_id", "==", disputa.id))
+      query(
+        collection(db, "disputas_ginasio_participantes"),
+        where("disputa_id", "==", disputa.id)
+      )
     );
     for (const pDoc of partSnap.docs) {
       const d = pDoc.data() as any;
@@ -308,19 +358,25 @@ export default function DevGinasiosPage() {
     );
   };
 
-  // encerrar disputa → registra período de liderança E APAGA PARTICIPANTES DA DISPUTA ENCERRADA
+  // encerrar disputa → registra liderança, apaga participantes e fecha desafios pendentes do ginásio
   const handleEncerrarDisputa = async (g: Ginasio) => {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa) return;
 
     const partSnap = await getDocs(
-      query(collection(db, "disputas_ginasio_participantes"), where("disputa_id", "==", disputa.id))
+      query(
+        collection(db, "disputas_ginasio_participantes"),
+        where("disputa_id", "==", disputa.id)
+      )
     );
     const participantes = partSnap.docs
       .map((p) => {
         const d = p.data() as any;
         if (d.removido) return null;
-        return { usuario_uid: d.usuario_uid as string, tipo_escolhido: d.tipo_escolhido as string };
+        return {
+          usuario_uid: d.usuario_uid as string,
+          tipo_escolhido: d.tipo_escolhido as string,
+        };
       })
       .filter(Boolean) as { usuario_uid: string; tipo_escolhido: string }[];
 
@@ -347,8 +403,10 @@ export default function DevGinasiosPage() {
 
     resultados.forEach((r) => {
       if (r.tipo === "empate") {
-        if (r.jogador1_uid) pontos[r.jogador1_uid] = (pontos[r.jogador1_uid] || 0) + 1;
-        if (r.jogador2_uid) pontos[r.jogador2_uid] = (pontos[r.jogador2_uid] || 0) + 1;
+        if (r.jogador1_uid)
+          pontos[r.jogador1_uid] = (pontos[r.jogador1_uid] || 0) + 1;
+        if (r.jogador2_uid)
+          pontos[r.jogador2_uid] = (pontos[r.jogador2_uid] || 0) + 1;
       } else if (r.vencedor_uid) {
         pontos[r.vencedor_uid] = (pontos[r.vencedor_uid] || 0) + 3;
       }
@@ -358,7 +416,7 @@ export default function DevGinasiosPage() {
     for (const uid in pontos) if (pontos[uid] > maior) maior = pontos[uid];
     const empatados = Object.keys(pontos).filter((uid) => pontos[uid] === maior);
 
-    // --- caso EMPATE: fecha antiga, cria nova disputa E apaga participantes da disputa antiga
+    // empate → fecha antiga, cria nova, apaga participantes e fecha desafios pendentes do ginásio
     if (empatados.length > 1) {
       const nova = await addDoc(collection(db, "disputas_ginasio"), {
         ginasio_id: g.id,
@@ -379,7 +437,8 @@ export default function DevGinasiosPage() {
           disputa_id: nova.id,
           ginasio_id: g.id,
           usuario_uid: uid,
-          tipo_escolhido: partOrig?.tipo_escolhido || disputa.tipo_original || g.tipo || "",
+          tipo_escolhido:
+            partOrig?.tipo_escolhido || disputa.tipo_original || g.tipo || "",
           createdAt: Date.now(),
         });
       }
@@ -389,21 +448,33 @@ export default function DevGinasiosPage() {
         encerradaEm: Date.now(),
       });
 
-      // LIMPA PARTICIPANTES DA DISPUTA ANTIGA
       await deleteParticipantsOfDispute(disputa.id);
 
       setDisputas((prev) => {
         const semAntiga = prev.filter((d) => d.id !== disputa.id);
-        return [...semAntiga, { id: nova.id, ginasio_id: g.id, status: "inscricoes", tipo_original: disputa.tipo_original || g.tipo || "" }];
+        return [
+          ...semAntiga,
+          {
+            id: nova.id,
+            ginasio_id: g.id,
+            status: "inscricoes",
+            tipo_original: disputa.tipo_original || g.tipo || "",
+          },
+        ];
       });
 
       await updateDoc(doc(db, "ginasios", g.id), { em_disputa: true });
+
+      // fecha desafios pendentes (chat) deste ginásio
+      await closePendingChallengesOfGym(g.id);
       return;
     }
 
-    // --- caso VENCEDOR DEFINIDO
+    // vencedor definido
     const vencedorUid = empatados[0];
-    const participanteVencedor = participantes.find((p) => p.usuario_uid === vencedorUid);
+    const participanteVencedor = participantes.find(
+      (p) => p.usuario_uid === vencedorUid
+    );
     const tipoDoVencedor =
       participanteVencedor?.tipo_escolhido ||
       (participanteVencedor as any)?.tipo ||
@@ -417,27 +488,37 @@ export default function DevGinasiosPage() {
       vencedor_uid: vencedorUid,
     });
 
-    // encerra liderança atual (se houver) e inicia novo período
     await endActiveLeadership(g.id);
-    await startLeadership(g.id, vencedorUid, { origem: "disputa", tipo: tipoDoVencedor, temporada });
+    await startLeadership(g.id, vencedorUid, {
+      origem: "disputa",
+      tipo: tipoDoVencedor,
+      temporada,
+    });
 
-    // atualiza ginásio
     await updateDoc(doc(db, "ginasios", g.id), {
       lider_uid: vencedorUid,
       tipo: tipoDoVencedor,
       em_disputa: false,
     });
 
-    // LIMPA PARTICIPANTES DA DISPUTA ENCERRADA
     await deleteParticipantsOfDispute(disputa.id);
 
-    // estado local
     setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
     setGinasios((prev) =>
       prev.map((gg) =>
-        gg.id === g.id ? { ...gg, em_disputa: false, lider_uid: vencedorUid, tipo: tipoDoVencedor } : gg
+        gg.id === g.id
+          ? {
+              ...gg,
+              em_disputa: false,
+              lider_uid: vencedorUid,
+              tipo: tipoDoVencedor,
+            }
+          : gg
       )
     );
+
+    // fecha desafios pendentes (chat) deste ginásio
+    await closePendingChallengesOfGym(g.id);
   };
 
   // ===== RENÚNCIA
@@ -445,7 +526,6 @@ export default function DevGinasiosPage() {
     const renRef = doc(db, "renuncias_ginasio", r.id);
     const disputaExistente = getDisputaDoGinasio(g.id);
 
-    // encerra liderança vigente
     await endActiveLeadership(g.id);
 
     if (!disputaExistente) {
@@ -463,19 +543,35 @@ export default function DevGinasiosPage() {
 
       setDisputas((prev) => [
         ...prev,
-        { id: nova.id, ginasio_id: g.id, status: "inscricoes", tipo_original: g.tipo || "" },
+        {
+          id: nova.id,
+          ginasio_id: g.id,
+          status: "inscricoes",
+          tipo_original: g.tipo || "",
+        },
       ]);
     }
 
-    await updateDoc(doc(db, "ginasios", g.id), { lider_uid: "", em_disputa: true, derrotas_seguidas: 0 });
+    await updateDoc(doc(db, "ginasios", g.id), {
+      lider_uid: "",
+      em_disputa: true,
+      derrotas_seguidas: 0,
+    });
 
-    setGinasios((prev) => prev.map((gg) => (gg.id === g.id ? { ...gg, lider_uid: "", em_disputa: true } : gg)));
+    setGinasios((prev) =>
+      prev.map((gg) =>
+        gg.id === g.id ? { ...gg, lider_uid: "", em_disputa: true } : gg
+      )
+    );
 
     await updateDoc(renRef, {
       status: "confirmado",
       confirmadoPorAdminUid: auth.currentUser?.uid || null,
       confirmadoPorAdminEm: Date.now(),
     });
+
+    // por segurança, fecha desafios pendentes deste ginásio
+    await closePendingChallengesOfGym(g.id);
 
     setRenunciasMap((prev) => {
       const next = { ...prev };
@@ -511,10 +607,15 @@ export default function DevGinasiosPage() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold">DEV / Ginásios</h1>
-          <p className="text-sm text-gray-500">Abrir / iniciar / encerrar disputas manualmente. Tratar renúncias pendentes.</p>
+          <p className="text-sm text-gray-500">
+            Abrir / iniciar / encerrar disputas manualmente. Tratar renúncias
+            pendentes.
+          </p>
         </div>
         <div>
-          <label className="text-xs text-gray-500 block mb-1">Filtrar por liga</label>
+          <label className="text-xs text-gray-500 block mb-1">
+            Filtrar por liga
+          </label>
           <select
             value={ligaSelecionada}
             onChange={(e) => setLigaSelecionada(e.target.value)}
@@ -522,7 +623,9 @@ export default function DevGinasiosPage() {
           >
             <option value="">Todas</option>
             {ligas.map((l) => (
-              <option key={l.id} value={l.nome}>{l.nome}</option>
+              <option key={l.id} value={l.nome}>
+                {l.nome}
+              </option>
             ))}
           </select>
         </div>
@@ -533,21 +636,46 @@ export default function DevGinasiosPage() {
         const ren = renunciasMap[g.id];
 
         return (
-          <div key={g.id} className="border rounded p-4 flex justify-between items-start bg-white gap-4">
+          <div
+            key={g.id}
+            className="border rounded p-4 flex justify-between items-start bg-white gap-4"
+          >
             <div>
               <h2 className="font-semibold flex items-center gap-2">
                 {g.nome}
-                {g.em_disputa && <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">em disputa</span>}
-                {ren && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">renúncia pendente</span>}
+                {g.em_disputa && (
+                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
+                    em disputa
+                  </span>
+                )}
+                {ren && (
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    renúncia pendente
+                  </span>
+                )}
               </h2>
-              <p className="text-sm text-gray-600">Líder: {g.lider_uid ? g.lider_uid : "vago"}</p>
-              <p className="text-xs text-gray-500">Liga: {g.liga_nome || g.liga || "Sem liga"}</p>
-              <p className="text-xs text-gray-500">Disputa: {disputa ? disputa.status : "nenhuma"}</p>
-              <a href={`/ginasios/${g.id}/disputa`} className="text-xs text-blue-600 underline">Ver página da disputa</a>
+              <p className="text-sm text-gray-600">
+                Líder: {g.lider_uid ? g.lider_uid : "vago"}
+              </p>
+              <p className="text-xs text-gray-500">
+                Liga: {g.liga_nome || g.liga || "Sem liga"}
+              </p>
+              <p className="text-xs text-gray-500">
+                Disputa: {disputa ? disputa.status : "nenhuma"}
+              </p>
+              <a
+                href={`/ginasios/${g.id}/disputa`}
+                className="text-xs text-blue-600 underline"
+              >
+                Ver página da disputa
+              </a>
 
               {ren && (
                 <div className="mt-2 text-xs text-gray-700">
-                  <p>Renúncia por {ren.lider_uid} · há {tempoRelativo(ren.createdAtMs)} {ren.motivo ? `· Motivo: ${ren.motivo}` : ""}</p>
+                  <p>
+                    Renúncia por {ren.lider_uid} · há {tempoRelativo(ren.createdAtMs)}{" "}
+                    {ren.motivo ? `· Motivo: ${ren.motivo}` : ""}
+                  </p>
                   <p className="text-[10px] text-gray-400">ID renúncia: {ren.id}</p>
                 </div>
               )}
@@ -555,17 +683,26 @@ export default function DevGinasiosPage() {
 
             <div className="flex flex-col gap-2">
               {!disputa && (
-                <button onClick={() => handleCriarDisputa(g)} className="bg-purple-500 text-white px-3 py-1 rounded text-sm">
+                <button
+                  onClick={() => handleCriarDisputa(g)}
+                  className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
+                >
                   Criar disputa
                 </button>
               )}
               {disputa && disputa.status === "inscricoes" && (
-                <button onClick={() => handleIniciarDisputa(g)} className="bg-orange-500 text-white px-3 py-1 rounded text-sm">
+                <button
+                  onClick={() => handleIniciarDisputa(g)}
+                  className="bg-orange-500 text-white px-3 py-1 rounded text-sm"
+                >
                   Iniciar disputa
                 </button>
               )}
               {disputa && (
-                <button onClick={() => handleEncerrarDisputa(g)} className="bg-gray-500 text-white px-3 py-1 rounded text-sm">
+                <button
+                  onClick={() => handleEncerrarDisputa(g)}
+                  className="bg-gray-500 text-white px-3 py-1 rounded text-sm"
+                >
                   Encerrar disputa
                 </button>
               )}
