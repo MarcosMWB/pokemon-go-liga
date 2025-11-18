@@ -88,6 +88,8 @@ export default function DisputaGinasioPage() {
   const ginasioId = params?.id as string;
 
   const [userUid, setUserUid] = useState<string | null>(null);
+  const [isSuper, setIsSuper] = useState<boolean | null>(null);
+
   const [ginasio, setGinasio] = useState<Ginasio | null>(null);
   const [disputa, setDisputa] = useState<Disputa | null>(null);
   const [participantes, setParticipantes] = useState<Participante[]>([]);
@@ -133,14 +135,24 @@ export default function DisputaGinasioPage() {
     return { native, androidIntent };
   }
 
-  // 1) auth
+  // 1) auth + checagem de admin/super
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
+    const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
         router.replace("/login");
         return;
       }
       setUserUid(user.uid);
+
+      try {
+        // mesma lógica do painel /dev: procura superuser pela field uid
+        const qSup = query(collection(db, "superusers"), where("uid", "==", user.uid));
+        const snap = await getDocs(qSup);
+        setIsSuper(!snap.empty);
+      } catch (e) {
+        console.error("Falha ao verificar superuser:", e);
+        setIsSuper(false);
+      }
     });
     return () => unsub();
   }, [router]);
@@ -405,7 +417,7 @@ export default function DisputaGinasioPage() {
     ? participantes.find((p) => p.usuario_uid === userUid)
     : null;
 
-  // Invalidar tipo se ficou indisponível durante inscrições (sem IIFE)
+  // Invalidar tipo se ficou indisponível durante inscrições
   useEffect(() => {
     const invalidarSeOcupou = async () => {
       if (
@@ -474,35 +486,36 @@ export default function DisputaGinasioPage() {
     });
   }, [participantes, pontos]);
 
-  // ===== Finalização automática (sem IIFE)
+  // ===== Finalização automática: só ADMIN aplica =====
   async function iniciarLideratoSeNaoExiste(
     ginasio_id: string,
     lider_uid: string,
     liga?: string,
-    tipo?: string,
-    ginasio_nome?: string
+    tipo_no_periodo?: string
   ) {
+    // já existe liderança ativa para esse líder nesse ginásio?
     const qAberto = query(
       collection(db, "ginasios_liderancas"),
       where("ginasio_id", "==", ginasio_id),
-      where("lider_uid", "==", lider_uid)
+      where("lider_uid", "==", lider_uid),
+      where("endedAt", "==", null)
     );
     const snap = await getDocs(qAberto);
-    const jaAberto = snap.docs.some((d) => {
-      const x = d.data() as any;
-      return x.fim === null || x.fim === undefined;
-    });
-    if (!jaAberto) {
-      await addDoc(collection(db, "ginasios_liderancas"), {
-        ginasio_id,
-        lider_uid,
-        inicio: Date.now(),
-        fim: null,
-        liga: liga || "",
-        tipo: tipo || "",
-        ginasio_nome: ginasio_nome || "",
-      });
+    if (!snap.empty) {
+      return;
     }
+
+    await addDoc(collection(db, "ginasios_liderancas"), {
+      ginasio_id,
+      lider_uid,
+      startedAt: Date.now(),
+      endedAt: null,
+      origem: "disputa",
+      liga: liga || "",
+      tipo_no_periodo: tipo_no_periodo || "",
+      createdByAdminUid: auth.currentUser?.uid || null,
+      endedByAdminUid: null,
+    });
   }
 
   useEffect(() => {
@@ -511,11 +524,16 @@ export default function DisputaGinasioPage() {
       if (disputa.status !== "finalizado") return;
       if (disputa.finalizacao_aplicada) return;
 
+      // só superuser/admin aplica a finalização de fato
+      if (isSuper !== true) return;
+
       try {
         if (ranking.length === 0) return;
         const topo = ranking[0];
         const pTopo = pontos[topo.usuario_uid] || 0;
-        const empatadosTopo = ranking.filter((p) => (pontos[p.usuario_uid] || 0) === pTopo);
+        const empatadosTopo = ranking.filter(
+          (p) => (pontos[p.usuario_uid] || 0) === pTopo
+        );
         if (empatadosTopo.length > 1) {
           await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
             empate_no_topo: true,
@@ -526,8 +544,10 @@ export default function DisputaGinasioPage() {
         }
 
         const novoLiderUid = topo.usuario_uid;
-        const tipoNovo = topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
-        const ligaDoGinasio = ginasio.liga || disputa.liga || disputa.liga_nome || "";
+        const tipoNovo =
+          topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
+        const ligaDoGinasio =
+          ginasio.liga || disputa.liga || disputa.liga_nome || "";
 
         await updateDoc(doc(db, "ginasios", ginasio.id), {
           lider_uid: novoLiderUid,
@@ -536,7 +556,12 @@ export default function DisputaGinasioPage() {
           derrotas_seguidas: 0,
         });
 
-        await iniciarLideratoSeNaoExiste(ginasio.id, novoLiderUid, ligaDoGinasio, tipoNovo, ginasio.nome);
+        await iniciarLideratoSeNaoExiste(
+          ginasio.id,
+          novoLiderUid,
+          ligaDoGinasio,
+          tipoNovo
+        );
 
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
           finalizacao_aplicada: true,
@@ -549,7 +574,7 @@ export default function DisputaGinasioPage() {
     };
 
     aplicarFinalizacao();
-  }, [disputa, ginasio, ranking, pontos]);
+  }, [disputa, ginasio, ranking, pontos, isSuper]);
 
   // ====== CHAT: criar/abrir desafio ======
   async function ensureDesafio(opponentUid: string) {
@@ -681,7 +706,7 @@ export default function DisputaGinasioPage() {
       .sort((a, b) => ((a.nome || a.email || a.usuario_uid).localeCompare(b.nome || b.email || b.usuario_uid)));
   }, [participantes]);
 
-  // Links do amigo para o modal (evita IIFE no JSX)
+  // Links do amigo para o modal
   const fc = chatOther?.friend_code || null;
   const friendLinks = fc ? buildPoGoFriendLinks(fc) : null;
   const deepLink = fc ? (isAndroid ? friendLinks!.androidIntent : friendLinks!.native) : null;
