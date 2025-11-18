@@ -483,7 +483,7 @@ export default function DisputaGinasioPage() {
     ginasio_nome?: string
   ) {
     const qAberto = query(
-      collection(db, "ginasios_lideratos"),
+      collection(db, "ginasios_liderancas"),
       where("ginasio_id", "==", ginasio_id),
       where("lider_uid", "==", lider_uid)
     );
@@ -493,7 +493,7 @@ export default function DisputaGinasioPage() {
       return x.fim === null || x.fim === undefined;
     });
     if (!jaAberto) {
-      await addDoc(collection(db, "ginasios_lideratos"), {
+      await addDoc(collection(db, "ginasios_liderancas"), {
         ginasio_id,
         lider_uid,
         inicio: Date.now(),
