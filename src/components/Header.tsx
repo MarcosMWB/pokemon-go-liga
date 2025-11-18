@@ -38,7 +38,7 @@ export function Header() {
         {/* logo */}
         <Link href="/" className="flex items-center gap-2 font-bold text-lg">
           <Image src="/logo.png" alt="Liga RO" width={32} height={32} />
-          Liga GO RO
+          Liga GO RO <sub><span className="text-xs text-gray-500">(PRE-ALPHA)</span></sub>
         </Link>
 
         {/* menu desktop */}

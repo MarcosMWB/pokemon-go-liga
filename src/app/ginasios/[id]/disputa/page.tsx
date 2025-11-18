@@ -20,8 +20,8 @@ import {
 } from "firebase/firestore";
 
 const TIPOS = [
-  "normal","fire","water","grass","electric","ice","fighting","poison","ground","flying",
-  "psychic","bug","rock","ghost","dragon","dark","steel","fairy",
+  "normal", "fire", "water", "grass", "electric", "ice", "fighting", "poison", "ground", "flying",
+  "psychic", "bug", "rock", "ghost", "dragon", "dark", "steel", "fairy",
 ];
 
 type Ginasio = {
@@ -572,8 +572,8 @@ export default function DisputaGinasioPage() {
   async function openDesafioChat(desafioId: string) {
     if (!userUid) return;
 
-    chatUnsubRef.current?.();
-    desafioUnsubRef.current?.();
+    if (chatUnsubRef.current) { chatUnsubRef.current(); chatUnsubRef.current = null; }
+    if (desafioUnsubRef.current) { desafioUnsubRef.current(); desafioUnsubRef.current = null; }
 
     setChatOpen(true);
     setChatDesafioId(desafioId);
@@ -598,7 +598,7 @@ export default function DisputaGinasioPage() {
             friend_code: du.friend_code,
           };
         }
-      } catch {/* noop */}
+      } catch {/* noop */ }
       setChatOther(other);
     }
 
@@ -660,21 +660,21 @@ export default function DisputaGinasioPage() {
   const pendentesParaMim =
     userUid
       ? resultados.filter((r) => {
-          if (r.status !== "pendente") return false;
-          if (r.declarado_por === userUid) return false;
+        if (r.status !== "pendente") return false;
+        if (r.declarado_por === userUid) return false;
 
-          if (r.tipo === "empate") {
-            return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
-          }
-          return r.perdedor_uid === userUid;
-        })
+        if (r.tipo === "empate") {
+          return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
+        }
+        return r.perdedor_uid === userUid;
+      })
       : [];
 
   // Ordenar participantes por nome p/ seção de chat
   const participantesOrdenados = useMemo(() => {
     return participantes
       .slice()
-      .sort((a, b) => ( (a.nome || a.email || a.usuario_uid).localeCompare(b.nome || b.email || b.usuario_uid) ));
+      .sort((a, b) => ((a.nome || a.email || a.usuario_uid).localeCompare(b.nome || b.email || b.usuario_uid)));
   }, [participantes]);
 
   // ====== RENDER ======
@@ -738,11 +738,10 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
-                meuParticipante?.tipo_escolhido === t
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t
                   ? "bg-blue-600 text-white"
                   : "bg-gray-200"
-              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
               <span className="capitalize">{t}</span>
