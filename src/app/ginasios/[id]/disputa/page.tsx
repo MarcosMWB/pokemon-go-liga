@@ -503,16 +503,21 @@ export default function DisputaGinasioPage() {
     }
   }
 
+  // Quando uma disputa for marcada como "finalizado" e ainda não aplicada...
   useEffect(() => {
-    if (!disputa || !ginasio) return;
-    if (disputa.status !== "finalizado") return;
-    if (disputa.finalizacao_aplicada) return;
+    const applyFinalizacao = async () => {
+      if (!disputa || !ginasio) return;
+      if (disputa.status !== "finalizado") return;
+      if (disputa.finalizacao_aplicada) return;
 
-    (async () => {
       try {
+        // vencedor = topo do ranking (desempate simples: primeiro da lista)
         if (ranking.length === 0) return;
+
         const topo = ranking[0];
         const pTopo = pontos[topo.usuario_uid] || 0;
+
+        // Verifica empate no topo
         const empatadosTopo = ranking.filter((p) => (pontos[p.usuario_uid] || 0) === pTopo);
         if (empatadosTopo.length > 1) {
           await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
@@ -524,9 +529,12 @@ export default function DisputaGinasioPage() {
         }
 
         const novoLiderUid = topo.usuario_uid;
-        const tipoNovo = topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
-        const ligaDoGinasio = ginasio.liga || disputa.liga || disputa.liga_nome || "";
+        const tipoNovo =
+          topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
+        const ligaDoGinasio =
+          ginasio.liga || disputa.liga || disputa.liga_nome || "";
 
+        // Atualiza ginásio
         await updateDoc(doc(db, "ginasios", ginasio.id), {
           lider_uid: novoLiderUid,
           tipo: tipoNovo,
@@ -534,8 +542,16 @@ export default function DisputaGinasioPage() {
           derrotas_seguidas: 0,
         });
 
-        await iniciarLideratoSeNaoExiste(ginasio.id, novoLiderUid, ligaDoGinasio, tipoNovo, ginasio.nome);
+        // Abre período de liderança
+        await iniciarLideratoSeNaoExiste(
+          ginasio.id,
+          novoLiderUid,
+          ligaDoGinasio,
+          tipoNovo,
+          ginasio.nome
+        );
 
+        // Marca disputa como aplicada
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
           finalizacao_aplicada: true,
           vencedor_uid: novoLiderUid,
@@ -544,7 +560,10 @@ export default function DisputaGinasioPage() {
       } catch (e) {
         console.warn("Falha ao aplicar finalização da disputa:", e);
       }
-    })();
+    };
+
+    // chama a função assíncrona sem criar expressão solta
+    void applyFinalizacao();
   }, [disputa, ginasio, ranking, pontos]);
 
   // ====== CHAT: criar/abrir desafio ======
@@ -739,8 +758,8 @@ export default function DisputaGinasioPage() {
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
               className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200"
+                ? "bg-blue-600 text-white"
+                : "bg-gray-200"
                 } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
