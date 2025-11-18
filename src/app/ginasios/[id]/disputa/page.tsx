@@ -17,12 +17,11 @@ import {
   addDoc,
   orderBy,
   serverTimestamp,
-  deleteDoc,
 } from "firebase/firestore";
 
 const TIPOS = [
-  "normal", "fire", "water", "grass", "electric", "ice", "fighting", "poison", "ground", "flying",
-  "psychic", "bug", "rock", "ghost", "dragon", "dark", "steel", "fairy",
+  "normal","fire","water","grass","electric","ice","fighting","poison","ground","flying",
+  "psychic","bug","rock","ghost","dragon","dark","steel","fairy",
 ];
 
 type Ginasio = {
@@ -44,7 +43,6 @@ type Disputa = {
   temporada_id?: string;
   temporada_nome?: string;
   origem?: "disputa" | "renuncia" | "3_derrotas" | "manual";
-  empate_no_topo?: boolean;
 };
 
 type Participante = {
@@ -75,6 +73,18 @@ type Usuario = {
   friend_code?: string;
 };
 
+type Desafio = {
+  id: string;
+  pairKey: string;
+  disputa_id: string;
+  ginasio_id: string;
+  liga?: string;
+  status: "pendente" | "conflito" | "concluido";
+  lider_uid: string;
+  desafiante_uid: string;
+  criadoEm?: number;
+};
+
 export default function DisputaGinasioPage() {
   const params = useParams();
   const router = useRouter();
@@ -94,7 +104,7 @@ export default function DisputaGinasioPage() {
   const [oponente, setOponente] = useState("");
   const [avisoTipoInvalidado, setAvisoTipoInvalidado] = useState<string | null>(null);
 
-  // === CHAT ESTADO ===
+  // CHAT
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDesafioId, setChatDesafioId] = useState<string | null>(null);
   const [chatMsgs, setChatMsgs] = useState<{ id: string; from: string; text: string; createdAt: any }[]>([]);
@@ -104,7 +114,6 @@ export default function DisputaGinasioPage() {
   const desafioUnsubRef = useRef<ReturnType<typeof onSnapshot> | null>(null);
   const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
 
-  // === HELPERS UI ===
   const renderTipoIcon = (tipo?: string, size = 28) => {
     if (!tipo) return null;
     const src = TYPE_ICONS[tipo];
@@ -121,13 +130,11 @@ export default function DisputaGinasioPage() {
   }
   function buildPoGoFriendLinks(fc: string) {
     const native = `pokemongo://?dl_action=AddFriend&DlId=${encodeURIComponent(fc)}`;
-    const androidIntent = `intent://?dl_action=AddFriend&DlId=${encodeURIComponent(
-      fc
-    )}#Intent;scheme=pokemongo;package=com.nianticlabs.pokemongo;end`;
+    const androidIntent = `intent://?dl_action=AddFriend&DlId=${encodeURIComponent(fc)}#Intent;scheme=pokemongo;package=com.nianticlabs.pokemongo;end`;
     return { native, androidIntent };
   }
 
-  // 1) auth + checagem de superuser
+  // 1) auth + checagem de superuser (apenas p/ UI; não há finalização automática aqui)
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
@@ -187,7 +194,6 @@ export default function DisputaGinasioPage() {
         temporada_id: dData.temporada_id || "",
         temporada_nome: dData.temporada_nome || "",
         origem: dData.origem as any,
-        empate_no_topo: dData.empate_no_topo || false,
       });
       setLoading(false);
     });
@@ -411,7 +417,7 @@ export default function DisputaGinasioPage() {
     ? participantes.find((p) => p.usuario_uid === userUid)
     : null;
 
-  // Invalidar tipo se ficou indisponível durante inscrições (sem IIFE)
+  // Invalidar tipo se ficou indisponível durante inscrições
   useEffect(() => {
     const invalidarSeOcupou = async () => {
       if (
@@ -423,21 +429,16 @@ export default function DisputaGinasioPage() {
       ) {
         return;
       }
-
       const escolhido = meuParticipante.tipo_escolhido;
       const ocupou = escolhido !== disputa.tipo_original && ocupados.includes(escolhido);
-
       if (ocupou) {
         try {
-          await updateDoc(
-            doc(db, "disputas_ginasio_participantes", meuParticipante.id),
-            {
-              tipo_escolhido: "",
-              invalidado: true,
-              invalidado_motivo: "tipo_indisponivel",
-              invalidadoEm: Date.now(),
-            }
-          );
+          await updateDoc(doc(db, "disputas_ginasio_participantes", meuParticipante.id), {
+            tipo_escolhido: "",
+            invalidado: true,
+            invalidado_motivo: "tipo_indisponivel",
+            invalidadoEm: Date.now(),
+          });
           setAvisoTipoInvalidado(
             `Seu tipo "${escolhido}" ficou indisponível na liga e foi removido. Escolha outro.`
           );
@@ -446,7 +447,6 @@ export default function DisputaGinasioPage() {
         }
       }
     };
-
     invalidarSeOcupou();
   }, [
     disputa,
@@ -456,7 +456,15 @@ export default function DisputaGinasioPage() {
     ocupados,
   ]);
 
-  // ===== Pontuação / Ranking =====
+  // Fechar chat se a disputa sair de "batalhando"
+  useEffect(() => {
+    if (!chatOpen) return;
+    if (disputa && disputa.status !== "batalhando") {
+      closeDesafioChat();
+    }
+  }, [disputa?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pontos/Ranking
   const pontos = useMemo(() => {
     const map: Record<string, number> = {};
     participantes.forEach((p) => (map[p.usuario_uid] = 0));
@@ -480,193 +488,6 @@ export default function DisputaGinasioPage() {
     });
   }, [participantes, pontos]);
 
-  // ===== Admin: encerrar disputa (marca status=finalizado) =====
-  async function encerrarDisputaComoAdmin() {
-    if (!isSuper || !disputa) return;
-    await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-      status: "finalizado",
-      encerradaPorAdminUid: auth.currentUser?.uid || null,
-      encerradaEm: Date.now(),
-    });
-  }
-
-  // ===== Histórico / aplicação final (só SUPERUSER) =====
-  async function iniciarLideratoSeNaoExiste(
-    ginasio_id: string,
-    lider_uid: string,
-    liga?: string,
-    tipo?: string,
-    ginasio_nome?: string,
-    temporada_id?: string,
-    temporada_nome?: string,
-    origem: "disputa" | "renuncia" | "3_derrotas" | "manual" = "disputa"
-  ) {
-    const qAberto = query(
-      collection(db, "ginasios_liderancas"),
-      where("ginasio_id", "==", ginasio_id),
-      where("lider_uid", "==", lider_uid),
-      where("endedAt", "==", null)
-    );
-    const snap = await getDocs(qAberto);
-    if (!snap.empty) return;
-
-    const baseId = `${ginasio_id}__${lider_uid}__${temporada_id || "na"}`;
-    const ref = doc(collection(db, "ginasios_liderancas"), baseId);
-    const exists = await getDoc(ref);
-    const now = Date.now();
-
-    if (exists.exists() && (exists.data() as any)?.endedAt == null) {
-      return;
-    }
-
-    await updateDoc(doc(db, "ginasios", ginasio_id), { em_disputa: false }).catch(() => {});
-
-    await (exists.exists()
-      ? updateDoc(ref, {
-          endedAt: null,
-          startedAt: now,
-          origem,
-          liga: liga || "",
-          temporada_id: temporada_id || "",
-          temporada_nome: temporada_nome || "",
-          tipo_no_periodo: tipo || "",
-          createdByAdminUid: auth.currentUser?.uid || null,
-          endedByAdminUid: null,
-        })
-      : addDoc(collection(db, "ginasios_liderancas"), {
-          ginasio_id,
-          lider_uid,
-          startedAt: now,
-          endedAt: null,
-          origem,
-          liga: liga || "",
-          temporada_id: temporada_id || "",
-          temporada_nome: temporada_nome || "",
-          tipo_no_periodo: tipo || "",
-          createdByAdminUid: auth.currentUser?.uid || null,
-          endedByAdminUid: null,
-        }));
-  }
-
-  // ===== Aplicação da finalização + purga (só SUPERUSER) =====
-  useEffect(() => {
-    const aplicarFinalizacao = async () => {
-      if (!disputa || !ginasio) return;
-      if (!isSuper) return; // jogador comum nunca aplica finalização
-      if (disputa.status !== "finalizado") return;
-      if (disputa.finalizacao_aplicada) return;
-
-      try {
-        if (ranking.length === 0) {
-          await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-            finalizacao_aplicada: true,
-            vencedor_uid: "",
-            aplicado_em: Date.now(),
-            aplicadoPorAdminUid: auth.currentUser?.uid || null,
-          });
-          return;
-        }
-
-        const topo = ranking[0];
-        const pTopo = pontos[topo.usuario_uid] || 0;
-        const empatadosTopo = ranking.filter(
-          (p) => (pontos[p.usuario_uid] || 0) === pTopo
-        );
-        if (empatadosTopo.length > 1) {
-          await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-            empate_no_topo: true,
-            finalizacao_aplicada: false,
-            tentativa_finalizacao_em: Date.now(),
-          });
-          return;
-        }
-
-        const novoLiderUid = topo.usuario_uid;
-        const tipoNovo =
-          topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
-        const ligaDoGinasio =
-          ginasio.liga || disputa.liga || disputa.liga_nome || "";
-
-        // Atualiza ginásio
-        await updateDoc(doc(db, "ginasios", ginasio.id), {
-          lider_uid: novoLiderUid,
-          tipo: tipoNovo,
-          em_disputa: false,
-          derrotas_seguidas: 0,
-        });
-
-        // Cria período de liderança (idempotente)
-        await iniciarLideratoSeNaoExiste(
-          ginasio.id,
-          novoLiderUid,
-          ligaDoGinasio,
-          tipoNovo,
-          ginasio.nome,
-          disputa.temporada_id,
-          disputa.temporada_nome,
-          "disputa"
-        );
-
-        // Marca disputa como aplicada
-        await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-          finalizacao_aplicada: true,
-          vencedor_uid: novoLiderUid,
-          aplicado_em: Date.now(),
-          aplicadoPorAdminUid: auth.currentUser?.uid || null,
-        });
-
-        // Purga participantes/resultados/chats desta disputa
-        // Participantes
-        const pSnap = await getDocs(
-          query(
-            collection(db, "disputas_ginasio_participantes"),
-            where("disputa_id", "==", disputa.id)
-          )
-        );
-        for (const d of pSnap.docs) {
-          try {
-            await deleteDoc(d.ref);
-          } catch {
-            await updateDoc(d.ref, { removido: true });
-          }
-        }
-
-        // Resultados
-        const rSnap = await getDocs(
-          query(
-            collection(db, "disputas_ginasio_resultados"),
-            where("disputa_id", "==", disputa.id)
-          )
-        );
-        for (const d of rSnap.docs) {
-          try {
-            await deleteDoc(d.ref);
-          } catch {
-            await updateDoc(d.ref, { status: "limpo" });
-          }
-        }
-
-        // Desafios e chat
-        const dSnap = await getDocs(
-          query(collection(db, "desafios_ginasio"), where("disputa_id", "==", disputa.id))
-        );
-        for (const dd of dSnap.docs) {
-          try {
-            await updateDoc(dd.ref, { status: "concluido", fechadoEm: Date.now() });
-          } catch {}
-          const msgs = await getDocs(collection(db, "desafios_ginasio", dd.id, "mensagens"));
-          for (const m of msgs.docs) {
-            try { await deleteDoc(m.ref); } catch {}
-          }
-        }
-      } catch (e) {
-        console.warn("Falha ao aplicar finalização da disputa:", e);
-      }
-    };
-
-    aplicarFinalizacao();
-  }, [disputa, ginasio, ranking, pontos, isSuper]);
-
   // ====== CHAT: criar/abrir desafio ======
   async function ensureDesafio(opponentUid: string) {
     if (!userUid || !disputa || !ginasio) return null;
@@ -685,7 +506,7 @@ export default function DisputaGinasioPage() {
       lider_uid: userUid,
       desafiante_uid: opponentUid,
       criadoEm: Date.now(),
-    });
+    } as Desafio);
     return ref.id;
   }
 
@@ -756,6 +577,7 @@ export default function DisputaGinasioPage() {
 
   async function handleChamar(uid: string) {
     if (!userUid || uid === userUid) return;
+    if (!disputa || disputa.status !== "batalhando") return; // só em batalha
     const id = await ensureDesafio(uid);
     if (id) await openDesafioChat(id);
   }
@@ -770,7 +592,6 @@ export default function DisputaGinasioPage() {
     setChatInput("");
   }
 
-  // ====== DERIVADOS ======
   const tiposPermitidos = TIPOS.filter((t) => {
     if (!disputa) return true;
     if (t === disputa.tipo_original) return true;
@@ -782,7 +603,6 @@ export default function DisputaGinasioPage() {
       ? resultados.filter((r) => {
           if (r.status !== "pendente") return false;
           if (r.declarado_por === userUid) return false;
-
           if (r.tipo === "empate") {
             return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
           }
@@ -839,22 +659,7 @@ export default function DisputaGinasioPage() {
             {disputa.finalizacao_aplicada ? " (aplicado)" : " (aguardando aplicação pelo admin)"}
           </span>
         )}
-        {isSuper && disputa.status !== "finalizado" && (
-          <button
-            onClick={encerrarDisputaComoAdmin}
-            className="ml-3 text-xs px-2 py-1 rounded bg-red-600 text-white"
-            title="Encerrar disputa agora (admin)"
-          >
-            Encerrar disputa
-          </button>
-        )}
       </p>
-
-      {disputa.empate_no_topo && (
-        <div className="bg-amber-100 border border-amber-300 text-amber-900 px-3 py-2 rounded">
-          Há empate no topo. Resolva manualmente.
-        </div>
-      )}
 
       {avisoTipoInvalidado && (
         <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
@@ -977,7 +782,7 @@ export default function DisputaGinasioPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {p.usuario_uid !== userUid && (
+                  {p.usuario_uid !== userUid && disputa?.status === "batalhando" && (
                     <button
                       onClick={() => handleChamar(p.usuario_uid)}
                       className="bg-slate-800 text-white text-xs px-3 py-1 rounded"
