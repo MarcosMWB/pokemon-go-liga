@@ -188,21 +188,26 @@ export default function DevDisputasPage() {
 
   const [temporada, setTemporada] = useState<Temporada>(null);
 
-  // auth + super
+  // auth + super (agora compatível com as rules: superusers/{uid})
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
+        setIsAdmin(null);
         router.replace("/login");
         return;
       }
-      const qSup = query(collection(db, "superusers"), where("uid", "==", user.uid));
-      const snap = await getDocs(qSup);
-      if (snap.empty) {
+      try {
+        const supSnap = await getDoc(doc(db, "superusers", user.uid));
+        if (!supSnap.exists()) {
+          setIsAdmin(false);
+          router.replace("/");
+          return;
+        }
+        setIsAdmin(true);
+      } catch {
         setIsAdmin(false);
         router.replace("/");
-        return;
       }
-      setIsAdmin(true);
     });
     return () => unsub();
   }, [router]);
