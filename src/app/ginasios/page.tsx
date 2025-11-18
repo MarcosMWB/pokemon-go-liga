@@ -318,7 +318,7 @@ export default function GinasiosPage() {
     });
   };
 
-  const handleEntrarDisputa = async (g: Ginasio, disputa: Disputa) => {
+  /*const handleEntrarDisputa = async (g: Ginasio, disputa: Disputa) => {
     if (!userUid) return;
     const ja = participacoesDisputa.find((p) => p.disputa_id === disputa.id && p.usuario_uid === userUid);
     if (ja) return;
@@ -331,7 +331,7 @@ export default function GinasiosPage() {
       liga: g.liga || selectedLiga || '',
       createdAt: Date.now(),
     });
-  };
+  };*/
 
   async function openDesafioChat(desafioId: string) {
     if (!userUid) return;
@@ -580,7 +580,16 @@ export default function GinasiosPage() {
                   </>
                 ) : <span>não definido</span>}
               </p>
-              <p className="text-sm text-gray-600">Líder: {g.lider_uid ? (liderNomes[g.lider_uid] || g.lider_uid) : 'vago'}</p>
+              <p className="text-sm text-gray-600">
+                Líder:{' '}
+                {g.lider_uid ? (
+                  <Link href={`/perfil/${g.lider_uid}`} className="text-blue-600 hover:underline">
+                    {liderNomes[g.lider_uid] || g.lider_uid}
+                  </Link>
+                ) : (
+                  'vago'
+                )}
+              </p>
             </div>
 
             <div className="flex flex-col gap-2 items-end">
@@ -589,9 +598,9 @@ export default function GinasiosPage() {
                   {jaNaDisputa ? (
                     <span className="text-xs text-gray-500">Você já está na disputa</span>
                   ) : (
-                    <button onClick={() => handleEntrarDisputa(g, disputaDoGinasio)} className="px-3 py-1 bg-purple-500 text-white rounded text-sm">
-                      Entrar na disputa
-                    </button>
+                    <p>
+                      Entre na disputa pelo ginásio do {g.nome}
+                    </p>
                   )}
                   <Link href={`/ginasios/${g.id}/disputa`} className="text-xs text-blue-600 underline">Ver disputa</Link>
                 </>
@@ -611,8 +620,8 @@ export default function GinasiosPage() {
                 >
                   {g.lider_uid === userUid ? 'Você é o líder'
                     : semLider ? 'Sem líder'
-                    : jaTemInsignia ? 'Já ganhou'
-                    : 'Desafiar'}
+                      : jaTemInsignia ? 'Já ganhou'
+                        : 'Desafiar'}
                 </button>
               )}
             </div>
