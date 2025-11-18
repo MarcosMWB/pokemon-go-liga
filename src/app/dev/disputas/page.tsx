@@ -19,7 +19,6 @@ import {
   aplicarFinalizacaoDeDisputa,
   closeAndPurgeActiveDisputes,
   endActiveLeadership,
-  purgeDisputa,
 } from "@/lib/finalizacao";
 
 // ==== Tipos ====

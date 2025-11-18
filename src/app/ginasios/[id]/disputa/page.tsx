@@ -91,7 +91,7 @@ export default function DisputaGinasioPage() {
   const ginasioId = params?.id as string;
 
   const [userUid, setUserUid] = useState<string | null>(null);
-  const [isSuper, setIsSuper] = useState(false);
+  const [, setIsSuper] = useState(false);
 
   const [ginasio, setGinasio] = useState<Ginasio | null>(null);
   const [disputa, setDisputa] = useState<Disputa | null>(null);
