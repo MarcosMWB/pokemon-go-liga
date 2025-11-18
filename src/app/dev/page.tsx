@@ -1,6 +1,7 @@
 // src/app/dev/page.tsx
 "use client";
 
+import type { User } from "firebase/auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -25,13 +26,13 @@ export default function DevHome() {
 
   // Auth + superusers
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace("/login");
         return;
       }
       const snap = await getDocs(
-        query(collection(db, "superusers"), where("uid", "==", user.uid))
+        query(collection(db, "superusers"), where("uid", "==", current.uid))
       );
       if (snap.empty) {
         setIsAdmin(false);

@@ -1,5 +1,6 @@
 "use client";
 
+import type { User } from 'firebase/auth';
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
@@ -149,9 +150,9 @@ export default function PageContent() {
 
   // 1. auth
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((current) => {
+    const unsub = auth.onAuthStateChanged((current: User | null) => {
       if (!current || !userId || current.uid !== userId) {
-        router.push("/");
+        router.push('/');
       }
     });
     return () => unsub();
@@ -316,9 +317,9 @@ export default function PageContent() {
 
     const ok = window.confirm(
       "Definir é definitivo!\n" +
-        "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
-        "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
-        "Quer continuar?"
+      "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
+      "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
+      "Quer continuar?"
     );
     if (!ok) return;
 

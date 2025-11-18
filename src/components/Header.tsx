@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { auth } from "@/lib/firebase";
-import { signOut } from "firebase/auth";
+import { signOut, User } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
@@ -14,10 +14,10 @@ export function Header() {
   const router = useRouter();
 
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
-      if (user) {
-        setUid(user.uid);
-        setEmail(user.email);
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (current) {
+        setUid(current.uid);
+        setEmail(current.email);
       } else {
         setUid(null);
         setEmail(null);

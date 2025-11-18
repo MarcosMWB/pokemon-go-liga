@@ -1,5 +1,6 @@
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -25,8 +26,8 @@ export default function DevLigasPage() {
 
   // 1) auth + checar superusers
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace("/login");
         return;
       }
@@ -34,7 +35,7 @@ export default function DevLigasPage() {
       // confere se esse uid está na coleção superusers
       const q = query(
         collection(db, "superusers"),
-        where("uid", "==", user.uid)
+        where("uid", "==", current.uid)
       );
       const snap = await getDocs(q);
       if (snap.empty) {

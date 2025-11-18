@@ -21,6 +21,7 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 import { TYPE_ICONS } from '@/utils/typeIcons';
+import { User } from 'firebase/auth';
 
 /* =======================
    Types
@@ -192,8 +193,8 @@ export default function PerfilPage() {
   ======================= */
 
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
-      if (user) setLogadoUid(user.uid);
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (current) setLogadoUid(current.uid);
     });
     return () => unsub();
   }, []);

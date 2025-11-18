@@ -1,6 +1,7 @@
 // src/app/dev/temporadas/page.tsx
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -31,15 +32,15 @@ export default function DevTemporadasPage() {
 
   // 1) checar se é superuser
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace("/login");
         return;
       }
 
       const q = query(
         collection(db, "superusers"),
-        where("uid", "==", user.uid)
+        where("uid", "==", current.uid)
       );
       const snap = await getDocs(q);
       if (snap.empty) {

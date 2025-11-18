@@ -1,5 +1,7 @@
+// src/app/dev/disputas/page.tsx
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -16,6 +18,7 @@ import {
   addDoc,
   deleteDoc,
 } from "firebase/firestore";
+import type { DocumentReference } from "firebase/firestore";
 
 // ==== Tipos ====
 type Resultado = {
@@ -190,14 +193,14 @@ export default function DevDisputasPage() {
 
   // auth + super (compatível com as rules: superusers/{uid})
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         setIsAdmin(null);
         router.replace("/login");
         return;
       }
       try {
-        const supSnap = await getDoc(doc(db, "superusers", user.uid));
+        const supSnap = await getDoc(doc(db, "superusers", current.uid));
         if (!supSnap.exists()) {
           setIsAdmin(false);
           router.replace("/");
@@ -406,8 +409,8 @@ export default function DevDisputasPage() {
       if (textoBusca.trim()) {
         const t = textoBusca.trim().toLowerCase();
         const gymName = (gMap[r.ginasio_id]?.nome || r.ginasio_id).toLowerCase();
-        const a = (uMap[r.vencedor_uid || r.jogador1_uid || ""]?.display || "").toLowerCase();
-        const b = (uMap[r.perdedor_uid || r.jogador2_uid || ""]?.display || "").toLowerCase();
+        const a = (uMap[r.tipo === "empate" ? r.jogador1_uid || "" : r.vencedor_uid || ""]?.display || "").toLowerCase();
+        const b = (uMap[r.tipo === "empate" ? r.jogador2_uid || "" : r.perdedor_uid || ""]?.display || "").toLowerCase();
         if (!gymName.includes(t) && !a.includes(t) && !b.includes(t)) return false;
       }
       return true;
@@ -467,7 +470,7 @@ export default function DevDisputasPage() {
     const ref = doc(db, "desafios_ginasio", d.id);
     if (!declarado) return;
 
-    const patch: any = {};
+    const patch: Record<string, any> = {};
     if (d.resultado_lider == null) patch["resultado_lider"] = declarado;
     if (d.resultado_desafiante == null) patch["resultado_desafiante"] = declarado;
     patch["confirmadoPorAdminUid"] = auth.currentUser?.uid || null;
@@ -547,7 +550,7 @@ export default function DevDisputasPage() {
   }
 
   // finalização do DESAFIO (badge/3 derrotas → abre disputa limpa)
-  async function tentarFinalizarDesafio(ref: any) {
+  async function tentarFinalizarDesafio(ref: DocumentReference) {
     const dSnap = await getDoc(ref);
     if (!dSnap.exists()) return;
     const d = dSnap.data() as any;
@@ -791,7 +794,7 @@ export default function DevDisputasPage() {
                   <p className="text-xs text-gray-600">
                     Criado há {created} {velho && <span className="text-red-600">(7+ dias)</span>}
                   </p>
-                  <p className="text:[10px] text-gray-400">ID desafio: {d.id}</p>
+                  <p className="text-[10px] text-gray-400">ID desafio: {d.id}</p>
                 </div>
 
                 <div className="flex items-center gap-2">

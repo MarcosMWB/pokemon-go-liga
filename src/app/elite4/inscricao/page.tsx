@@ -1,5 +1,6 @@
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -42,12 +43,12 @@ export default function Elite4InscricaoPage() {
 
   // Auth
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((u) => {
-      if (!u) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace("/login");
         return;
       }
-      setUid(u.uid);
+      setUid(current.uid);
     });
     return () => unsub();
   }, [router]);

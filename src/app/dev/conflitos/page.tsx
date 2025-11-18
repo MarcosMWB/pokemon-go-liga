@@ -1,6 +1,7 @@
 // src/app/dev/conflitos/page.tsx
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -61,33 +62,42 @@ export default function DevConflitosPage() {
 
   // Auth + superuser
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace("/login");
         return;
       }
-      const qSup = query(
-        collection(db, "superusers"),
-        where("uid", "==", user.uid)
-      );
-      const snap = await getDocs(qSup);
-      if (snap.empty) {
+
+      try {
+        const qSup = query(
+          collection(db, "superusers"),
+          where("uid", "==", current.uid)
+        );
+        const snap = await getDocs(qSup);
+        if (snap.empty) {
+          setIsAdmin(false);
+          router.replace("/");
+          return;
+        }
+        setIsAdmin(true);
+      } catch {
         setIsAdmin(false);
         router.replace("/");
-        return;
       }
-      setIsAdmin(true);
     });
+
     return () => unsub();
   }, [router]);
 
   // Snapshot: conflitos
   useEffect(() => {
     if (isAdmin !== true) return;
+
     const qConf = query(
       collection(db, "desafios_ginasio"),
       where("status", "==", "conflito")
     );
+
     const unsub = onSnapshot(qConf, (snap) => {
       const list: Desafio[] = snap.docs.map((d) => {
         const x = d.data() as any;
@@ -107,16 +117,19 @@ export default function DevConflitosPage() {
       });
       setConflitos(list);
     });
+
     return () => unsub();
   }, [isAdmin]);
 
   // Snapshot: pendentes
   useEffect(() => {
     if (isAdmin !== true) return;
+
     const qPend = query(
       collection(db, "desafios_ginasio"),
       where("status", "==", "pendente")
     );
+
     const unsub = onSnapshot(qPend, (snap) => {
       const list: Desafio[] = snap.docs.map((d) => {
         const x = d.data() as any;
@@ -134,6 +147,7 @@ export default function DevConflitosPage() {
       });
       setPendentes(list);
     });
+
     return () => unsub();
   }, [isAdmin]);
 
@@ -227,7 +241,6 @@ export default function DevConflitosPage() {
             const lider = userNameMap[d.lider_uid] || d.lider_uid;
             const ginasio = ginasioNameMap[d.ginasio_id] || d.ginasio_id;
 
-            // Frase explicativa
             const parteDesafiante =
               d.resultado_desafiante === "desafiante"
                 ? "disse que ele venceu"

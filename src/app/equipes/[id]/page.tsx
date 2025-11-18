@@ -1,5 +1,6 @@
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -156,7 +157,7 @@ export default function EquipesPage() {
 
   // auth + carga principal
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (current) => {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
       if (!current) {
         router.replace("/login");
         return;

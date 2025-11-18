@@ -1,5 +1,6 @@
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { TYPE_ICONS } from "@/utils/typeIcons";
@@ -125,16 +126,16 @@ export default function DisputaGinasioPage() {
 
   // 1) auth + superuser
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         setUserUid(null);
         setIsSuper(false);
         router.replace("/login");
         return;
       }
-      setUserUid(user.uid);
+      setUserUid(current.uid);
       try {
-        const superSnap = await getDoc(doc(db, "superusers", user.uid));
+        const superSnap = await getDoc(doc(db, "superusers", current.uid));
         setIsSuper(superSnap.exists());
       } catch {
         setIsSuper(false);

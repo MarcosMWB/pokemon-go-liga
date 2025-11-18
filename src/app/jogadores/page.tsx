@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { db, auth } from "@/lib/firebase";
 import { collection, getDocs, orderBy, query } from "firebase/firestore";
 import { FiltroUsuarios } from "./FiltroUsuarios";
+import { User } from "firebase/auth";
 
 type UsuarioLista = {
   id: string;
@@ -15,8 +16,8 @@ export default function JogadoresPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         setUsuarios([]);
         setLoading(false);
         return;

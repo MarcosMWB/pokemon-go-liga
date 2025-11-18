@@ -13,5 +13,5 @@ const config = {
 };
 
 const app = getApps().length ? getApp() : initializeApp(config);
-export const auth = getAuth(app);
+export const auth = typeof window !== 'undefined' ? getAuth(app) : (undefined as any);
 export const db = getFirestore(app);

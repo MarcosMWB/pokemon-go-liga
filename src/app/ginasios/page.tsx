@@ -21,6 +21,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { TYPE_ICONS } from '@/utils/typeIcons';
+import { User } from 'firebase/auth';
 
 type Ginasio = {
   id: string;
@@ -105,12 +106,12 @@ export default function GinasiosPage() {
 
   // 1) auth
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace('/login');
         return;
       }
-      setUserUid(user.uid);
+      setUserUid(current.uid);
     });
     return () => unsub();
   }, [router]);

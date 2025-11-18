@@ -1,6 +1,9 @@
+// src/app/dev/ginasios/page.tsx
 "use client";
 
+import type { User } from "firebase/auth";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import {
@@ -175,16 +178,15 @@ export default function DevGinasiosPage() {
   const [temporada, setTemporada] = useState<Temporada>(null);
   const [renunciasMap, setRenunciasMap] = useState<Record<string, Renuncia>>({});
 
-  // 1) auth + superusers
+  // 1) auth + superusers (getDoc direto no doc {uid})
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
+    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
+      if (!current) {
         router.replace("/login");
         return;
       }
-      const q = query(collection(db, "superusers"), where("uid", "==", user.uid));
-      const snap = await getDocs(q);
-      if (snap.empty) {
+      const supSnap = await getDoc(doc(db, "superusers", current.uid));
+      if (!supSnap.exists()) {
         setIsAdmin(false);
         router.replace("/");
         return;
@@ -232,63 +234,66 @@ export default function DevGinasiosPage() {
     if (isAdmin !== true) return;
 
     async function loadAll() {
-      const gSnap = await getDocs(collection(db, "ginasios"));
-      const gList: Ginasio[] = gSnap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          nome: data.nome,
-          tipo: data.tipo || "",
-          lider_uid: data.lider_uid || "",
-          em_disputa: data.em_disputa || false,
-          liga: data.liga || data.liga_nome || "",
-          liga_nome: data.liga_nome || data.liga || "",
-        };
-      });
+      try {
+        const gSnap = await getDocs(collection(db, "ginasios"));
+        const gList: Ginasio[] = gSnap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            nome: data.nome,
+            tipo: data.tipo || "",
+            lider_uid: data.lider_uid || "",
+            em_disputa: data.em_disputa || false,
+            liga: data.liga || data.liga_nome || "",
+            liga_nome: data.liga_nome || data.liga || "",
+          };
+        });
 
-      const dSnap = await getDocs(
-        query(
-          collection(db, "disputas_ginasio"),
-          where("status", "in", ["inscricoes", "batalhando"])
-        )
-      );
-      const dList: Disputa[] = dSnap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          ginasio_id: data.ginasio_id,
-          status: data.status,
-          tipo_original: data.tipo_original || "",
-        };
-      });
+        const dSnap = await getDocs(
+          query(
+            collection(db, "disputas_ginasio"),
+            where("status", "in", ["inscricoes", "batalhando"])
+          )
+        );
+        const dList: Disputa[] = dSnap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            ginasio_id: data.ginasio_id,
+            status: data.status,
+            tipo_original: data.tipo_original || "",
+          };
+        });
 
-      const rSnap = await getDocs(
-        query(
-          collection(db, "renuncias_ginasio"),
-          where("status", "==", "pendente")
-        )
-      );
-      const map: Record<string, Renuncia> = {};
-      rSnap.docs.forEach((dd) => {
-        const x = dd.data() as any;
-        const r: Renuncia = {
-          id: dd.id,
-          ginasio_id: x.ginasio_id,
-          liga: x.liga || "",
-          lider_uid: x.lider_uid,
-          status: x.status || "pendente",
-          motivo: x.motivo || "",
-          createdAtMs: toMillis(x.createdAt),
-        };
-        const cur = map[r.ginasio_id];
-        if (!cur || (r.createdAtMs || 0) > (cur.createdAtMs || 0))
-          map[r.ginasio_id] = r;
-      });
+        const rSnap = await getDocs(
+          query(
+            collection(db, "renuncias_ginasio"),
+            where("status", "==", "pendente")
+          )
+        );
+        const map: Record<string, Renuncia> = {};
+        rSnap.docs.forEach((dd) => {
+          const x = dd.data() as any;
+          const r: Renuncia = {
+            id: dd.id,
+            ginasio_id: x.ginasio_id,
+            liga: x.liga || "",
+            lider_uid: x.lider_uid,
+            status: x.status || "pendente",
+            motivo: x.motivo || "",
+            createdAtMs: toMillis(x.createdAt),
+          };
+          const cur = map[r.ginasio_id];
+          if (!cur || (r.createdAtMs || 0) > (cur.createdAtMs || 0))
+            map[r.ginasio_id] = r;
+        });
 
-      setGinasios(gList);
-      setDisputas(dList);
-      setRenunciasMap(map);
-      setLoading(false);
+        setGinasios(gList);
+        setDisputas(dList);
+        setRenunciasMap(map);
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadAll();
@@ -330,22 +335,40 @@ export default function DevGinasiosPage() {
     );
   };
 
-  // iniciar disputa
+  // iniciar disputa (checa se há pelo menos 2 participantes válidos)
   const handleIniciarDisputa = async (g: Ginasio) => {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa || disputa.status !== "inscricoes") return;
 
+    // marca como removido quem não escolheu tipo
+    const partSnap0 = await getDocs(
+      query(
+        collection(db, "disputas_ginasio_participantes"),
+        where("disputa_id", "==", disputa.id)
+      )
+    );
+    for (const pDoc of partSnap0.docs) {
+      const d = pDoc.data() as any;
+      if (!d.tipo_escolhido || d.tipo_escolhido === "") {
+        await updateDoc(pDoc.ref, { removido: true });
+      }
+    }
+
+    // reconta válidos (não-removido + com tipo_escolhido)
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
         where("disputa_id", "==", disputa.id)
       )
     );
-    for (const pDoc of partSnap.docs) {
-      const d = pDoc.data() as any;
-      if (!d.tipo_escolhido || d.tipo_escolhido === "") {
-        await updateDoc(pDoc.ref, { removido: true });
-      }
+    const validos = partSnap.docs
+      .map((p) => p.data() as any)
+      .filter((d) => !d.removido && d.tipo_escolhido && d.tipo_escolhido !== "")
+      .length;
+
+    if (validos < 2) {
+      // não inicia; mantém período de inscrições
+      return;
     }
 
     await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
@@ -379,6 +402,26 @@ export default function DevGinasiosPage() {
         };
       })
       .filter(Boolean) as { usuario_uid: string; tipo_escolhido: string }[];
+
+    // GUARDA: sem participantes válidos → finaliza sem vencedor
+    if (participantes.length === 0) {
+      await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+        status: "finalizado",
+        encerradaEm: Date.now(),
+        vencedor_uid: "",
+      });
+
+      await deleteParticipantsOfDispute(disputa.id);
+      await updateDoc(doc(db, "ginasios", g.id), { em_disputa: false });
+
+      setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
+      setGinasios((prev) =>
+        prev.map((gg) => (gg.id === g.id ? { ...gg, em_disputa: false } : gg))
+      );
+
+      await closePendingChallengesOfGym(g.id);
+      return;
+    }
 
     const resSnap = await getDocs(
       query(
@@ -416,7 +459,7 @@ export default function DevGinasiosPage() {
     for (const uid in pontos) if (pontos[uid] > maior) maior = pontos[uid];
     const empatados = Object.keys(pontos).filter((uid) => pontos[uid] === maior);
 
-    // empate → fecha antiga, cria nova, apaga participantes e fecha desafios pendentes do ginásio
+    // empate → reabre nova disputa com empatados
     if (empatados.length > 1) {
       const nova = await addDoc(collection(db, "disputas_ginasio"), {
         ginasio_id: g.id,
@@ -471,7 +514,7 @@ export default function DevGinasiosPage() {
     }
 
     // vencedor definido
-    const vencedorUid = empatados[0];
+    const vencedorUid = empatados[0]; // seguro aqui: length === 1
     const participanteVencedor = participantes.find(
       (p) => p.usuario_uid === vencedorUid
     );
@@ -663,12 +706,13 @@ export default function DevGinasiosPage() {
               <p className="text-xs text-gray-500">
                 Disputa: {disputa ? disputa.status : "nenhuma"}
               </p>
-              <a
+
+              <Link
                 href={`/ginasios/${g.id}/disputa`}
                 className="text-xs text-blue-600 underline"
               >
                 Ver página da disputa
-              </a>
+              </Link>
 
               {ren && (
                 <div className="mt-2 text-xs text-gray-700">

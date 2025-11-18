@@ -1,5 +1,6 @@
 "use client";
 
+import type { User } from 'firebase/auth';
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -48,7 +49,7 @@ export default function DevCampeonatoElite4() {
 
   /** Auth + superusers */
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
+    const unsub = auth.onAuthStateChanged(async (user: User | null) => {
       if (!user) { router.replace("/login"); return; }
       const sup = await getDocs(query(collection(db, "superusers"), where("uid", "==", user.uid)));
       if (sup.empty) { setIsAdmin(false); router.replace("/"); return; }
