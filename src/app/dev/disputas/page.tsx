@@ -15,6 +15,7 @@ import {
   updateDoc,
   addDoc,
   deleteDoc,
+  setDoc,
 } from "firebase/firestore";
 
 // ==== Tipos ====
@@ -93,6 +94,19 @@ function tempoRelativo(ms?: number | null) {
 }
 
 // --------- Helpers (purga + liderança) ----------
+async function purgeDesafioChat(desafioId: string) {
+  try {
+    const snap = await getDocs(collection(db, "desafios_ginasio", desafioId, "mensagens"));
+    await Promise.all(
+      snap.docs.map((m) =>
+        deleteDoc(doc(db, "desafios_ginasio", desafioId, "mensagens", m.id))
+      )
+    );
+  } catch {
+    // sem fallback (rules não permitem update em mensagens)
+  }
+}
+
 async function purgeDisputa(disputaId: string) {
   // participantes
   const pSnap = await getDocs(
@@ -122,6 +136,17 @@ async function purgeDisputa(disputaId: string) {
     } catch {
       await updateDoc(d.ref, { status: "limpo" });
     }
+  }
+
+  // desafios/chat vinculados a esta disputa
+  const dSnap = await getDocs(
+    query(collection(db, "desafios_ginasio"), where("disputa_id", "==", disputaId))
+  );
+  for (const dd of dSnap.docs) {
+    try {
+      await updateDoc(dd.ref, { status: "concluido", fechadoEm: Date.now() });
+    } catch {}
+    await purgeDesafioChat(dd.id);
   }
 
   // disputa
@@ -264,7 +289,7 @@ export default function DevDisputasPage() {
     const qD = query(
       collection(db, "desafios_ginasio"),
       where("status", "==", "pendente"),
-      orderBy("createdAt", "desc")
+      orderBy("criadoEm", "desc")
     );
     const unsub = onSnapshot(qD, (snap) => {
       const list: Desafio[] = snap.docs
@@ -279,7 +304,7 @@ export default function DevDisputasPage() {
             status: x.status,
             resultado_lider: x.resultado_lider ?? null,
             resultado_desafiante: x.resultado_desafiante ?? null,
-            createdAtMs: toMillis(x.createdAt),
+            createdAtMs: toMillis(x.criadoEm),
           };
         })
         .filter((d) => {
@@ -462,6 +487,10 @@ export default function DevDisputasPage() {
   }
 
   // ações: desafios 1 lado
+  async function clearDesafioChat(desafioId: string) {
+    await purgeDesafioChat(desafioId);
+  }
+
   async function confirmarDesafio(d: Desafio) {
     const declarado = d.resultado_lider ?? d.resultado_desafiante;
     const ref = doc(db, "desafios_ginasio", d.id);
@@ -633,13 +662,50 @@ export default function DevDisputasPage() {
     }
   }
 
-  async function clearDesafioChat(desafioId: string) {
-    const snap = await getDocs(collection(db, "desafios_ginasio", desafioId, "mensagens"));
-    await Promise.all(
-      snap.docs.map((m) =>
-        deleteDoc(doc(db, "desafios_ginasio", desafioId, "mensagens", m.id))
-      )
+  // ===== Histórico de liderança (só superuser, idempotente) =====
+  async function iniciarLideratoSeNaoExiste(
+    ginasio_id: string,
+    lider_uid: string,
+    liga?: string,
+    tipo?: string,
+    ginasio_nome?: string,
+    temporada_id?: string,
+    temporada_nome?: string,
+    origem: "disputa" | "renuncia" | "3_derrotas" | "manual" = "disputa"
+  ) {
+    // se já existe ABERTA, não cria
+    const qAberto = query(
+      collection(db, "ginasios_liderancas"),
+      where("ginasio_id", "==", ginasio_id),
+      where("lider_uid", "==", lider_uid),
+      where("endedAt", "==", null)
     );
+    const snap = await getDocs(qAberto);
+    if (!snap.empty) return;
+
+    // id determinístico por ginásio+lÍder+temporada para evitar duplicidade
+    const baseId = `${ginasio_id}__${lider_uid}__${temporada_id || "na"}`;
+    const ref = doc(collection(db, "ginasios_liderancas"), baseId);
+    const exists = await getDoc(ref);
+    const now = Date.now();
+
+    if (exists.exists() && (exists.data() as any)?.endedAt == null) {
+      return;
+    }
+
+    await setDoc(ref, {
+      ginasio_id,
+      lider_uid,
+      startedAt: now,
+      endedAt: null,
+      origem,
+      liga: liga || "",
+      temporada_id: temporada_id || "",
+      temporada_nome: temporada_nome || "",
+      tipo_no_periodo: tipo || "",
+      createdByAdminUid: auth.currentUser?.uid || null,
+      endedByAdminUid: null,
+    });
   }
 
   if (isAdmin === null) return <p className="p-6">Carregando…</p>;
@@ -791,7 +857,7 @@ export default function DevDisputasPage() {
                   <p className="text-xs text-gray-600">
                     Criado há {created} {velho && <span className="text-red-600">(7+ dias)</span>}
                   </p>
-                  <p className="text-[10px] text-gray-400">ID desafio: {d.id}</p>
+                  <p className="text:[10px] text-gray-400">ID desafio: {d.id}</p>
                 </div>
 
                 <div className="flex items-center gap-2">

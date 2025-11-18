@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { collection, addDoc } from "firebase/firestore";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 const GINASIOS = [
   { nome: "Piratininga", tipo: "" },
   { nome: "Cafubá", tipo: "" },

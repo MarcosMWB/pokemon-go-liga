@@ -17,6 +17,7 @@ import {
   addDoc,
   orderBy,
   serverTimestamp,
+  deleteDoc,
 } from "firebase/firestore";
 
 const TIPOS = [
@@ -43,6 +44,7 @@ type Disputa = {
   temporada_id?: string;
   temporada_nome?: string;
   origem?: "disputa" | "renuncia" | "3_derrotas" | "manual";
+  empate_no_topo?: boolean;
 };
 
 type Participante = {
@@ -71,18 +73,6 @@ type Usuario = {
   nome?: string;
   email?: string;
   friend_code?: string;
-};
-
-type Desafio = {
-  id: string;
-  pairKey: string;
-  disputa_id: string;
-  ginasio_id: string;
-  liga?: string;
-  status: "pendente" | "conflito" | "concluido";
-  lider_uid: string;        // iniciador
-  desafiante_uid: string;   // oponente
-  criadoEm?: number;
 };
 
 export default function DisputaGinasioPage() {
@@ -122,7 +112,6 @@ export default function DisputaGinasioPage() {
     return <Image src={src} alt={tipo} width={size} height={size} className="inline-block" />;
   };
 
-  // pair key p/ desafio 1-a-1 (reaproveita)
   function makePairKey(a: string, b: string, gId: string, dId: string) {
     const [x, y] = [a, b].sort();
     return `${x}__${y}__${gId}__${dId}`;
@@ -149,7 +138,6 @@ export default function DisputaGinasioPage() {
       }
       setUserUid(user.uid);
       try {
-        // regra do Firestore: isSuper() = exists(superusers/{uid})
         const superSnap = await getDoc(doc(db, "superusers", user.uid));
         setIsSuper(superSnap.exists());
       } catch {
@@ -199,6 +187,7 @@ export default function DisputaGinasioPage() {
         temporada_id: dData.temporada_id || "",
         temporada_nome: dData.temporada_nome || "",
         origem: dData.origem as any,
+        empate_no_topo: dData.empate_no_topo || false,
       });
       setLoading(false);
     });
@@ -491,7 +480,17 @@ export default function DisputaGinasioPage() {
     });
   }, [participantes, pontos]);
 
-  // ===== Histórico de liderança (só superuser) =====
+  // ===== Admin: encerrar disputa (marca status=finalizado) =====
+  async function encerrarDisputaComoAdmin() {
+    if (!isSuper || !disputa) return;
+    await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+      status: "finalizado",
+      encerradaPorAdminUid: auth.currentUser?.uid || null,
+      encerradaEm: Date.now(),
+    });
+  }
+
+  // ===== Histórico / aplicação final (só SUPERUSER) =====
   async function iniciarLideratoSeNaoExiste(
     ginasio_id: string,
     lider_uid: string,
@@ -502,7 +501,6 @@ export default function DisputaGinasioPage() {
     temporada_nome?: string,
     origem: "disputa" | "renuncia" | "3_derrotas" | "manual" = "disputa"
   ) {
-    // verifica se já existe liderança ATIVA deste líder neste ginásio
     const qAberto = query(
       collection(db, "ginasios_liderancas"),
       where("ginasio_id", "==", ginasio_id),
@@ -510,27 +508,47 @@ export default function DisputaGinasioPage() {
       where("endedAt", "==", null)
     );
     const snap = await getDocs(qAberto);
-    if (!snap.empty) {
+    if (!snap.empty) return;
+
+    const baseId = `${ginasio_id}__${lider_uid}__${temporada_id || "na"}`;
+    const ref = doc(collection(db, "ginasios_liderancas"), baseId);
+    const exists = await getDoc(ref);
+    const now = Date.now();
+
+    if (exists.exists() && (exists.data() as any)?.endedAt == null) {
       return;
     }
 
-    const now = Date.now();
-    await addDoc(collection(db, "ginasios_liderancas"), {
-      ginasio_id,
-      lider_uid,
-      startedAt: now,
-      endedAt: null,
-      origem,
-      liga: liga || "",
-      temporada_id: temporada_id || "",
-      temporada_nome: temporada_nome || "",
-      tipo_no_periodo: tipo || "",
-      createdByAdminUid: auth.currentUser?.uid || null,
-      endedByAdminUid: null,
-    });
+    await updateDoc(doc(db, "ginasios", ginasio_id), { em_disputa: false }).catch(() => {});
+
+    await (exists.exists()
+      ? updateDoc(ref, {
+          endedAt: null,
+          startedAt: now,
+          origem,
+          liga: liga || "",
+          temporada_id: temporada_id || "",
+          temporada_nome: temporada_nome || "",
+          tipo_no_periodo: tipo || "",
+          createdByAdminUid: auth.currentUser?.uid || null,
+          endedByAdminUid: null,
+        })
+      : addDoc(collection(db, "ginasios_liderancas"), {
+          ginasio_id,
+          lider_uid,
+          startedAt: now,
+          endedAt: null,
+          origem,
+          liga: liga || "",
+          temporada_id: temporada_id || "",
+          temporada_nome: temporada_nome || "",
+          tipo_no_periodo: tipo || "",
+          createdByAdminUid: auth.currentUser?.uid || null,
+          endedByAdminUid: null,
+        }));
   }
 
-  // ===== Finalização automática (apenas SUPERUSER) =====
+  // ===== Aplicação da finalização + purga (só SUPERUSER) =====
   useEffect(() => {
     const aplicarFinalizacao = async () => {
       if (!disputa || !ginasio) return;
@@ -539,7 +557,16 @@ export default function DisputaGinasioPage() {
       if (disputa.finalizacao_aplicada) return;
 
       try {
-        if (ranking.length === 0) return;
+        if (ranking.length === 0) {
+          await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+            finalizacao_aplicada: true,
+            vencedor_uid: "",
+            aplicado_em: Date.now(),
+            aplicadoPorAdminUid: auth.currentUser?.uid || null,
+          });
+          return;
+        }
+
         const topo = ranking[0];
         const pTopo = pontos[topo.usuario_uid] || 0;
         const empatadosTopo = ranking.filter(
@@ -568,7 +595,7 @@ export default function DisputaGinasioPage() {
           derrotas_seguidas: 0,
         });
 
-        // Cria período de liderança canônico (conforme regras)
+        // Cria período de liderança (idempotente)
         await iniciarLideratoSeNaoExiste(
           ginasio.id,
           novoLiderUid,
@@ -587,6 +614,51 @@ export default function DisputaGinasioPage() {
           aplicado_em: Date.now(),
           aplicadoPorAdminUid: auth.currentUser?.uid || null,
         });
+
+        // Purga participantes/resultados/chats desta disputa
+        // Participantes
+        const pSnap = await getDocs(
+          query(
+            collection(db, "disputas_ginasio_participantes"),
+            where("disputa_id", "==", disputa.id)
+          )
+        );
+        for (const d of pSnap.docs) {
+          try {
+            await deleteDoc(d.ref);
+          } catch {
+            await updateDoc(d.ref, { removido: true });
+          }
+        }
+
+        // Resultados
+        const rSnap = await getDocs(
+          query(
+            collection(db, "disputas_ginasio_resultados"),
+            where("disputa_id", "==", disputa.id)
+          )
+        );
+        for (const d of rSnap.docs) {
+          try {
+            await deleteDoc(d.ref);
+          } catch {
+            await updateDoc(d.ref, { status: "limpo" });
+          }
+        }
+
+        // Desafios e chat
+        const dSnap = await getDocs(
+          query(collection(db, "desafios_ginasio"), where("disputa_id", "==", disputa.id))
+        );
+        for (const dd of dSnap.docs) {
+          try {
+            await updateDoc(dd.ref, { status: "concluido", fechadoEm: Date.now() });
+          } catch {}
+          const msgs = await getDocs(collection(db, "desafios_ginasio", dd.id, "mensagens"));
+          for (const m of msgs.docs) {
+            try { await deleteDoc(m.ref); } catch {}
+          }
+        }
       } catch (e) {
         console.warn("Falha ao aplicar finalização da disputa:", e);
       }
@@ -613,7 +685,7 @@ export default function DisputaGinasioPage() {
       lider_uid: userUid,
       desafiante_uid: opponentUid,
       criadoEm: Date.now(),
-    } as Desafio);
+    });
     return ref.id;
   }
 
@@ -718,20 +790,17 @@ export default function DisputaGinasioPage() {
         })
       : [];
 
-  // Ordenar participantes por nome p/ seção de chat
   const participantesOrdenados = useMemo(() => {
     return participantes
       .slice()
       .sort((a, b) => ((a.nome || a.email || a.usuario_uid).localeCompare(b.nome || b.email || b.usuario_uid)));
   }, [participantes]);
 
-  // Links do amigo para o modal (evita IIFE no JSX)
   const fc = chatOther?.friend_code || null;
   const friendLinks = fc ? buildPoGoFriendLinks(fc) : null;
   const deepLink = fc ? (isAndroid ? friendLinks!.androidIntent : friendLinks!.native) : null;
   const qrLink = fc ? qrUrl(friendLinks!.native) : null;
 
-  // ====== RENDER ======
   if (loading) return <p className="p-8">Carregando disputa...</p>;
   if (!ginasio) return <p className="p-8">Ginásio não encontrado.</p>;
   if (!disputa) {
@@ -770,7 +839,22 @@ export default function DisputaGinasioPage() {
             {disputa.finalizacao_aplicada ? " (aplicado)" : " (aguardando aplicação pelo admin)"}
           </span>
         )}
+        {isSuper && disputa.status !== "finalizado" && (
+          <button
+            onClick={encerrarDisputaComoAdmin}
+            className="ml-3 text-xs px-2 py-1 rounded bg-red-600 text-white"
+            title="Encerrar disputa agora (admin)"
+          >
+            Encerrar disputa
+          </button>
+        )}
       </p>
+
+      {disputa.empate_no_topo && (
+        <div className="bg-amber-100 border border-amber-300 text-amber-900 px-3 py-2 rounded">
+          Há empate no topo. Resolva manualmente.
+        </div>
+      )}
 
       {avisoTipoInvalidado && (
         <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
