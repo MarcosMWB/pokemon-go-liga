@@ -600,7 +600,7 @@ export default function GinasiosPage() {
                     <span className="text-xs text-gray-500">Você já está na disputa</span>
                   ) : (
                     <p>
-                      Entre na disputa pelo ginásio do {g.nome}
+                      Entre na disputa pelo ginásio: {g.nome}
                     </p>
                   )}
                   <Link href={`/ginasios/${g.id}/disputa`} className="text-xs text-blue-600 underline">Ver disputa</Link>

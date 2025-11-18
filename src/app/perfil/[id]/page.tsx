@@ -849,50 +849,50 @@ export default function PerfilPage() {
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Cabeçalho do perfil */}
       <div className="bg-white p-4 rounded shadow space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">{usuario?.nome || usuario?.email || 'Jogador'}</h1>
-            <p className="text-sm text-gray-500">UID: {perfilUid}</p>
-            {usuario?.friend_code && <p className="text-sm mt-1">Friend code: {usuario.friend_code}</p>}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold truncate">
+              {usuario?.nome || usuario?.email || 'Jogador'}
+            </h1>
+            <p className="text-sm text-gray-500 break-all">UID: {perfilUid}</p>
+            {usuario?.friend_code && (
+              <p className="text-sm mt-1 break-all">Friend code: {usuario.friend_code}</p>
+            )}
           </div>
 
-          <div className="flex items-end gap-3">
-            {/* Filtro por Liga (opcional, mantido) */}
-            <div>
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            <div className="w-full sm:w-48">
               <label className="text-xs block mb-1 text-gray-500">Liga</label>
               <select
                 value={ligaSelecionada}
                 onChange={(e) => setLigaSelecionada(e.target.value)}
-                className="border rounded px-2 py-1 text-sm"
+                className="w-full max-w-full border rounded px-2 py-1 text-sm"
               >
                 <option value="">Todas</option>
                 {ligas.map((l) => (
-                  <option key={l.nome} value={l.nome}>
-                    {l.nome}
-                  </option>
+                  <option key={l.nome} value={l.nome}>{l.nome}</option>
                 ))}
               </select>
             </div>
 
-            {/* Filtro por Temporada (NOVO) */}
-            <div>
+            <div className="w-full sm:w-56">
               <label className="text-xs block mb-1 text-gray-500">Temporada</label>
               <select
                 value={temporadaSelecionada}
                 onChange={(e) => setTemporadaSelecionada(e.target.value)}
-                className="border rounded px-2 py-1 text-sm"
+                className="w-full max-w-full border rounded px-2 py-1 text-sm"
               >
                 <option value="">Todas</option>
                 {temporadas.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.nome || t.id} {t.ativa ? ' (ativa)' : ''}
+                    {t.nome || t.id}{t.ativa ? ' (ativa)' : ''}
                   </option>
                 ))}
               </select>
             </div>
           </div>
         </div>
-
+        
         <button
           onClick={() => router.push(`/equipes/${perfilUid}`)}
           className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
