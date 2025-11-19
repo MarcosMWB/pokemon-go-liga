@@ -2,7 +2,7 @@
 "use client";
 
 import type { User } from "firebase/auth";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import {
@@ -17,6 +17,7 @@ import {
   updateDoc,
   addDoc,
   deleteDoc,
+  getCountFromServer,
 } from "firebase/firestore";
 import type { DocumentReference } from "firebase/firestore";
 
@@ -191,6 +192,28 @@ export default function DevDisputasPage() {
 
   const [temporada, setTemporada] = useState<Temporada>(null);
 
+  // Alertas de “pronto para encerrar”
+  const [alertsReady, setAlertsReady] = useState<
+    Array<{ disputaId: string; ginasioId: string; ginasioNome: string }>
+  >([]);
+  const dismissedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("dismissedReadyAlerts");
+      if (raw) dismissedRef.current = new Set(JSON.parse(raw));
+    } catch {}
+  }, []);
+  function dismissAlert(disputaId: string) {
+    const s = new Set(dismissedRef.current);
+    s.add(disputaId);
+    dismissedRef.current = s;
+    try {
+      localStorage.setItem("dismissedReadyAlerts", JSON.stringify([...s]));
+    } catch {}
+    setAlertsReady((prev) => prev.filter((a) => a.disputaId !== disputaId));
+  }
+
   // auth + super (compatível com as rules: superusers/{uid})
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (current: User | null) => {
@@ -231,7 +254,7 @@ export default function DevDisputasPage() {
     })();
   }, [isAdmin]);
 
-  // resultados pendentes
+  // resultados pendentes (lista para UI e base para contagem)
   useEffect(() => {
     if (isAdmin !== true) return;
     const qRes = query(
@@ -260,6 +283,66 @@ export default function DevDisputasPage() {
     });
     return () => unsub();
   }, [isAdmin]);
+
+  // mapa de pendentes por disputa derivado da lista acima
+  const pendentesPorDisputa = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const r of resultados) {
+      m[r.disputa_id] = (m[r.disputa_id] || 0) + 1;
+    }
+    return m;
+  }, [resultados]);
+
+  // disputas ativas (status == batalhando)
+  type DisputaAtiva = { id: string; ginasio_id: string };
+  const [disputasAtivas, setDisputasAtivas] = useState<DisputaAtiva[]>([]);
+  useEffect(() => {
+    if (isAdmin !== true) return;
+    const qAtivas = query(collection(db, "disputas_ginasio"), where("status", "==", "batalhando"));
+    const unsub = onSnapshot(qAtivas, (snap) => {
+      setDisputasAtivas(
+        snap.docs.map((d) => {
+          const x = d.data() as any;
+          return { id: d.id, ginasio_id: String(x.ginasio_id || "") };
+        })
+      );
+    });
+    return () => unsub();
+  }, [isAdmin]);
+
+  // recalcula alertsReady sempre que pendentes/disputas/nome de gym mudarem
+  useEffect(() => {
+    if (isAdmin !== true) return;
+
+    (async () => {
+      const next: Array<{ disputaId: string; ginasioId: string; ginasioNome: string }> = [];
+
+      for (const d of disputasAtivas) {
+        if (!d.ginasio_id) continue;
+        if (dismissedRef.current.has(d.id)) continue;
+
+        if ((pendentesPorDisputa[d.id] ?? 0) !== 0) continue;
+
+        // precisa ter pelo menos 1 resultado (qualquer status)
+        const total = await getCountFromServer(
+          query(collection(db, "disputas_ginasio_resultados"), where("disputa_id", "==", d.id))
+        );
+        if ((total.data().count || 0) === 0) continue;
+
+        // nome do ginásio
+        let nome = gMap[d.ginasio_id]?.nome;
+        if (!nome) {
+          try {
+            const g = await getDoc(doc(db, "ginasios", d.ginasio_id));
+            if (g.exists()) nome = (g.data() as any).nome || d.ginasio_id;
+          } catch {}
+        }
+        next.push({ disputaId: d.id, ginasioId: d.ginasio_id, ginasioNome: nome || d.ginasio_id });
+      }
+
+      setAlertsReady(next);
+    })();
+  }, [isAdmin, disputasAtivas, pendentesPorDisputa, gMap]);
 
   // desafios 1 lado
   useEffect(() => {
@@ -409,8 +492,12 @@ export default function DevDisputasPage() {
       if (textoBusca.trim()) {
         const t = textoBusca.trim().toLowerCase();
         const gymName = (gMap[r.ginasio_id]?.nome || r.ginasio_id).toLowerCase();
-        const a = (uMap[r.tipo === "empate" ? r.jogador1_uid || "" : r.vencedor_uid || ""]?.display || "").toLowerCase();
-        const b = (uMap[r.tipo === "empate" ? r.jogador2_uid || "" : r.perdedor_uid || ""]?.display || "").toLowerCase();
+        const a = (
+          uMap[r.tipo === "empate" ? r.jogador1_uid || "" : r.vencedor_uid || ""]?.display || ""
+        ).toLowerCase();
+        const b = (
+          uMap[r.tipo === "empate" ? r.jogador2_uid || "" : r.perdedor_uid || ""]?.display || ""
+        ).toLowerCase();
         if (!gymName.includes(t) && !a.includes(t) && !b.includes(t)) return false;
       }
       return true;
@@ -502,18 +589,13 @@ export default function DevDisputasPage() {
   async function confirmarRenuncia(r: Renuncia) {
     const renRef = doc(db, "renuncias_ginasio", r.id);
 
-    // encerra liderança atual
     await endActiveLeadership(r.ginasio_id);
-
-    // limpa disputas abertas
     await closeAndPurgeActiveDisputes(r.ginasio_id);
 
-    // info do ginásio
     const gRef = doc(db, "ginasios", r.ginasio_id);
     const gSnap = await getDoc(gRef);
     const gData = gSnap.exists() ? (gSnap.data() as any) : null;
 
-    // abre disputa por renúncia (vazia/limpa)
     await addDoc(collection(db, "disputas_ginasio"), {
       ginasio_id: r.ginasio_id,
       status: "inscricoes",
@@ -526,14 +608,12 @@ export default function DevDisputasPage() {
       origem: "renuncia",
     });
 
-    // zera liderança
     await updateDoc(gRef, {
       lider_uid: "",
       em_disputa: true,
       derrotas_seguidas: 0,
     });
 
-    // fecha renúncia
     await updateDoc(renRef, {
       status: "confirmado",
       confirmadoPorAdminUid: auth.currentUser?.uid || null,
@@ -588,7 +668,6 @@ export default function DevDisputasPage() {
         if (gSnap.exists()) {
           const derrotas = Number(gData?.derrotas_seguidas ?? 0) + 1;
           if (derrotas >= 3) {
-            // encerra liderança e limpa disputas abertas
             await endActiveLeadership(d.ginasio_id);
             await closeAndPurgeActiveDisputes(d.ginasio_id);
 
@@ -662,6 +741,31 @@ export default function DevDisputasPage() {
         </button>
       </div>
 
+      {alertsReady.length > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded p-3 space-y-2">
+          {alertsReady.map((a) => (
+            <div key={a.disputaId} className="text-sm flex items-center justify-between">
+              <span>
+                Todos os resultados foram definidos para o ginásio <b>{a.ginasioNome}</b>.{" "}
+                <button
+                  onClick={() => router.push("/dev/ginasios")}
+                  className="text-emerald-700 underline"
+                >
+                  Encerrar disputa agora
+                </button>
+              </span>
+              <button
+                onClick={() => dismissAlert(a.disputaId)}
+                className="text-xs px-2 py-1 rounded border border-emerald-300 hover:bg-emerald-100"
+                title="Dispensar este alerta"
+              >
+                dispensar
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Filtros */}
       <div className="bg-white p-4 rounded shadow grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="flex items-center gap-2">
@@ -673,7 +777,9 @@ export default function DevDisputasPage() {
           >
             <option value="">Todas</option>
             {ligasDisponiveis.map((l) => (
-              <option key={l} value={l}>{l}</option>
+              <option key={l} value={l}>
+                {l}
+              </option>
             ))}
           </select>
         </div>
@@ -724,7 +830,9 @@ export default function DevDisputasPage() {
                     )}
                   </p>
                   {r.tipo === "empate" && (
-                    <p className="text-sm text-gray-700">Jogadores: {aName} vs {bName}</p>
+                    <p className="text-sm text-gray-700">
+                      Jogadores: {aName} vs {bName}
+                    </p>
                   )}
                   <p className="text-sm text-gray-700">
                     Ginásio: <span className="font-medium">{gymName}</span>{" "}

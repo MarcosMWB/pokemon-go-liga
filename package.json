@@ -9,11 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.50.0",
     "bcryptjs": "^3.0.2",
     "firebase": "^12.5.0",
     "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.0.0",
     "next": "15.3.3",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",

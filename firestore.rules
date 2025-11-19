@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ==== HELPERS ==== */
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    // SUPERUSER = existe doc em superusers/{uid}
+    function isSuper() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/superusers/$(request.auth.uid));
+    }
+    function isMatchParticipant(matchId) {
+      return isSignedIn() &&
+        request.auth.uid in get(/databases/$(database)/documents/trocas_matches/$(matchId)).data.users;
+    }
+    function isDesafioParticipant(desafioId) {
+      let d = get(/databases/$(database)/documents/desafios_ginasio/$(desafioId));
+      return isSignedIn() &&
+        (d.data.lider_uid == request.auth.uid || d.data.desafiante_uid == request.auth.uid);
+    }
+    function isGymLeader(ginasioId) {
+      let g = get(/databases/$(database)/documents/ginasios/$(ginasioId));
+      return isSignedIn() && g.data.lider_uid == request.auth.uid;
+    }
+
+    /* ==== CONTAS / CADASTROS BÁSICOS ==== */
+    match /superusers/{id} {
+      allow read: if isSignedIn();                 // app só checa se o doc do PRÓPRIO uid existe
+      allow create, update, delete: if isSuper();  // manutenção só por super
+    }
+    match /usuarios/{uid} {
+      allow read: if isSignedIn();
+      allow create, update: if isOwner(uid);
+    }
+    match /ligas/{id}       { allow read: if isSignedIn(); allow create, update, delete: if isSuper(); }
+    match /temporadas/{id}  { allow read: if isSignedIn(); allow create, update, delete: if isSuper(); }
+
+    /* ==== GINÁSIOS ==== */
+    match /ginasios/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSuper();
+    }
+
+    /* ==== RENÚNCIAS DE LIDERANÇA ==== */
+    match /renuncias_ginasio/{id} {
+      allow read: if isSignedIn(); // admin vê pendentes; usuários podem ver o próprio pedido
+      allow create: if isSignedIn() &&
+        request.resource.data.lider_uid == request.auth.uid;
+      allow update, delete: if isSuper(); // confirmar/cancelar só admin
+    }
+
+    /* ==== DISPUTAS DE GINÁSIO ==== */
+    match /disputas_ginasio/{id} {
+      allow read: if isSignedIn();
+      // abrir disputa também pode ser feito pelo cliente (pré-alpha)
+      allow create: if isSignedIn() || isSuper();
+      allow update, delete: if isSuper(); // iniciar/encerrar/aplicar finalização é ação de admin
+    }
+    match /disputas_ginasio_participantes/{id} {
+      allow read: if isSignedIn();
+      // cada usuário cria/edita o próprio registro; admin pode editar tudo
+      allow create: if isSignedIn() && request.resource.data.usuario_uid == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.usuario_uid == request.auth.uid || isSuper());
+      allow delete: if isSuper();
+    }
+    match /disputas_ginasio_resultados/{id} {
+      allow read: if isSignedIn();
+      // só quem declarou pode criar
+      allow create: if isSignedIn() && request.resource.data.declarado_por == request.auth.uid;
+      // o outro participante pode confirmar/contestar; admin pode alterar/auditar
+      allow update: if isSignedIn() && (resource.data.declarado_por != request.auth.uid || isSuper());
+      allow delete: if isSuper();
+    }
+
+    /* ==== DESAFIOS (1×1) + CHAT ==== */
+    match /desafios_ginasio/{desafioId} {
+      allow read: if isSignedIn();
+      // quem está no desafio pode criar o doc
+      allow create: if isSignedIn() &&
+        (request.resource.data.lider_uid == request.auth.uid ||
+         request.resource.data.desafiante_uid == request.auth.uid);
+      // participantes ou admin atualizam (ex.: marcar conflito/concluído)
+      allow update: if isDesafioParticipant(desafioId) || isSuper();
+      allow delete: if isSuper();
+
+      match /mensagens/{msgId} {
+        allow read: if isDesafioParticipant(desafioId) || isSuper();
+        allow create: if isDesafioParticipant(desafioId) &&
+                       request.resource.data.from == request.auth.uid;
+        allow delete: if isDesafioParticipant(desafioId) || isSuper();
+        allow update: if false;
+      }
+    }
+
+    /* ==== HISTÓRICO / INSÍGNIAS / BLOQUEIOS / ALERTAS ==== */
+    match /ginasios_liderancas/{id} { allow read: if isSignedIn(); allow create, update, delete: if isSuper(); }
+    match /insignias/{id}           { allow read: if isSignedIn(); allow create: if isSignedIn(); allow update, delete: if isSuper(); }
+    match /bloqueios_ginasio/{id}   { allow read: if isSignedIn(); allow create: if isSignedIn(); allow update, delete: if isSuper(); }
+    match /alertas_conflito/{id}    { allow read: if isSignedIn(); allow create: if isSignedIn(); allow update, delete: if isSuper(); }
+
+    /* ==== ELITE 4 / CAMPEONATOS (se usados) ==== */
+    match /elite4/{id}                        { allow read: if true;        allow create, update, delete: if isSuper(); }
+    match /elite4_mandatos/{id}              { allow read: if isSignedIn();allow create, update, delete: if isSuper(); }
+    match /campeonatos_elite4/{id}           { allow read: if isSignedIn();allow create, update, delete: if isSuper(); }
+    match /campeonatos_elite4_participantes/{id} { allow read: if isSignedIn(); allow create, update, delete: if isSuper(); }
+    match /campeonatos_elite4_resultados/{id}   { allow read: if true; allow create, update, delete: if isSuper(); }
+
+    /* ==== RTS / OUTROS (se usados) ==== */
+    match /trocas_ofertas/{id} { allow read, create, update: if isSignedIn(); }
+    match /trocas_swipes/{id}  { allow read, create, update: if isSignedIn(); }
+    match /trocas_matches/{matchId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isMatchParticipant(matchId);
+      match /mensagens/{msgId} {
+        allow read, create, delete: if isMatchParticipant(matchId);
+        allow update: if false;
+      }
+    }
+
+    match /participacoes/{id} { allow read, write: if isSignedIn(); }
+    match /pokemon/{id}       { allow read, write: if isSignedIn(); }
+    match /mensagens/{id}     { allow read, create, update: if isSignedIn(); }
+    match /produtos_loja/{id} { allow read, create, update: if isSignedIn(); }
+  }
+}
