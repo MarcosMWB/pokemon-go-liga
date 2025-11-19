@@ -539,6 +539,12 @@ export default function GinasiosPage() {
             {ligas.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
           </select>
         )}
+        <button
+            onClick={() => router.push(`/tutorials`)}
+            className="bg-purple-600 text-white px-3 py-2 rounded text-sm "
+          >
+            Ver tutorial
+          </button>
       </div>
 
       {ginasiosFiltrados.map((g) => {

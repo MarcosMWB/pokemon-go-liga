@@ -892,13 +892,20 @@ export default function PerfilPage() {
             </div>
           </div>
         </div>
-        
-        <button
-          onClick={() => router.push(`/equipes/${perfilUid}`)}
-          className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
-        >
-          Ver minhas equipes
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push(`/equipes/${perfilUid}`)}
+            className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
+          >
+            Ver minhas equipes
+          </button>
+          <button
+            onClick={() => router.push(`/tutorials`)}
+            className="bg-purple-600 text-white px-3 py-2 rounded text-sm "
+          >
+            Ver tutorial
+          </button>
+        </div>
       </div>
 
       {/* Ginásios liderados (mantido) */}
