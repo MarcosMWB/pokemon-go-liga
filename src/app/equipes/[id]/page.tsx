@@ -246,7 +246,6 @@ export default function EquipesPage() {
   if (!usuario) return <p className="p-8">Usuário não encontrado.</p>;
 
   return (
-    <div className="min-h-screen bg-blue-50 py-10 px-4">
       <div className="max-w-3xl mx-auto bg-white p-8 rounded shadow">
         <div className="flex items-center justify-between gap-4 mb-6">
           <h1 className="text-2xl font-bold text-blue-800">
@@ -314,6 +313,5 @@ export default function EquipesPage() {
           {logadoEmail && `Logado como: ${logadoEmail}`}
         </footer>
       </div>
-    </div>
   );
 }

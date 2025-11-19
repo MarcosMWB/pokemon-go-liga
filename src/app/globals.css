@@ -8,12 +8,34 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
+/* Não defina background aqui, para não sobrescrever o gradiente do layout */
 body {
-  background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans, Arial, Helvetica, sans-serif);
+}
+
+@layer components {
+  /* Cartão com glass + sombra */
+  .card {
+    @apply rounded-2xl border border-white/60 bg-white/75 backdrop-blur-md shadow-lg;
+  }
+
+  /* Botões */
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium text-white
+           bg-gradient-to-b from-fuchsia-600 to-violet-700 shadow hover:brightness-110 active:translate-y-px;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium
+           bg-white/80 text-violet-800 border border-violet-200 hover:bg-white active:translate-y-px;
+  }
+
+  /* Título de seção */
+  .section-title {
+    @apply text-lg font-semibold text-slate-900;
+  }
 }

@@ -747,7 +747,7 @@ export default function DisputaGinasioPage() {
         </div>
       )}
 
-      <div className="bg-white border rounded p-4">
+      <div className="card p-4">
         <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
         {disputaTravada && <p className="text-xs text-red-500 mb-2">Disputa iniciada. Não dá mais pra trocar.</p>}
         <div className="flex flex-wrap gap-2">
@@ -775,7 +775,7 @@ export default function DisputaGinasioPage() {
       </div>
 
       {disputa.status === "batalhando" && (
-        <div className="bg-white border rounded p-4 space-y-3">
+        <div className="card p-4 space-y-3">
           <h2 className="font-semibold">Declarar resultado</h2>
           <p className="text-sm text-gray-500">Só vale 1 confronto por dupla. Empate = 1 ponto pra cada.</p>
           <div className="flex items-center gap-2">
@@ -814,7 +814,7 @@ export default function DisputaGinasioPage() {
         </div>
       )}
 
-      <div className="bg-white border rounded p-4">
+      <div className="card p-4">
         <h2 className="font-semibold mb-2">Participantes</h2>
         {participantesOrdenados.length === 0 ? (
           <p className="text-sm text-gray-500">Ninguém inscrito.</p>
@@ -843,7 +843,7 @@ export default function DisputaGinasioPage() {
       </div>
 
       {pendentesParaMim.length > 0 && (
-        <div className="bg-white border rounded p-4">
+        <div className="card p-4">
           <h2 className="font-semibold mb-2">Resultados para confirmar</h2>
           <ul className="space-y-2">
             {pendentesParaMim.map((r) => {
@@ -871,7 +871,7 @@ export default function DisputaGinasioPage() {
         </div>
       )}
 
-      <div className="bg-white border rounded p-4">
+      <div className="card p-4">
         <h2 className="font-semibold mb-2">Ranking (confirmados)</h2>
         {ranking.length === 0 ? (
           <p>Ninguém na disputa.</p>

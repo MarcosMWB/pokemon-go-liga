@@ -571,7 +571,7 @@ export default function GinasiosPage() {
         const jaTemInsignia = minhasInsignias.some((i) => i.ginasio_id === g.id && (temporada?.id ? i.temporada_id === temporada.id : false));
 
         return (
-          <div key={g.id} className="bg-white border rounded p-4 flex justify-between items-center">
+          <div key={g.id} className="card p-4 flex justify-between items-center">
             <div>
               <h2 className="text-lg font-semibold">
                 {g.nome}{' '}
