@@ -133,6 +133,9 @@ export default function DisputaGinasioPage() {
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
   const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
 
+  // info do "Converse com o adversário"
+  const [chatInfoOpen, setChatInfoOpen] = useState(false);
+
   // ====== NOVO: variáveis globais (horas) ======
   const [tempoInscricoesHoras, setTempoInscricoesHoras] = useState<number | null>(null);
   const [tempoBatalhasHoras, setTempoBatalhasHoras] = useState<number | null>(null);
@@ -248,7 +251,10 @@ export default function DisputaGinasioPage() {
       setLoading(false);
     });
 
-    return () => { unsubG(); unsubD(); };
+    return () => {
+      unsubG();
+      unsubD();
+    };
   }, [ginasioId]);
 
   // 3) participantes
@@ -375,8 +381,14 @@ export default function DisputaGinasioPage() {
   const handleDeclararVitoria = async () => {
     if (!userUid || !disputa || !oponente) return;
     const me = participantes.find((p) => p.usuario_uid === userUid);
-    if (!me?.tipo_escolhido) { alert("Escolha seu tipo antes."); return; }
-    if (existeResultadoEntre(userUid, oponente)) { alert("Já existe resultado entre vocês dois."); return; }
+    if (!me?.tipo_escolhido) {
+      alert("Escolha seu tipo antes.");
+      return;
+    }
+    if (existeResultadoEntre(userUid, oponente)) {
+      alert("Já existe resultado entre vocês dois.");
+      return;
+    }
     setDeclarando(true);
     await addDoc(collection(db, "disputas_ginasio_resultados"), {
       disputa_id: disputa.id, ginasio_id: disputa.ginasio_id,
@@ -389,8 +401,14 @@ export default function DisputaGinasioPage() {
   const handleDeclararEmpate = async () => {
     if (!userUid || !disputa || !oponente) return;
     const me = participantes.find((p) => p.usuario_uid === userUid);
-    if (!me?.tipo_escolhido) { alert("Escolha seu tipo antes."); return; }
-    if (existeResultadoEntre(userUid, oponente)) { alert("Já existe resultado entre vocês dois."); return; }
+    if (!me?.tipo_escolhido) {
+      alert("Escolha seu tipo antes.");
+      return;
+    }
+    if (existeResultadoEntre(userUid, oponente)) {
+      alert("Já existe resultado entre vocês dois.");
+      return;
+    }
     setDeclarando(true);
     await addDoc(collection(db, "disputas_ginasio_resultados"), {
       disputa_id: disputa.id, ginasio_id: disputa.ginasio_id,
@@ -534,8 +552,10 @@ export default function DisputaGinasioPage() {
   async function openDesafioChat(desafioId: string) {
     if (!userUid) return;
 
-    chatUnsubRef.current?.(); chatUnsubRef.current = null;
-    desafioUnsubRef.current?.(); desafioUnsubRef.current = null;
+    chatUnsubRef.current?.();
+    chatUnsubRef.current = null;
+    desafioUnsubRef.current?.();
+    desafioUnsubRef.current = null;
 
     setChatOpen(true);
     setChatDesafioId(desafioId);
@@ -545,7 +565,11 @@ export default function DisputaGinasioPage() {
 
     const dRef = doc(db, "desafios_ginasio", desafioId);
     const dSnap = await getDoc(dRef);
-    if (!dSnap.exists()) { setChatOpen(false); setChatDesafioId(null); return; }
+    if (!dSnap.exists()) {
+      setChatOpen(false);
+      setChatDesafioId(null);
+      return;
+    }
     const d = dSnap.data() as any;
     const otherUid = d.lider_uid === userUid ? d.desafiante_uid : d.lider_uid;
 
@@ -570,7 +594,8 @@ export default function DisputaGinasioPage() {
       },
       (err) => {
         console.error("Chat listener error:", err);
-        setChatOpen(false); setChatDesafioId(null);
+        setChatOpen(false);
+        setChatDesafioId(null);
       }
     );
 
@@ -580,7 +605,8 @@ export default function DisputaGinasioPage() {
         if (!ds.exists()) return;
         const dd = ds.data() as any;
         if (dd.status === "concluido" || dd.status === "conflito") {
-          setChatOpen(false); setChatDesafioId(null);
+          setChatOpen(false);
+          setChatDesafioId(null);
         }
       },
       (err) => console.error("Desafio listener error:", err)
@@ -649,9 +675,15 @@ export default function DisputaGinasioPage() {
   // carregar nome do vencedor quando finalizado
   useEffect(() => {
     const loadWinner = async () => {
-      if (!disputa || disputa.status !== "finalizado") { setWinnerName(null); return; }
+      if (!disputa || disputa.status !== "finalizado") {
+        setWinnerName(null);
+        return;
+      }
       const uid = disputa.vencedor_uid || ginasio?.lider_uid || null;
-      if (!uid) { setWinnerName(null); return; }
+      if (!uid) {
+        setWinnerName(null);
+        return;
+      }
       try {
         const u = await getDoc(doc(db, "usuarios", uid));
         if (u.exists()) {
@@ -756,8 +788,9 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
-                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
+                meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
               <span className="capitalize">{t}</span>
@@ -826,7 +859,14 @@ export default function DisputaGinasioPage() {
                   <p className="text-sm font-medium truncate">{p.nome || p.email || p.usuario_uid}</p>
                   <div className="text-xs text-gray-600 flex items-center gap-2">
                     <span>Tipo:</span>
-                    {p.tipo_escolhido ? (<>{renderTipoIcon(p.tipo_escolhido, 16)}<span className="capitalize">{p.tipo_escolhido}</span></>) : (<span>—</span>)}
+                    {p.tipo_escolhido ? (
+                      <>
+                        {renderTipoIcon(p.tipo_escolhido, 16)}
+                        <span className="capitalize">{p.tipo_escolhido}</span>
+                      </>
+                    ) : (
+                      <span>—</span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -897,11 +937,12 @@ export default function DisputaGinasioPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                <p className="text-sm text-red-600">
-                  Converse com o adversário (Mande uma mensagem. Combine horários, locais e meios de comunicação, como número telefônico).
-                </p>
+                {/* texto removido daqui, conforme pedido */}
               </div>
-              <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={() => { setChatOpen(false); setChatDesafioId(null); }}>
+              <button
+                className="text-slate-500 hover:text-slate-800 text-sm"
+                onClick={() => { setChatOpen(false); setChatDesafioId(null); }}
+              >
                 Fechar
               </button>
             </div>
@@ -915,9 +956,36 @@ export default function DisputaGinasioPage() {
                     <div className="mt-2 flex flex-col items-start gap-2">
                       {deepLink && <a href={deepLink} className="text-blue-600 text-sm hover:underline">Abrir no Pokémon GO</a>}
                       {qrLink && <Image src={qrLink} alt="QR para adicionar" width={160} height={160} className="w-40 h-40 border rounded" />}
-                      <button onClick={() => (navigator as any)?.clipboard?.writeText?.(fc)} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded">
-                        Copiar FC
-                      </button>
+
+                      {/* linha com Copiar FC + Converse com o adversário + ícone de info */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => (navigator as any)?.clipboard?.writeText?.(fc)}
+                          className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                          type="button"
+                        >
+                          Copiar FC
+                        </button>
+
+                        <span className="text-xs text-slate-700">
+                          Converse com o adversário
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => setChatInfoOpen((v) => !v)}
+                          className="flex items-center justify-center w-5 h-5 rounded-full border border-slate-300 text-[10px] text-slate-600 hover:bg-slate-100"
+                          aria-label="Informações sobre como conversar com o adversário"
+                        >
+                          i
+                        </button>
+                      </div>
+
+                      {chatInfoOpen && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Mande uma mensagem. Combine horários, locais e meios de comunicação, como número telefônico.
+                        </p>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -934,7 +1002,12 @@ export default function DisputaGinasioPage() {
                   {chatMsgs.map((m) => {
                     const mine = m.from === userUid;
                     return (
-                      <div key={m.id} className={`max-w-[85%] px-3 py-2 rounded ${mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"}`}>
+                      <div
+                        key={m.id}
+                        className={`max-w-[85%] px-3 py-2 rounded ${
+                          mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"
+                        }`}
+                      >
                         <p className="text-xs">{m.text}</p>
                       </div>
                     );
