@@ -1,3 +1,4 @@
+// src/app/ginasios/[id]/page.tsx
 "use client";
 
 import type { User } from "firebase/auth";
@@ -22,8 +23,8 @@ import {
 } from "firebase/firestore";
 
 const TIPOS = [
-  "normal","fire","water","grass","electric","ice","fighting","poison","ground","flying",
-  "psychic","bug","rock","ghost","dragon","dark","steel","fairy",
+  "normal", "fire", "water", "grass", "electric", "ice", "fighting", "poison", "ground", "flying",
+  "psychic", "bug", "rock", "ghost", "dragon", "dark", "steel", "fairy",
 ];
 
 type Ginasio = {
@@ -45,6 +46,8 @@ type Disputa = {
   temporada_id?: string;
   temporada_nome?: string;
   origem?: "disputa" | "renuncia" | "3_derrotas" | "manual" | "empate";
+  createdAtMs?: number | null;
+  vencedor_uid?: string | null; // <- adicionada p/ parabéns
 };
 
 type Participante = {
@@ -75,6 +78,32 @@ type Usuario = {
   friend_code?: string;
 };
 
+// ===== utils de data =====
+function toMillis(v: any): number | null {
+  if (!v) return null;
+  if (typeof v === "number") return v;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "object" && "seconds" in v) {
+    const sec = (v as any).seconds ?? 0;
+    const ns = (v as any).nanoseconds ?? 0;
+    return sec * 1000 + Math.floor(ns / 1e6);
+  }
+  return null;
+}
+function fmtCountdown(msDiff: number): string {
+  // recebe diferença (alvo - agora)
+  const neg = msDiff < 0;
+  const abs = Math.abs(msDiff);
+  const d = Math.floor(abs / 86400000);
+  const h = Math.floor((abs % 86400000) / 3600000);
+  const m = Math.floor((abs % 3600000) / 60000);
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (h || d) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return neg ? `em: ${parts.join(" ")}` : `em ${parts.join(" ")}`;
+}
+
 export default function DisputaGinasioPage() {
   const params = useParams();
   const router = useRouter();
@@ -103,6 +132,35 @@ export default function DisputaGinasioPage() {
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
   const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
+
+  // ====== NOVO: variáveis globais (horas) ======
+  const [tempoInscricoesHoras, setTempoInscricoesHoras] = useState<number | null>(null);
+  const [tempoBatalhasHoras, setTempoBatalhasHoras] = useState<number | null>(null);
+  const [, forceTick] = useState(0); // para re-render do countdown
+  const [winnerName, setWinnerName] = useState<string | null>(null); // <- nome p/ parabéns
+
+  useEffect(() => {
+    // lê variables/global { tempo_inscricoes: number, tempo_batalhas: number } (em horas)
+    (async () => {
+      try {
+        const vSnap = await getDoc(doc(db, "variables", "global"));
+        if (vSnap.exists()) {
+          const v = vSnap.data() as any;
+          setTempoInscricoesHoras(Number(v?.tempo_inscricoes ?? 0));
+          setTempoBatalhasHoras(Number(v?.tempo_batalhas ?? 0));
+        } else {
+          // se não existir, deixa null (UI mostra aviso)
+          setTempoInscricoesHoras(null);
+          setTempoBatalhasHoras(null);
+        }
+      } catch {
+        setTempoInscricoesHoras(null);
+        setTempoBatalhasHoras(null);
+      }
+    })();
+    const t = setInterval(() => forceTick((x) => x + 1), 30000); // atualiza contagem a cada 30s
+    return () => clearInterval(t);
+  }, []);
 
   const renderTipoIcon = (tipo?: string, size = 28) => {
     if (!tipo) return null;
@@ -151,7 +209,13 @@ export default function DisputaGinasioPage() {
     const unsubG = onSnapshot(doc(db, "ginasios", ginasioId), (snap) => {
       if (!snap.exists()) return;
       const d = snap.data() as any;
-      setGinasio({ id: snap.id, nome: d.nome, tipo: d.tipo || "", lider_uid: d.lider_uid || "", liga: d.liga || d.liga_nome || "" });
+      setGinasio({
+        id: snap.id,
+        nome: d.nome,
+        tipo: d.tipo || "",
+        lider_uid: d.lider_uid || "",
+        liga: d.liga || d.liga_nome || "",
+      });
     });
 
     const qDisputa = query(
@@ -178,6 +242,8 @@ export default function DisputaGinasioPage() {
         temporada_id: dData.temporada_id || "",
         temporada_nome: dData.temporada_nome || "",
         origem: dData.origem as any,
+        createdAtMs: toMillis(dData.createdAt),
+        vencedor_uid: dData.vencedor_uid ?? null, // <- ler vencedor
       });
       setLoading(false);
     });
@@ -189,7 +255,10 @@ export default function DisputaGinasioPage() {
   useEffect(() => {
     if (!disputa) return;
 
-    const qPart = query(collection(db, "disputas_ginasio_participantes"), where("disputa_id", "==", disputa.id));
+    const qPart = query(
+      collection(db, "disputas_ginasio_participantes"),
+      where("disputa_id", "==", disputa.id)
+    );
     const unsub = onSnapshot(qPart, async (snap) => {
       const base = snap.docs
         .map((p) => {
@@ -223,9 +292,16 @@ export default function DisputaGinasioPage() {
       const list = snap.docs.map((r) => {
         const d = r.data() as any;
         return {
-          id: r.id, disputa_id: d.disputa_id, vencedor_uid: d.vencedor_uid, perdedor_uid: d.perdedor_uid,
-          tipo: d.tipo, jogador1_uid: d.jogador1_uid, jogador2_uid: d.jogador2_uid,
-          declarado_por: d.declarado_por, status: d.status || "pendente", createdAt: d.createdAt,
+          id: r.id,
+          disputa_id: d.disputa_id,
+          vencedor_uid: d.vencedor_uid,
+          perdedor_uid: d.perdedor_uid,
+          tipo: d.tipo,
+          jogador1_uid: d.jogador1_uid,
+          jogador2_uid: d.jogador2_uid,
+          declarado_por: d.declarado_por,
+          status: d.status || "pendente",
+          createdAt: d.createdAt,
         } as Resultado;
       });
       setResultados(list);
@@ -274,8 +350,12 @@ export default function DisputaGinasioPage() {
     if (disputaTravada) return;
     setSalvandoTipo(true);
 
-    const q = query(collection(db, "disputas_ginasio_participantes"), where("disputa_id", "==", disputa.id), where("usuario_uid", "==", userUid));
-    const snap = await getDocs(q);
+    const qP = query(
+      collection(db, "disputas_ginasio_participantes"),
+      where("disputa_id", "==", disputa.id),
+      where("usuario_uid", "==", userUid)
+    );
+    const snap = await getDocs(qP);
     if (snap.empty) {
       await addDoc(collection(db, "disputas_ginasio_participantes"), {
         disputa_id: disputa.id,
@@ -337,10 +417,15 @@ export default function DisputaGinasioPage() {
       if (ocupou) {
         try {
           await updateDoc(doc(db, "disputas_ginasio_participantes", meuParticipante.id), {
-            tipo_escolhido: "", invalidado: true, invalidado_motivo: "tipo_indisponivel", invalidadoEm: Date.now(),
+            tipo_escolhido: "",
+            invalidado: true,
+            invalidado_motivo: "tipo_indisponivel",
+            invalidadoEm: Date.now(),
           });
           setAvisoTipoInvalidado(`Seu tipo "${escolhido}" ficou indisponível na liga e foi removido. Escolha outro.`);
-        } catch (e) { console.error("falha ao invalidar tipo", e); }
+        } catch (e) {
+          console.error("falha ao invalidar tipo", e);
+        }
       }
     };
     invalidarSeOcupou();
@@ -363,7 +448,7 @@ export default function DisputaGinasioPage() {
   }, [participantes, resultados]);
 
   const ranking = useMemo(() => {
-    return [...participantes].sort((a, b) => ( (pontos[b.usuario_uid] || 0) - (pontos[a.usuario_uid] || 0) ));
+    return [...participantes].sort((a, b) => ((pontos[b.usuario_uid] || 0) - (pontos[a.usuario_uid] || 0)));
   }, [participantes, pontos]);
 
   // Finalização automática (apenas SUPERUSER)
@@ -379,7 +464,9 @@ export default function DisputaGinasioPage() {
         const empatadosTopo = ranking.filter((p) => (pontos[p.usuario_uid] || 0) === pTopo);
         if (empatadosTopo.length > 1) {
           await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-            empate_no_topo: true, finalizacao_aplicada: false, tentativa_finalizacao_em: Date.now(),
+            empate_no_topo: true,
+            finalizacao_aplicada: false,
+            tentativa_finalizacao_em: Date.now(),
           });
           return;
         }
@@ -389,7 +476,10 @@ export default function DisputaGinasioPage() {
         const ligaDoGinasio = ginasio.liga || disputa.liga || disputa.liga_nome || "";
 
         await updateDoc(doc(db, "ginasios", ginasio.id), {
-          lider_uid: novoLiderUid, tipo: tipoNovo, em_disputa: false, derrotas_seguidas: 0,
+          lider_uid: novoLiderUid,
+          tipo: tipoNovo,
+          em_disputa: false,
+          derrotas_seguidas: 0,
         });
 
         await addDoc(collection(db, "ginasios_liderancas"), {
@@ -407,7 +497,10 @@ export default function DisputaGinasioPage() {
         });
 
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-          finalizacao_aplicada: true, vencedor_uid: novoLiderUid, aplicado_em: Date.now(), aplicadoPorAdminUid: auth.currentUser?.uid || null,
+          finalizacao_aplicada: true,
+          vencedor_uid: novoLiderUid,
+          aplicado_em: Date.now(),
+          aplicadoPorAdminUid: auth.currentUser?.uid || null,
         });
       } catch (e) {
         console.warn("Falha ao aplicar finalização da disputa:", e);
@@ -463,7 +556,7 @@ export default function DisputaGinasioPage() {
         const du = u.data() as any;
         other = { id: otherUid, nome: du.nome || du.email || otherUid, email: du.email, friend_code: du.friend_code };
       }
-    } catch {}
+    } catch { }
     setChatOther(other);
 
     const msgsQ = query(collection(db, "desafios_ginasio", desafioId, "mensagens"), orderBy("createdAt", "asc"));
@@ -518,11 +611,11 @@ export default function DisputaGinasioPage() {
   const pendentesParaMim =
     userUid
       ? resultados.filter((r) => {
-          if (r.status !== "pendente") return false;
-          if (r.declarado_por === userUid) return false;
-          if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
-          return r.perdedor_uid === userUid;
-        })
+        if (r.status !== "pendente") return false;
+        if (r.declarado_por === userUid) return false;
+        if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
+        return r.perdedor_uid === userUid;
+      })
       : [];
 
   const participantesOrdenados = useMemo(() => {
@@ -535,6 +628,44 @@ export default function DisputaGinasioPage() {
   const friendLinks = fc ? buildPoGoFriendLinks(fc) : null;
   const deepLink = fc ? (isAndroid ? friendLinks!.androidIntent : friendLinks!.native) : null;
   const qrLink = fc ? qrUrl(friendLinks!.native) : null;
+
+  // ====== NOVO: cálculos de início/fim ======
+  const battleStartMs =
+    disputa?.createdAtMs != null && tempoInscricoesHoras != null
+      ? disputa.createdAtMs + tempoInscricoesHoras * 3600000
+      : null;
+
+  const disputeEndMs =
+    battleStartMs != null && tempoBatalhasHoras != null
+      ? battleStartMs + tempoBatalhasHoras * 3600000
+      : null;
+
+  // countdowns só nos status corretos
+  const showStartCountdown =
+    disputa?.status === "inscricoes" && battleStartMs != null;
+  const showEndCountdown =
+    (disputa?.status === "inscricoes" || disputa?.status === "batalhando") && disputeEndMs != null;
+
+  // carregar nome do vencedor quando finalizado
+  useEffect(() => {
+    const loadWinner = async () => {
+      if (!disputa || disputa.status !== "finalizado") { setWinnerName(null); return; }
+      const uid = disputa.vencedor_uid || ginasio?.lider_uid || null;
+      if (!uid) { setWinnerName(null); return; }
+      try {
+        const u = await getDoc(doc(db, "usuarios", uid));
+        if (u.exists()) {
+          const d = u.data() as any;
+          setWinnerName(d.nome || d.email || uid);
+        } else {
+          setWinnerName(uid);
+        }
+      } catch {
+        setWinnerName(uid);
+      }
+    };
+    loadWinner();
+  }, [disputa?.status, disputa?.vencedor_uid, ginasio?.lider_uid]);
 
   if (loading) return <p className="p-8">Carregando disputa...</p>;
   if (!ginasio) return <p className="p-8">Ginásio não encontrado.</p>;
@@ -571,6 +702,45 @@ export default function DisputaGinasioPage() {
         )}
       </p>
 
+      {/* NOVO: bloco de prazos ou parabéns, sem remover nada do resto */}
+      {disputa.status !== "finalizado" ? (
+        <div className="bg-indigo-50 border border-indigo-200 rounded p-3 text-sm text-indigo-900">
+          {tempoInscricoesHoras == null || tempoBatalhasHoras == null ? (
+            <p>
+              Configure <b>variables/global</b> com números (horas):{" "}
+              <code>tempo_inscricoes</code> e <code>tempo_batalhas</code>.
+            </p>
+          ) : disputa.createdAtMs == null ? (
+            <p>Sem <code>createdAt</code> na disputa — não dá para calcular os prazos.</p>
+          ) : (
+            <>
+              {showStartCountdown && (
+                <p>
+                  Fase de batalhas começa {fmtCountdown((battleStartMs ?? 0) - Date.now())}{" "}
+                  <span className="text-xs text-indigo-700">
+                    (inscrições: {tempoInscricoesHoras} horas de inscrições)
+                  </span>
+                </p>
+              )}
+              {showEndCountdown && (
+                <p>
+                  Disputa pelo ginásio termina {fmtCountdown((disputeEndMs ?? 0) - Date.now())}{" "}
+                  <span className="text-xs text-indigo-700">
+                    (batalhas: {tempoBatalhasHoras} horas de batalhas)
+                  </span>
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="bg-green-50 border border-green-200 rounded p-3 text-green-800">
+          <p>
+            🎉 Parabéns <b>{winnerName || "ao novo líder"}</b>! Você é o novo líder do ginásio <b>{ginasio.nome}</b>.
+          </p>
+        </div>
+      )}
+
       {avisoTipoInvalidado && (
         <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
           {avisoTipoInvalidado}
@@ -586,9 +756,8 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
-                meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
-              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
               <span className="capitalize">{t}</span>
@@ -728,7 +897,9 @@ export default function DisputaGinasioPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                <p className="text-sm text-slate-600">Converse com o adversário.</p>
+                <p className="text-sm text-red-600">
+                  Converse com o adversário (Mande uma mensagem. Combine horários, locais e meios de comunicação, como número telefônico).
+                </p>
               </div>
               <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={() => { setChatOpen(false); setChatDesafioId(null); }}>
                 Fechar
@@ -780,7 +951,11 @@ export default function DisputaGinasioPage() {
                 className="flex-1 border rounded px-3 py-2 text-sm"
                 placeholder="Escreva uma mensagem..."
               />
-              <button onClick={async () => { await sendChatMessage(); }} className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded" type="button">
+              <button
+                onClick={async () => { await sendChatMessage(); }}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded"
+                type="button"
+              >
                 Enviar
               </button>
             </div>
