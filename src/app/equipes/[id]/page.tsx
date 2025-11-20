@@ -23,7 +23,8 @@ type Usuario = {
   friend_code?: string;
   pontosPresenca?: number;
   pp_consumidos?: number;              // campo oficial
-  pontosPresencaConsumidos?: number;   // alias antigo (leitura apenas)
+  pontosPresencaConsumidos?: number;   // alias antigo (apenas leitura)
+  pp_batonPass_uses?: number;          // quantas vezes já usou "Passar Bastão"
 };
 
 type Participacao = { id: string; liga_nome?: string; pokemon: { nome: string }[] };
@@ -72,6 +73,15 @@ function buildFormSlug(displayName: string): string | null {
   const base = slugifyBase(m[1]);
   const token = suffixToToken(m[2]);
   return `${base}-${token}`;
+}
+
+// custo dinâmico do Passar Bastão
+function computeBatonPassCost(base: number, up: number, uses: number) {
+  const b = Number.isFinite(base) ? base : 5;
+  const u = Number.isFinite(up) ? up : 0;
+  const n = uses < 0 ? 0 : uses;
+  const level = Math.min(n, 2); // até a 3ª vez (0, 1, 2)
+  return b + u * level;
 }
 
 // componente de miniatura com resolução automática (forma → id → sprite)
@@ -163,6 +173,32 @@ export default function EquipesPage() {
   const [ligaSelecionada, setLigaSelecionada] = useState<string>("");
 
   const [idByName, setIdByName] = useState<Record<string, number>>({});
+
+  // configuração do custo dinâmico
+  const [batonBaseCost, setBatonBaseCost] = useState<number>(5);
+  const [batonUpCost, setBatonUpCost] = useState<number>(0);
+
+  // carrega config de custo (global) do Firestore
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const baseSnap = await getDoc(doc(db, "consumoPP", "PPcustoBatonPass"));
+        if (baseSnap.exists()) {
+          const v = (baseSnap.data() as any).valor;
+          if (typeof v === "number") setBatonBaseCost(v);
+        }
+
+        const upSnap = await getDoc(doc(db, "consumoPP", "PPupBatonPass"));
+        if (upSnap.exists()) {
+          const v = (upSnap.data() as any).valor;
+          if (typeof v === "number") setBatonUpCost(v);
+        }
+      } catch (e) {
+        console.error("Erro ao carregar config de consumoPP", e);
+      }
+    };
+    loadConfig();
+  }, []);
 
   // auth + carga principal
   useEffect(() => {
@@ -257,6 +293,9 @@ export default function EquipesPage() {
     0) as number;
   const ppDisponiveis = Math.max(0, pontosPresenca - ppConsumidos);
 
+  const batonUses = ((usuario as any)?.pp_batonPass_uses ?? 0) as number;
+  const batonPassCost = computeBatonPassCost(batonBaseCost, batonUpCost, batonUses);
+
   async function handlePassarBastao(
     participacaoId: string,
     pokemonIndex: number,
@@ -264,18 +303,26 @@ export default function EquipesPage() {
   ) {
     if (!isOwnProfile) return;
 
-    const ok = window.confirm(
-      `Remover ${pokemonNome} da equipe consumindo 5 Pontos de Presença?\n\n` +
-        `Você tem atualmente ${ppDisponiveis} PPs disponíveis (valor pode ter mudado em outra tela).`
-    );
-    if (!ok) return;
-
     try {
-      // 1) recarrega pontos do usuário direto do Firestore
       const userRef = doc(db, "usuarios", id);
-      const userSnap = await getDoc(userRef);
+      const pokQuery = query(
+        collection(db, "pokemon"),
+        where("participacao_id", "==", participacaoId),
+        where("nome", "==", pokemonNome)
+      );
+
+      const [userSnap, pokSnap] = await Promise.all([
+        getDoc(userRef),
+        getDocs(pokQuery),
+      ]);
+
       if (!userSnap.exists()) {
         alert("Usuário não encontrado no Firestore.");
+        return;
+      }
+
+      if (pokSnap.empty) {
+        alert("Pokémon não encontrado no servidor. Tente recarregar a página.");
         return;
       }
 
@@ -283,11 +330,14 @@ export default function EquipesPage() {
       const total: number = uData.pontosPresenca ?? 0;
       const consumidosAtual: number =
         (uData.pp_consumidos ?? uData.pontosPresencaConsumidos ?? 0) as number;
+      const usesAtual: number = (uData.pp_batonPass_uses ?? 0) as number;
+
+      const custo = computeBatonPassCost(batonBaseCost, batonUpCost, usesAtual);
       const saldo = total - consumidosAtual;
 
-      if (saldo < 5) {
+      if (saldo < custo) {
         alert(
-          `Você tem apenas ${saldo} Pontos de Presença. São necessários 5 PPs para passar o bastão.`
+          `Você tem apenas ${saldo} Pontos de Presença. São necessários ${custo} PPs para passar o bastão.`
         );
         // sincroniza estado local com o servidor
         setUsuario((prev) =>
@@ -296,50 +346,40 @@ export default function EquipesPage() {
                 ...prev,
                 pontosPresenca: total,
                 pp_consumidos: consumidosAtual,
+                pp_batonPass_uses: usesAtual,
               }
             : prev
         );
         return;
       }
 
-      // 2) pega doc do Pokémon na participação
-      const pokSnap = await getDocs(
-        query(
-          collection(db, "pokemon"),
-          where("participacao_id", "==", participacaoId),
-          where("nome", "==", pokemonNome)
-        )
+      const ok = window.confirm(
+        `Remover ${pokemonNome} da equipe consumindo ${custo} Pontos de Presença?\n\n` +
+          `PP disponíveis (atual no servidor): ${saldo}\n` +
+          `Após esta ação, o custo pode aumentar até a 3ª utilização.`
       );
+      if (!ok) return;
 
-      if (pokSnap.empty) {
-        alert("Pokémon não encontrado no servidor. Tente recarregar a página.");
-        return;
-      }
+      const pokemonRef = pokSnap.docs[0].ref;
 
-      const pokemonDoc = pokSnap.docs[0];
-      const pokemonRef = pokemonDoc.ref;
-
-      // 3) batch: consome 5 PPs + deleta o Pokémon
       const batch = writeBatch(db);
-
-      // campo oficial: pp_consumidos
       batch.update(userRef, {
-        pp_consumidos: increment(5),
+        pp_consumidos: increment(custo),
+        pp_batonPass_uses: increment(1),
       });
-
       batch.delete(pokemonRef);
-
       await batch.commit();
 
-      const novoConsumido = consumidosAtual + 5;
+      const novoConsumidos = consumidosAtual + custo;
+      const novoUses = usesAtual + 1;
 
-      // 4) atualiza estado local
       setUsuario((prev) =>
         prev
           ? {
               ...prev,
               pontosPresenca: total,
-              pp_consumidos: novoConsumido,
+              pp_consumidos: novoConsumidos,
+              pp_batonPass_uses: novoUses,
             }
           : prev
       );
@@ -355,7 +395,7 @@ export default function EquipesPage() {
         )
       );
 
-      alert("Pokémon removido com sucesso. 5 Pontos de Presença foram consumidos.");
+      alert(`Pokémon removido com sucesso. ${custo} Pontos de Presença foram consumidos.`);
     } catch (e: any) {
       console.error(e);
       alert("Não foi possível passar o bastão. Tente novamente em alguns instantes.");
@@ -395,65 +435,69 @@ export default function EquipesPage() {
             PPs disponíveis: <strong>{ppDisponiveis}</strong>
           </p>
           <p className="mt-1 text-xs text-gray-600">
-            Cada “Passar Bastão” consome 5 Pontos de Presença.
+            Custo atual do “Passar Bastão”: <strong>{batonPassCost} PP</strong> (pode
+            aumentar até a 3ª vez que você usar).
           </p>
         </div>
       )}
 
       {participacoesDaLiga.length > 0 ? (
-        participacoesDaLiga.map((p) => (
-          <div key={p.id} className="mb-6 border-t pt-4">
-            <h2 className="text-lg font-semibold text-blue-700">
-              Liga: {p.liga_nome || "Desconhecida"}
-            </h2>
+        participacoesDaLiga.map((p) => {
+          const canPassarGlobal =
+            isOwnProfile && ppDisponiveis >= batonPassCost && batonPassCost > 0;
 
-            {p.pokemon && p.pokemon.length > 0 ? (
-              <ul className="mt-2 space-y-2">
-                {p.pokemon.map((poke, j) => {
-                  const baseId = idByName[poke.nome.replace(/\s*\(.+\)\s*$/, "")];
-                  const canPassar =
-                    isOwnProfile && ppDisponiveis >= 5 && p.pokemon.length > 0;
+          return (
+            <div key={p.id} className="mb-6 border-t pt-4">
+              <h2 className="text-lg font-semibold text-blue-700">
+                Liga: {p.liga_nome || "Desconhecida"}
+              </h2>
 
-                  return (
-                    <li
-                      key={j}
-                      className="flex items-center justify-between gap-2 text-gray-700 bg-gray-50 rounded px-2 py-1"
-                    >
-                      <div className="flex items-center gap-2">
-                        <PokemonThumb displayName={poke.nome} baseId={baseId} size={32} />
-                        <span>{poke.nome}</span>
-                      </div>
+              {p.pokemon && p.pokemon.length > 0 ? (
+                <ul className="mt-2 space-y-2">
+                  {p.pokemon.map((poke, j) => {
+                    const baseId = idByName[poke.nome.replace(/\s*\(.+\)\s*$/, "")];
 
-                      {isOwnProfile && (
-                        <button
-                          type="button"
-                          onClick={() => handlePassarBastao(p.id, j, poke.nome)}
-                          disabled={!canPassar}
-                          className={`text-xs px-3 py-1 rounded font-semibold ${
-                            canPassar
-                              ? "bg-red-600 text-white hover:bg-red-700"
-                              : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                          }`}
-                          title={
-                            canPassar
-                              ? "Remover este Pokémon consumindo 5 Pontos de Presença"
-                              : "Você precisa de pelo menos 5 Pontos de Presença disponíveis"
-                          }
-                        >
-                          Passar Bastão (-5 PP)
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="text-gray-500 text-sm mt-2">
-                Nenhum Pokémon salvo para essa liga.
-              </p>
-            )}
-          </div>
-        ))
+                    return (
+                      <li
+                        key={j}
+                        className="flex items-center justify-between gap-2 text-gray-700 bg-gray-50 rounded px-2 py-1"
+                      >
+                        <div className="flex items-center gap-2">
+                          <PokemonThumb displayName={poke.nome} baseId={baseId} size={32} />
+                          <span>{poke.nome}</span>
+                        </div>
+
+                        {isOwnProfile && (
+                          <button
+                            type="button"
+                            onClick={() => handlePassarBastao(p.id, j, poke.nome)}
+                            disabled={!canPassarGlobal || p.pokemon.length === 0}
+                            className={`text-xs px-3 py-1 rounded font-semibold ${
+                              canPassarGlobal && p.pokemon.length > 0
+                                ? "bg-red-600 text-white hover:bg-red-700"
+                                : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                            }`}
+                            title={
+                              canPassarGlobal
+                                ? `Remover este Pokémon consumindo ${batonPassCost} Pontos de Presença`
+                                : "Você não tem Pontos de Presença suficientes para usar Passar Bastão"
+                            }
+                          >
+                            Passar Bastão (-{batonPassCost} PP)
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-gray-500 text-sm mt-2">
+                  Nenhum Pokémon salvo para essa liga.
+                </p>
+              )}
+            </div>
+          );
+        })
       ) : (
         <p className="text-gray-600 mb-4">
           Nenhuma equipe registrada nessa liga ainda.

@@ -76,6 +76,15 @@ function officialArtworkById(id: number) {
   return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
 }
 
+// custo dinâmico do Passar Bastão
+function computeBatonPassCost(base: number, up: number, uses: number) {
+  const b = Number.isFinite(base) ? base : 5;
+  const u = Number.isFinite(up) ? up : 0;
+  const n = uses < 0 ? 0 : uses;
+  const level = Math.min(n, 2); // até a 3ª vez (0, 1, 2)
+  return b + u * level;
+}
+
 // Miniatura que resolve forma → id real; fallback para artwork/base
 function PokemonMini({
   displayName,
@@ -159,9 +168,22 @@ export default function PageContent() {
   // PPs
   const [ppGanhos, setPpGanhos] = useState<number>(0);
   const [ppConsumidos, setPpConsumidos] = useState<number>(0);
+
+  // uso do Passar Bastão por usuário
+  const [batonUses, setBatonUses] = useState<number>(0);
+
+  // config global do custo
+  const [batonBaseCost, setBatonBaseCost] = useState<number>(5);
+  const [batonUpCost, setBatonUpCost] = useState<number>(0);
+
   const ppDisponiveis = useMemo(
     () => Math.max(0, ppGanhos - ppConsumidos),
     [ppGanhos, ppConsumidos]
+  );
+
+  const batonPassCost = useMemo(
+    () => computeBatonPassCost(batonBaseCost, batonUpCost, batonUses),
+    [batonBaseCost, batonUpCost, batonUses]
   );
 
   // controle pra saber quando terminou de carregar Firestore + draft
@@ -286,6 +308,29 @@ export default function PageContent() {
     fetchPokemonList();
   }, []);
 
+  // 3b. carrega configuração global de custo
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const baseSnap = await getDoc(doc(db, "consumoPP", "PPcustoBatonPass"));
+        if (baseSnap.exists()) {
+          const v = (baseSnap.data() as any).valor;
+          if (typeof v === "number") setBatonBaseCost(v);
+        }
+
+        const upSnap = await getDoc(doc(db, "consumoPP", "PPupBatonPass"));
+        if (upSnap.exists()) {
+          const v = (upSnap.data() as any).valor;
+          if (typeof v === "number") setBatonUpCost(v);
+        }
+      } catch (e) {
+        console.error("Erro ao carregar config de consumoPP", e);
+      }
+    };
+
+    loadConfig();
+  }, []);
+
   // 4a. carregar equipe já salva + rascunho local (se existir) + guardar participação
   useEffect(() => {
     const fetchParticipacaoExistente = async () => {
@@ -365,7 +410,7 @@ export default function PageContent() {
     fetchParticipacaoExistente();
   }, [userId, liga]);
 
-  // 4b. carregar PPs do usuário (ganhos/consumidos)
+  // 4b. carregar PPs do usuário (ganhos/consumidos + usos de Passar Bastão)
   useEffect(() => {
     const loadPP = async () => {
       if (!userId) return;
@@ -378,13 +423,16 @@ export default function PageContent() {
           setPpConsumidos(
             (data.pp_consumidos ?? data.pontosPresencaConsumidos ?? 0) as number
           );
+          setBatonUses((data.pp_batonPass_uses ?? 0) as number);
         } else {
           setPpGanhos(0);
           setPpConsumidos(0);
+          setBatonUses(0);
         }
       } catch {
         setPpGanhos(0);
         setPpConsumidos(0);
+        setBatonUses(0);
       }
     };
 
@@ -407,28 +455,35 @@ export default function PageContent() {
     setSelectedPokemons((prev) => prev.filter((p) => p !== name));
   };
 
-  // PASSAR BASTÃO: remover 1 Pokémon já registrado, gastando 5 PPs
+  // PASSAR BASTÃO: remover 1 Pokémon já registrado, gastando PPs dinâmicos
   const handlePassarBastao = async (name: string) => {
     if (!userId || !participacaoId) {
       alert("Não consegui localizar sua participação. Atualize a página.");
       return;
     }
 
-    const ok = window.confirm(
-      `Passar o bastão deste Pokémon vai consumir 5 pontos de presença.\n\n` +
-        `Pokémon: ${name}\n` +
-        `PP exibidos aqui: ${ppDisponiveis} (podem ter mudado em outra tela)\n\n` +
-        `Confirmar mesmo assim?`
-    );
-    if (!ok) return;
-
     setLoading(true);
     try {
-      // 1) recarrega PPs do usuário do Firestore pra evitar reutilizar saldo de outra tela
+      // recarrega PPs e usos do servidor
       const userRef = doc(db, "usuarios", userId);
-      const userSnap = await getDoc(userRef);
+      const pokQuery = query(
+        collection(db, "pokemon"),
+        where("participacao_id", "==", participacaoId),
+        where("nome", "==", name)
+      );
+
+      const [userSnap, pokSnap] = await Promise.all([
+        getDoc(userRef),
+        getDocs(pokQuery),
+      ]);
+
       if (!userSnap.exists()) {
         alert("Usuário não encontrado ao atualizar PPs.");
+        return;
+      }
+
+      if (pokSnap.empty) {
+        alert("Não encontrei esse Pokémon na sua equipe. Atualize a página.");
         return;
       }
 
@@ -436,47 +491,46 @@ export default function PageContent() {
       const total: number = uData.pontosPresenca ?? 0;
       const consumidosAtual: number =
         (uData.pp_consumidos ?? uData.pontosPresencaConsumidos ?? 0) as number;
+      const usesAtual: number = (uData.pp_batonPass_uses ?? 0) as number;
+
+      const custo = computeBatonPassCost(batonBaseCost, batonUpCost, usesAtual);
       const saldo = total - consumidosAtual;
 
-      if (saldo < 5) {
+      if (saldo < custo) {
         alert(
-          `Você tem apenas ${saldo} Pontos de Presença. São necessários 5 PPs para passar o bastão.`
+          `Você tem apenas ${saldo} Pontos de Presença. São necessários ${custo} PP para passar o bastão.`
         );
-        // sincroniza os estados locais
         setPpGanhos(total);
         setPpConsumidos(consumidosAtual);
+        setBatonUses(usesAtual);
         return;
       }
 
-      // 2) apaga 1 doc de pokemon correspondente à participação/nome
-      const pokSnap = await getDocs(
-        query(
-          collection(db, "pokemon"),
-          where("participacao_id", "==", participacaoId),
-          where("nome", "==", name)
-        )
+      const ok = window.confirm(
+        `Passar o bastão deste Pokémon vai consumir ${custo} pontos de presença.\n\n` +
+          `Pokémon: ${name}\n` +
+          `PP disponíveis (no servidor): ${saldo}\n\n` +
+          `Confirmar mesmo assim?`
       );
-
-      if (pokSnap.empty) {
-        alert("Não encontrei esse Pokémon na sua equipe. Atualize a página.");
-        return;
-      }
+      if (!ok) return;
 
       const pokemonRef = pokSnap.docs[0].ref;
 
-      // 3) debita 5 PPs (pp_consumidos só cresce) + deleta o Pokémon
+      // 3) debita PPs + incrementa uso + apaga o Pokémon
       await Promise.all([
         updateDoc(userRef, {
-          pp_consumidos: increment(5),
+          pp_consumidos: increment(custo),
+          pp_batonPass_uses: increment(1),
         }),
         deleteDoc(pokemonRef),
       ]);
 
-      const novoConsumido = consumidosAtual + 5;
+      const novoConsumidos = consumidosAtual + custo;
+      const novoUses = usesAtual + 1;
 
-      // 4) atualiza estados locais com base no que o servidor tinha + débito
       setPpGanhos(total);
-      setPpConsumidos(novoConsumido);
+      setPpConsumidos(novoConsumidos);
+      setBatonUses(novoUses);
 
       const novosSalvos = savedPokemons.filter((p) => p !== name);
       const novosSelecionados = selectedPokemons.filter((p) => p !== name);
@@ -605,8 +659,12 @@ export default function PageContent() {
 
           <div className="mt-2 text-xs text-gray-700 bg-blue-50 border border-blue-100 rounded p-2">
             <p>
-              Pontos de Presença(PP) disponíveis:{" "}
+              Pontos de Presença (PP) disponíveis:{" "}
               <strong>{ppDisponiveis}</strong>
+            </p>
+            <p>
+              Custo atual do Passar Bastão:{" "}
+              <strong>{batonPassCost} PP</strong>
             </p>
           </div>
         </div>
@@ -616,7 +674,11 @@ export default function PageContent() {
             <p>• Você pode registrar até <strong>6 Pokémon</strong> por liga/temporada.</p>
             <p>• Pode adicionar aos poucos, um por vez.</p>
             <p>• Pokémon já registrados não podem ser removidos de graça.</p>
-            <p>• Para trocar um Pokémon já registrado, use <strong>Passar Bastão</strong>, que consome <strong>5 PPs</strong> e libera a vaga.</p>
+            <p>
+              • Para trocar um Pokémon já registrado, use <strong>Passar Bastão</strong>, que
+              consome <strong>PP</strong> de acordo com o número de vezes que você já usou
+              (aumenta até a 3ª vez).
+            </p>
             <p>• Só os Pokémon registrados ficam válidos para batalhas oficiais.</p>
             <p>• O jogo só aceita Pokémon com poder de combate limitado para a liga Great (1500), Ultra (2500) ou Master (ilimitado).</p>
             <p>• Este campeonato aceita mega evolução, mantendo o limite de poder de combate da liga {liga}.</p>
@@ -669,7 +731,7 @@ export default function PageContent() {
                         disabled={loading}
                         className="text-purple-700 font-bold hover:underline text-xs mt-1 disabled:opacity-50"
                       >
-                        Passar Bastão (-5 PP)
+                        Passar Bastão (-{batonPassCost} PP)
                       </button>
                     )}
                   </li>
