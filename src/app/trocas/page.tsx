@@ -39,6 +39,10 @@ type Oferta = {
   quero: string[]
   oferecoDetalhes?: Record<string, DetalhePokemon>
   queroDetalhes?: Record<string, DetalhePokemon>
+  // NOVO: filtro por localização
+  alcanceKm?: number | null
+  encontroLat?: number | null
+  encontroLng?: number | null
 }
 
 type Match = {
@@ -62,6 +66,44 @@ type ChatMsg = {
   from: string
   text: string
   createdAt?: any
+}
+
+// NOVO: tipo auxiliar para cálculo de distância
+type LocInfo = {
+  alcanceKm?: number | null
+  encontroLat?: number | null
+  encontroLng?: number | null
+}
+
+// NOVO: distância em km entre duas coordenadas (haversine)
+function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371 // km
+  const toRad = (v: number) => (v * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+// NOVO: verifica se A e B estão dentro do raio um do outro
+function isWithinMutualRange(a: LocInfo, b: LocInfo): boolean {
+  const latA = a.encontroLat
+  const lngA = a.encontroLng
+  const latB = b.encontroLat
+  const lngB = b.encontroLng
+
+  // Se faltar coordenada em qualquer um, não restringe por distância (compatibilidade com ofertas antigas)
+  if (latA == null || lngA == null || latB == null || lngB == null) return true
+
+  const dist = distanceKm(latA, lngA, latB, lngB)
+
+  const rA = a.alcanceKm == null ? Infinity : a.alcanceKm
+  const rB = b.alcanceKm == null ? Infinity : b.alcanceKm
+
+  return dist <= rA && dist <= rB
 }
 
 export default function TrocasPage() {
@@ -100,6 +142,13 @@ export default function TrocasPage() {
   const chatInputRef = useRef<HTMLInputElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
+
+  // NOVO: estado para alcance e ponto de encontro
+  const [alcanceKm, setAlcanceKm] = useState<number | null>(null) // null = ilimitado
+  const [encontroLat, setEncontroLat] = useState<number | null>(null)
+  const [encontroLng, setEncontroLng] = useState<number | null>(null)
+  const [geolocLoading, setGeolocLoading] = useState(false)
+  const [geolocError, setGeolocError] = useState<string | null>(null)
 
   const renderPokemonChip = (nome: string, det?: DetalhePokemon, extraClass = '') => (
     <span
@@ -254,6 +303,9 @@ export default function TrocasPage() {
         quero: data.quero || [],
         oferecoDetalhes: data.oferecoDetalhes || {},
         queroDetalhes: data.queroDetalhes || {},
+        alcanceKm: typeof data.alcanceKm === 'number' ? data.alcanceKm : null,
+        encontroLat: typeof data.encontroLat === 'number' ? data.encontroLat : null,
+        encontroLng: typeof data.encontroLng === 'number' ? data.encontroLng : null,
       }
       setMinhaOferta(mine)
       setOfereco(mine.ofereco)
@@ -261,6 +313,9 @@ export default function TrocasPage() {
       setOferecoDetalhes(mine.oferecoDetalhes || {})
       setQueroDetalhes(mine.queroDetalhes || {})
       setChatMyFC((mine.friendCode as string) || null)
+      setAlcanceKm(mine.alcanceKm ?? null)
+      setEncontroLat(mine.encontroLat ?? null)
+      setEncontroLng(mine.encontroLng ?? null)
     } else {
       setMinhaOferta(null)
       setOfereco([])
@@ -268,6 +323,9 @@ export default function TrocasPage() {
       setOferecoDetalhes({})
       setQueroDetalhes({})
       setChatMyFC(null)
+      setAlcanceKm(null)
+      setEncontroLat(null)
+      setEncontroLng(null)
     }
 
     const todasSnap = await getDocs(collection(db, 'trocas_ofertas'))
@@ -297,6 +355,9 @@ export default function TrocasPage() {
         quero: data.quero || [],
         oferecoDetalhes: data.oferecoDetalhes || {},
         queroDetalhes: data.queroDetalhes || {},
+        alcanceKm: typeof data.alcanceKm === 'number' ? data.alcanceKm : null,
+        encontroLat: typeof data.encontroLat === 'number' ? data.encontroLat : null,
+        encontroLng: typeof data.encontroLng === 'number' ? data.encontroLng : null,
       })
     }
     setOutrasOfertas(outrasTemp)
@@ -365,14 +426,35 @@ export default function TrocasPage() {
     return outrasOfertas.filter((of) => {
       const eleTemQueEuQuero = of.ofereco?.some((p) => minhaOferta.quero?.includes(p))
       const eleQuerQueEuTenho = minhaOferta.ofereco?.some((p) => of.quero?.includes(p))
-      return !!eleTemQueEuQuero && !!eleQuerQueEuTenho
+
+      const dentroDoAlcance = isWithinMutualRange(
+        {
+          alcanceKm,
+          encontroLat,
+          encontroLng,
+        },
+        of
+      )
+
+      return !!eleTemQueEuQuero && !!eleQuerQueEuTenho && dentroDoAlcance
     })
-  }, [outrasOfertas, minhaOferta])
+  }, [outrasOfertas, minhaOferta, alcanceKm, encontroLat, encontroLng])
 
   const ofertasPorNecessidade = useMemo(() => {
     if (!minhaOferta) return []
-    return outrasOfertas.filter((of) => of.ofereco?.some((p) => minhaOferta.quero?.includes(p)))
-  }, [outrasOfertas, minhaOferta])
+    return outrasOfertas.filter((of) => {
+      const eleTemQueEuQuero = of.ofereco?.some((p) => minhaOferta.quero?.includes(p))
+      const dentroDoAlcance = isWithinMutualRange(
+        {
+          alcanceKm,
+          encontroLat,
+          encontroLng,
+        },
+        of
+      )
+      return !!eleTemQueEuQuero && dentroDoAlcance
+    })
+  }, [outrasOfertas, minhaOferta, alcanceKm, encontroLat, encontroLng])
 
   const handleOferecoChange = (lista: string[]) => {
     setOfereco(lista)
@@ -402,6 +484,27 @@ export default function TrocasPage() {
     })
   }
 
+  // NOVO: pegar localização atual
+  function handleUseCurrentLocation() {
+    if (!navigator.geolocation) {
+      setGeolocError('Seu navegador não permite pegar a localização automática.')
+      return
+    }
+    setGeolocLoading(true)
+    setGeolocError(null)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setEncontroLat(pos.coords.latitude)
+        setEncontroLng(pos.coords.longitude)
+        setGeolocLoading(false)
+      },
+      () => {
+        setGeolocError('Não foi possível obter sua localização.')
+        setGeolocLoading(false)
+      }
+    )
+  }
+
   async function salvarOferta() {
     if (!user) return
 
@@ -422,6 +525,9 @@ export default function TrocasPage() {
       quero,
       oferecoDetalhes,
       queroDetalhes,
+      alcanceKm,
+      encontroLat,
+      encontroLng,
       updatedAt: serverTimestamp(),
     }
 
@@ -453,7 +559,19 @@ export default function TrocasPage() {
       if (o1 && o2) {
         const a = (o1.ofereco || []).some((p: string) => (o2.quero || []).includes(p))
         const b = (o2.ofereco || []).some((p: string) => (o1.quero || []).includes(p))
-        aindaBate = a && b
+        const geoOk = isWithinMutualRange(
+          {
+            alcanceKm: typeof o1.alcanceKm === 'number' ? o1.alcanceKm : null,
+            encontroLat: typeof o1.encontroLat === 'number' ? o1.encontroLat : null,
+            encontroLng: typeof o1.encontroLng === 'number' ? o1.encontroLng : null,
+          },
+          {
+            alcanceKm: typeof o2.alcanceKm === 'number' ? o2.alcanceKm : null,
+            encontroLat: typeof o2.encontroLat === 'number' ? o2.encontroLat : null,
+            encontroLng: typeof o2.encontroLng === 'number' ? o2.encontroLng : null,
+          }
+        )
+        aindaBate = a && b && geoOk
       } else {
         aindaBate = false
       }
@@ -492,19 +610,33 @@ export default function TrocasPage() {
       const reciproco = !snap.empty
 
       if (reciproco) {
-        const matchRef = await addDoc(collection(db, 'trocas_matches'), {
-          users: [user.uid, oferta.userId],
-          oferta1Id: minhaOferta ? minhaOferta.id : null,
-          oferta2Id: oferta.id,
-          createdAt: serverTimestamp(),
-          invalid: false,
-          seededBy: user.uid,
-        })
+        // NOVO: checar raio dos dois antes de criar match
+        const geoOk = isWithinMutualRange(
+          {
+            alcanceKm,
+            encontroLat,
+            encontroLng,
+          },
+          oferta
+        )
 
-        await seedFilterMessage(matchRef.id)
+        if (!geoOk) {
+          alert('Este jogador está fora do seu raio de alcance configurado.')
+        } else {
+          const matchRef = await addDoc(collection(db, 'trocas_matches'), {
+            users: [user.uid, oferta.userId],
+            oferta1Id: minhaOferta ? minhaOferta.id : null,
+            oferta2Id: oferta.id,
+            createdAt: serverTimestamp(),
+            invalid: false,
+            seededBy: user.uid,
+          })
 
-        await carregarTudo(user.uid)
-        openChatByMatchId(matchRef.id)
+          await seedFilterMessage(matchRef.id)
+
+          await carregarTudo(user.uid)
+          openChatByMatchId(matchRef.id)
+        }
       }
     } else {
       await updateDoc(doc(db, 'trocas_swipes', jaCurti.id), {
@@ -624,7 +756,6 @@ export default function TrocasPage() {
         return { id: d.id, from: x.from, text: x.text, createdAt: x.createdAt }
       })
       setChatMsgs(arr)
-      // foco e rolagem
       setTimeout(() => {
         chatInputRef.current?.focus()
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -877,6 +1008,89 @@ export default function TrocasPage() {
             )}
           </div>
 
+          {/* NOVO: Ponto de encontro e alcance */}
+          <div className="border rounded-md p-3 bg-slate-50 mt-2 flex flex-col gap-3">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Ponto de encontro</p>
+              <p className="text-xs text-slate-500">
+                Usado para filtrar trocas presenciais por distância. Você pode usar sua localização atual
+                ou digitar as coordenadas manualmente.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleUseCurrentLocation}
+                className="text-xs px-3 py-1 rounded bg-slate-800 text-white"
+                disabled={geolocLoading}
+              >
+                {geolocLoading ? 'Buscando localização...' : 'Usar localização atual'}
+              </button>
+              {geolocError && <span className="text-xs text-red-500">{geolocError}</span>}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                step="0.000001"
+                value={encontroLat ?? ''}
+                onChange={(e) =>
+                  setEncontroLat(e.target.value === '' ? null : parseFloat(e.target.value))
+                }
+                className="border rounded px-2 py-1 text-xs"
+                placeholder="Latitude (ex.: -22.9100)"
+              />
+              <input
+                type="number"
+                step="0.000001"
+                value={encontroLng ?? ''}
+                onChange={(e) =>
+                  setEncontroLng(e.target.value === '' ? null : parseFloat(e.target.value))
+                }
+                className="border rounded px-2 py-1 text-xs"
+                placeholder="Longitude (ex.: -43.5600)"
+              />
+            </div>
+
+            <p className="text-xs text-slate-500">
+              {encontroLat != null && encontroLng != null
+                ? `Ponto salvo: ${encontroLat.toFixed(5)}, ${encontroLng.toFixed(5)}`
+                : 'Nenhum ponto de encontro salvo ainda.'}
+            </p>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Alcance máximo
+              </label>
+              <select
+                value={alcanceKm === null ? 'unlimited' : String(alcanceKm)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === 'unlimited') {
+                    setAlcanceKm(null)
+                  } else {
+                    const num = parseFloat(v)
+                    setAlcanceKm(Number.isNaN(num) ? null : num)
+                  }
+                }}
+                className="w-full border rounded px-2 py-1 text-sm"
+              >
+                <option value="unlimited">Ilimitado</option>
+                <option value="100">100 km</option>
+                <option value="50">50 km</option>
+                <option value="25">25 km</option>
+                <option value="10">10 km</option>
+                <option value="5">5 km</option>
+                <option value="1">1 km</option>
+                <option value="0.3">300 m</option>
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Para dar match, vocês precisam estar dentro do alcance configurado um do outro.
+              </p>
+            </div>
+          </div>
+
           <button
             onClick={salvarOferta}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-md font-semibold"
@@ -891,8 +1105,9 @@ export default function TrocasPage() {
             <h2 className="text-lg font-semibold text-slate-900">Ofertas compatíveis</h2>
             <button
               onClick={() => setMostrarPorNecessidade((v) => !v)}
-              className={`text-xs px-3 py-1 rounded ${mostrarPorNecessidade ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-800'
-                }`}
+              className={`text-xs px-3 py-1 rounded ${
+                mostrarPorNecessidade ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-800'
+              }`}
             >
               {mostrarPorNecessidade ? 'Mostrar só matches reais' : 'Ver quem tem o que quero'}
             </button>
@@ -1074,21 +1289,23 @@ export default function TrocasPage() {
                       const deep = isAndroid ? androidIntent : native
 
                       return (
-                        // grid com 2 colunas, itens alinhados no topo
                         <div className="grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1">
-                          {/* Coluna esquerda: título + ações */}
                           <div className="flex flex-col gap-1">
                             <p className="text-xs text-slate-500">Adicionar {chatOtherName}:</p>
-                            <p className="text-sm font-semibold">Código: <button
-                              onClick={() => navigator.clipboard?.writeText(chatOtherFC!)}
-                              className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                            >{chatOtherFC}</button></p>
+                            <p className="text-sm font-semibold">
+                              Código:{' '}
+                              <button
+                                onClick={() => navigator.clipboard?.writeText(chatOtherFC!)}
+                                className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                              >
+                                {chatOtherFC}
+                              </button>
+                            </p>
                             <a href={deep} className="text-blue-600 text-sm hover:underline">
                               Abrir no Pokémon GO
                             </a>
                           </div>
 
-                          {/* Coluna direita: QR sem espaço extra (block + self-start) */}
                           <Image
                             src={qrSrc(native)}
                             alt="QR para adicionar no Pokémon GO"
@@ -1199,18 +1416,18 @@ export default function TrocasPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${system
+                        className={`max-w-[85%] px-3 py-2 rounded ${
+                          system
                             ? 'self-center bg-yellow-100 text-slate-800 border'
                             : mine
-                              ? 'self-end bg-blue-600 text-white'
-                              : 'self-start bg-white border'
-                          }`}
+                            ? 'self-end bg-blue-600 text-white'
+                            : 'self-start bg-white border'
+                        }`}
                       >
                         <p className="text-xs whitespace-pre-wrap">{m.text}</p>
                       </div>
                     )
                   })}
-                  {/* sentinela para auto-scroll */}
                   <div ref={chatEndRef} />
                 </div>
               )}
