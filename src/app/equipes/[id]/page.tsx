@@ -15,7 +15,6 @@ import {
   getDocs,
   runTransaction,
   increment,
-  deleteDoc,
 } from "firebase/firestore";
 
 type Usuario = {
