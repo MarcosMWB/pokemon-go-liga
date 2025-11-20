@@ -869,14 +869,26 @@ export default function DisputaGinasioPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {meuParticipante?.tipo_escolhido && p.tipo_escolhido && (
-                    <button
-                      onClick={() => handleChamar(p.usuario_uid)}
-                      className="bg-slate-800 text-white text-xs px-3 py-1 rounded"
-                    >
-                      Chamar p/ batalha
-                    </button>
-                  )}
+                  {(() => {
+                    if (!userUid) return null;
+
+                    const jaTemPlacar = existeResultadoEntre(userUid, p.usuario_uid);
+
+                    return (
+                      p.usuario_uid !== userUid &&                    // não mostrar pra mim mesmo
+                      !!meuParticipante?.tipo_escolhido &&            // eu tenho tipo escolhido
+                      !!p.tipo_escolhido &&                           // ele tem tipo escolhido
+                      !jaTemPlacar &&                                 // ainda não existe placar entre nós
+                      (
+                        <button
+                          onClick={() => handleChamar(p.usuario_uid)}
+                          className="bg-slate-800 text-white text-xs px-3 py-1 rounded"
+                        >
+                          Chamar p/ batalha
+                        </button>
+                      )
+                    );
+                  })()}
                 </div>
               </li>
             ))}
