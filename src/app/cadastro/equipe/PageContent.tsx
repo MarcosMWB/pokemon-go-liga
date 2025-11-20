@@ -375,13 +375,14 @@ export default function PageContent() {
         if (snap.exists()) {
           const data = snap.data() as any;
           setPpGanhos(data.pontosPresenca ?? 0);
-          setPpConsumidos(data.pp_consumidos ?? 0);
+          setPpConsumidos(
+            (data.pp_consumidos ?? data.pontosPresencaConsumidos ?? 0) as number
+          );
         } else {
           setPpGanhos(0);
           setPpConsumidos(0);
         }
       } catch {
-        // se der erro, só deixa 0/0 mesmo
         setPpGanhos(0);
         setPpConsumidos(0);
       }
@@ -413,26 +414,39 @@ export default function PageContent() {
       return;
     }
 
-    if (ppDisponiveis < 5) {
-      alert("Você não tem pontos de presença suficientes. São necessários 5 PP.");
-      return;
-    }
-
     const ok = window.confirm(
       `Passar o bastão deste Pokémon vai consumir 5 pontos de presença.\n\n` +
-      `Pokémon: ${name}\n` +
-      `PP disponíveis: ${ppDisponiveis}\n\n` +
-      `Confirmar mesmo assim?`
+        `Pokémon: ${name}\n` +
+        `PP exibidos aqui: ${ppDisponiveis} (podem ter mudado em outra tela)\n\n` +
+        `Confirmar mesmo assim?`
     );
     if (!ok) return;
 
     setLoading(true);
     try {
-      // 1) debita 5 PPs (pp_consumidos só cresce)
+      // 1) recarrega PPs do usuário do Firestore pra evitar reutilizar saldo de outra tela
       const userRef = doc(db, "usuarios", userId);
-      await updateDoc(userRef, {
-        pp_consumidos: increment(5),
-      });
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) {
+        alert("Usuário não encontrado ao atualizar PPs.");
+        return;
+      }
+
+      const uData = userSnap.data() as any;
+      const total: number = uData.pontosPresenca ?? 0;
+      const consumidosAtual: number =
+        (uData.pp_consumidos ?? uData.pontosPresencaConsumidos ?? 0) as number;
+      const saldo = total - consumidosAtual;
+
+      if (saldo < 5) {
+        alert(
+          `Você tem apenas ${saldo} Pontos de Presença. São necessários 5 PPs para passar o bastão.`
+        );
+        // sincroniza os estados locais
+        setPpGanhos(total);
+        setPpConsumidos(consumidosAtual);
+        return;
+      }
 
       // 2) apaga 1 doc de pokemon correspondente à participação/nome
       const pokSnap = await getDocs(
@@ -445,17 +459,29 @@ export default function PageContent() {
 
       if (pokSnap.empty) {
         alert("Não encontrei esse Pokémon na sua equipe. Atualize a página.");
-      } else {
-        // Se por bug existir mais de um, apaga só o primeiro.
-        await deleteDoc(pokSnap.docs[0].ref);
-
-        // 3) atualiza estados locais
-        const novosSalvos = savedPokemons.filter((p) => p !== name);
-        const novosSelecionados = selectedPokemons.filter((p) => p !== name);
-        setSavedPokemons(novosSalvos);
-        setSelectedPokemons(novosSelecionados);
-        setPpConsumidos((prev) => prev + 5);
+        return;
       }
+
+      const pokemonRef = pokSnap.docs[0].ref;
+
+      // 3) debita 5 PPs (pp_consumidos só cresce) + deleta o Pokémon
+      await Promise.all([
+        updateDoc(userRef, {
+          pp_consumidos: increment(5),
+        }),
+        deleteDoc(pokemonRef),
+      ]);
+
+      const novoConsumido = consumidosAtual + 5;
+
+      // 4) atualiza estados locais com base no que o servidor tinha + débito
+      setPpGanhos(total);
+      setPpConsumidos(novoConsumido);
+
+      const novosSalvos = savedPokemons.filter((p) => p !== name);
+      const novosSelecionados = selectedPokemons.filter((p) => p !== name);
+      setSavedPokemons(novosSalvos);
+      setSelectedPokemons(novosSelecionados);
     } catch (e) {
       console.error(e);
       alert("Erro ao passar o bastão. Tente novamente.");
@@ -469,9 +495,9 @@ export default function PageContent() {
 
     const ok = window.confirm(
       "Definir é definitivo!\n" +
-      "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
-      "Depois de confirmado, não será possível apagar os que já foram registrados (apenas trocar com Passar Bastão consumindo PPs).\n\n" +
-      "Quer continuar?"
+        "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
+        "Depois de confirmado, não será possível apagar os que já foram registrados (apenas trocar com Passar Bastão consumindo PPs).\n\n" +
+        "Quer continuar?"
     );
     if (!ok) return;
 

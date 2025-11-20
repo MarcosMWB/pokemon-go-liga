@@ -13,7 +13,7 @@ import {
   query,
   where,
   getDocs,
-  runTransaction,
+  writeBatch,
   increment,
 } from "firebase/firestore";
 
@@ -22,7 +22,8 @@ type Usuario = {
   email?: string;
   friend_code?: string;
   pontosPresenca?: number;
-  pp_consumidos?: number;
+  pp_consumidos?: number;              // campo oficial
+  pontosPresencaConsumidos?: number;   // alias antigo (leitura apenas)
 };
 
 type Participacao = { id: string; liga_nome?: string; pokemon: { nome: string }[] };
@@ -249,9 +250,11 @@ export default function EquipesPage() {
     [participacoesDaLiga]
   );
 
-  // PPs do usuário (total, consumidos, disponíveis)
+  // PPs do usuário (total, consumidos, disponíveis) – usa pp_consumidos como oficial
   const pontosPresenca = usuario?.pontosPresenca ?? 0;
-  const ppConsumidos = usuario?.pp_consumidos ?? 0;
+  const ppConsumidos = ((usuario as any)?.pp_consumidos ??
+    usuario?.pontosPresencaConsumidos ??
+    0) as number;
   const ppDisponiveis = Math.max(0, pontosPresenca - ppConsumidos);
 
   async function handlePassarBastao(
@@ -263,12 +266,43 @@ export default function EquipesPage() {
 
     const ok = window.confirm(
       `Remover ${pokemonNome} da equipe consumindo 5 Pontos de Presença?\n\n` +
-      `Você tem atualmente ${ppDisponiveis} PPs disponíveis.`
+        `Você tem atualmente ${ppDisponiveis} PPs disponíveis (valor pode ter mudado em outra tela).`
     );
     if (!ok) return;
 
     try {
-      // garantimos que ainda há esse Pokémon na participação (pegamos um doc)
+      // 1) recarrega pontos do usuário direto do Firestore
+      const userRef = doc(db, "usuarios", id);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) {
+        alert("Usuário não encontrado no Firestore.");
+        return;
+      }
+
+      const uData = userSnap.data() as any;
+      const total: number = uData.pontosPresenca ?? 0;
+      const consumidosAtual: number =
+        (uData.pp_consumidos ?? uData.pontosPresencaConsumidos ?? 0) as number;
+      const saldo = total - consumidosAtual;
+
+      if (saldo < 5) {
+        alert(
+          `Você tem apenas ${saldo} Pontos de Presença. São necessários 5 PPs para passar o bastão.`
+        );
+        // sincroniza estado local com o servidor
+        setUsuario((prev) =>
+          prev
+            ? {
+                ...prev,
+                pontosPresenca: total,
+                pp_consumidos: consumidosAtual,
+              }
+            : prev
+        );
+        return;
+      }
+
+      // 2) pega doc do Pokémon na participação
       const pokSnap = await getDocs(
         query(
           collection(db, "pokemon"),
@@ -285,45 +319,27 @@ export default function EquipesPage() {
       const pokemonDoc = pokSnap.docs[0];
       const pokemonRef = pokemonDoc.ref;
 
-      await runTransaction(db, async (tx) => {
-        const userRef = doc(db, "usuarios", id);
-        const userSnap = await tx.get(userRef);
-        if (!userSnap.exists()) {
-          throw new Error("USUARIO_INEXISTENTE");
-        }
+      // 3) batch: consome 5 PPs + deleta o Pokémon
+      const batch = writeBatch(db);
 
-        const uData = userSnap.data() as any;
-        const total = (uData.pontosPresenca as number | undefined) ?? 0;
-        const consumidos = (uData.pp_consumidos as number | undefined) ?? 0;
-        const disponiveis = total - consumidos;
-
-        if (disponiveis < 5) {
-          throw new Error("SEM_PONTOS");
-        }
-
-        // cobra 5 PPs (campo só pode aumentar, regra já garante isso)
-        tx.update(userRef, { pp_consumidos: increment(5) });
-
-        // confere se o doc ainda existe
-        const pokeSnapTx = await tx.get(pokemonRef);
-        if (!pokeSnapTx.exists()) {
-          throw new Error("POKEMON_JA_REMOVIDO");
-        }
-        const pdata = pokeSnapTx.data() as any;
-        if (pdata.participacao_id !== participacaoId || pdata.nome !== pokemonNome) {
-          throw new Error("POKEMON_DIVERGENTE");
-        }
-
-        // remove o Pokémon da equipe
-        tx.delete(pokemonRef);
+      // campo oficial: pp_consumidos
+      batch.update(userRef, {
+        pp_consumidos: increment(5),
       });
 
-      // se chegou aqui, deu certo: atualiza estado local
+      batch.delete(pokemonRef);
+
+      await batch.commit();
+
+      const novoConsumido = consumidosAtual + 5;
+
+      // 4) atualiza estado local
       setUsuario((prev) =>
         prev
           ? {
               ...prev,
-              pp_consumidos: (prev.pp_consumidos ?? 0) + 5,
+              pontosPresenca: total,
+              pp_consumidos: novoConsumido,
             }
           : prev
       );
@@ -341,12 +357,8 @@ export default function EquipesPage() {
 
       alert("Pokémon removido com sucesso. 5 Pontos de Presença foram consumidos.");
     } catch (e: any) {
-      if (e?.message === "SEM_PONTOS") {
-        alert("Você não tem Pontos de Presença suficientes para passar o bastão (mínimo 5).");
-      } else {
-        console.error(e);
-        alert("Não foi possível passar o bastão. Tente novamente em alguns instantes.");
-      }
+      console.error(e);
+      alert("Não foi possível passar o bastão. Tente novamente em alguns instantes.");
     }
   }
 
@@ -379,7 +391,9 @@ export default function EquipesPage() {
 
       {isOwnProfile && (
         <div className="mb-4 text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded px-3 py-2">
-          <p>PPs disponíveis: <strong>{ppDisponiveis}</strong></p>
+          <p>
+            PPs disponíveis: <strong>{ppDisponiveis}</strong>
+          </p>
           <p className="mt-1 text-xs text-gray-600">
             Cada “Passar Bastão” consome 5 Pontos de Presença.
           </p>
