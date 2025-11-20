@@ -1,6 +1,6 @@
 "use client";
 
-import type { User } from 'firebase/auth';
+import type { User } from "firebase/auth";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
@@ -13,6 +13,9 @@ import {
   getDocs,
   addDoc,
 } from "firebase/firestore";
+
+// prefixo pra salvar rascunho local de equipe
+const DRAFT_STORAGE_PREFIX = "draftEquipe";
 
 // ---------- Utils de nome/slug ----------
 
@@ -148,11 +151,14 @@ export default function PageContent() {
   const [loading, setLoading] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
 
+  // controle pra saber quando terminou de carregar Firestore + draft
+  const [loadedInitial, setLoadedInitial] = useState(false);
+
   // 1. auth
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((current: User | null) => {
       if (!current || !userId || current.uid !== userId) {
-        router.push('/');
+        router.push("/");
       }
     });
     return () => unsub();
@@ -264,51 +270,96 @@ export default function PageContent() {
     fetchPokemonList();
   }, []);
 
-  // 4. carregar equipe já salva
+  // 4. carregar equipe já salva + rascunho local (se existir)
   useEffect(() => {
     const fetchParticipacaoExistente = async () => {
-      if (!userId || !liga) return;
+      if (!userId || !liga) {
+        setLoadedInitial(true);
+        return;
+      }
 
-      const temporadaSnap = await getDocs(
-        query(collection(db, "temporadas"), where("ativa", "==", true))
-      );
-      const temporada = temporadaSnap.docs[0];
-      if (!temporada) return;
+      try {
+        const temporadaSnap = await getDocs(
+          query(collection(db, "temporadas"), where("ativa", "==", true))
+        );
+        const temporada = temporadaSnap.docs[0];
+        if (!temporada) {
+          setLoadedInitial(true);
+          return;
+        }
 
-      const ligaSnap = await getDocs(
-        query(collection(db, "ligas"), where("nome", "==", liga))
-      );
-      const ligaDoc = ligaSnap.docs[0];
-      if (!ligaDoc) return;
+        const ligaSnap = await getDocs(
+          query(collection(db, "ligas"), where("nome", "==", liga))
+        );
+        const ligaDoc = ligaSnap.docs[0];
+        if (!ligaDoc) {
+          setLoadedInitial(true);
+          return;
+        }
 
-      const partSnap = await getDocs(
-        query(
-          collection(db, "participacoes"),
-          where("usuario_id", "==", userId),
-          where("liga_id", "==", ligaDoc.id),
-          where("temporada_id", "==", temporada.id)
-        )
-      );
-      const participacao = partSnap.docs[0];
-
-      if (participacao) {
-        const pokSnap = await getDocs(
+        const partSnap = await getDocs(
           query(
-            collection(db, "pokemon"),
-            where("participacao_id", "==", participacao.id)
+            collection(db, "participacoes"),
+            where("usuario_id", "==", userId),
+            where("liga_id", "==", ligaDoc.id),
+            where("temporada_id", "==", temporada.id)
           )
         );
-        const nomes = pokSnap.docs.map((d) => d.data().nome as string);
-        setSelectedPokemons(nomes);
-        setSavedPokemons(nomes);
+        const participacao = partSnap.docs[0];
+
+        let nomesSalvos: string[] = [];
+        if (participacao) {
+          const pokSnap = await getDocs(
+            query(
+              collection(db, "pokemon"),
+              where("participacao_id", "==", participacao.id)
+            )
+          );
+          nomesSalvos = pokSnap.docs.map((d) => d.data().nome as string);
+        }
+
+        // ler rascunho local (pokémon selecionados mas não necessariamente salvos)
+        let draft: string[] = [];
+        if (typeof window !== "undefined") {
+          const draftKey = `${DRAFT_STORAGE_PREFIX}:${userId}:${liga}`;
+          const raw = window.localStorage.getItem(draftKey);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) {
+                draft = parsed.filter((x) => typeof x === "string");
+              }
+            } catch {
+              // ignora erro de parse
+            }
+          }
+        }
+
+        // união dos pokémon do servidor + rascunho local, sem duplicar, limitado a 6
+        const merged = Array.from(new Set([...nomesSalvos, ...draft])).slice(0, 6);
+
+        setSavedPokemons(nomesSalvos);
+        setSelectedPokemons(merged);
+      } finally {
+        setLoadedInitial(true);
       }
     };
 
     fetchParticipacaoExistente();
   }, [userId, liga]);
 
+  // 5. sempre que mudar o selectedPokemons, salvar rascunho local (sem tocar Firestore)
+  useEffect(() => {
+    if (!loadedInitial) return;           // não grava antes de carregar inicial
+    if (!userId || !liga) return;
+    if (typeof window === "undefined") return;
+
+    const draftKey = `${DRAFT_STORAGE_PREFIX}:${userId}:${liga}`;
+    window.localStorage.setItem(draftKey, JSON.stringify(selectedPokemons));
+  }, [selectedPokemons, userId, liga, loadedInitial]);
+
   const handleRemove = (name: string) => {
-    if (savedPokemons.includes(name)) return;
+    if (savedPokemons.includes(name)) return; // não remove os que já estão no Firestore
     setSelectedPokemons((prev) => prev.filter((p) => p !== name));
   };
 
@@ -367,7 +418,7 @@ export default function PageContent() {
       participacaoId = nova.id;
     }
 
-    // defesa contra múltiplas abas
+    // defesa contra múltiplas abas: recarrega do servidor
     const pokSnapAtual = await getDocs(
       query(collection(db, "pokemon"), where("participacao_id", "==", participacaoId))
     );
@@ -397,6 +448,7 @@ export default function PageContent() {
     setSelectedPokemons(final);
     setSavedPokemons(final);
     setLoading(false);
+    // localStorage é atualizado pelo useEffect de selectedPokemons
   };
 
   const buttonLabel = useMemo(
@@ -409,7 +461,7 @@ export default function PageContent() {
     <div className="min-h-screen bg-blue-50 py-10 px-4">
       <div className="max-w-2xl mx-auto bg-white p-6 rounded shadow">
         <div className="flex items-center gap-2 mb-4">
-          <h1 className="text-2xl font-bold text-blue-800">Registrar Equipe</h1>
+          <h1 className="text-2xl font-bold text-blue-800">Registrar Equipe de desafiante</h1>
           <button
             type="button"
             onClick={() => setShowInfo((v) => !v)}
@@ -440,6 +492,10 @@ export default function PageContent() {
 
         {selectedPokemons.length > 0 && (
           <div className="mt-4 space-y-2">
+            <p className="mt-2 text-sm font-semibold text-red-600">
+              Esta equipe será a única que você poderá usar para desafiar todos os treinadores e ginásios até o final da temporada. Escolha muito bem!
+            </p>
+
             <p className="text-sm text-gray-700">
               Pokémon selecionados ({selectedPokemons.length}/6):
             </p>

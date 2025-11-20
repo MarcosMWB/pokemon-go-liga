@@ -788,9 +788,8 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
-                meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
-              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
               <span className="capitalize">{t}</span>
@@ -870,8 +869,11 @@ export default function DisputaGinasioPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {p.usuario_uid !== userUid && (
-                    <button onClick={() => handleChamar(p.usuario_uid)} className="bg-slate-800 text-white text-xs px-3 py-1 rounded">
+                  {meuParticipante?.tipo_escolhido != '' && p.tipo_escolhido && (
+                    <button
+                      onClick={() => handleChamar(p.usuario_uid)}
+                      className="bg-slate-800 text-white text-xs px-3 py-1 rounded"
+                    >
                       Chamar p/ batalha
                     </button>
                   )}
@@ -1004,9 +1006,8 @@ export default function DisputaGinasioPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${
-                          mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded ${mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"
+                          }`}
                       >
                         <p className="text-xs">{m.text}</p>
                       </div>

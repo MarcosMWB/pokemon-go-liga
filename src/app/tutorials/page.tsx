@@ -90,7 +90,7 @@ function TutorialDesafiosGinasio() {
 
       <ol className="list-decimal pl-5 space-y-2 text-gray-800">
         <li>
-          Acesse a página do ginásio e clique em <b>Desafiar líder</b>.
+          Acesse a página do ginásio e clique em <b>Desafiar líder</b>, o líder pode usar somente Pokémon que compartilham o tipo do ginásio.
         </li>
         <li>
           Use o chat para combinar <b>data</b>, <b>horário</b>, <b>local (Presencial ou Virtual)</b> e um meio de contato
@@ -211,6 +211,8 @@ function TutorialLiderancaGinasio() {
 
       <h3 className="font-semibold">Como manter o ginásio</h3>
       <ul className="list-disc pl-5 space-y-2 text-gray-800">
+        <li>Cheque antes de iniciar o desafio, qual a tipagem do seu ginásio, e use somente Pokémon que compartilham <b>o mesmo tipo do ginásio</b>.</li>
+        <li>Ao aceitar o desafio, confira a equipe do seu oponente, se identificar que na batalha ele usou algo não declarado, tire uma evidência e encerre a batalha.</li>
         <li>Confira o countdown de cada fase (inscrições/batalhas) na página do ginásio.</li>
         <li>Defina regras locais: partida única ou melhor de 3; prazos para marcar; local do jogo, etc.</li>
         <li>Seja claro no chat sobre datas, horários e meios de contato.</li>
