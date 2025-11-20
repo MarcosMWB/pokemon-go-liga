@@ -47,7 +47,7 @@ type Disputa = {
   temporada_nome?: string;
   origem?: "disputa" | "renuncia" | "3_derrotas" | "manual" | "empate";
   createdAtMs?: number | null;
-  vencedor_uid?: string | null; // <- adicionada p/ parabéns
+  vencedor_uid?: string | null;
 };
 
 type Participante = {
@@ -91,7 +91,6 @@ function toMillis(v: any): number | null {
   return null;
 }
 function fmtCountdown(msDiff: number): string {
-  // recebe diferença (alvo - agora)
   const neg = msDiff < 0;
   const abs = Math.abs(msDiff);
   const d = Math.floor(abs / 86400000);
@@ -131,6 +130,7 @@ export default function DisputaGinasioPage() {
   const [chatInput, setChatInput] = useState("");
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
+  const chatBoxRef = useRef<HTMLDivElement | null>(null); // para auto-scroll
   const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
 
   // info do "Converse com o adversário"
@@ -139,11 +139,10 @@ export default function DisputaGinasioPage() {
   // ====== NOVO: variáveis globais (horas) ======
   const [tempoInscricoesHoras, setTempoInscricoesHoras] = useState<number | null>(null);
   const [tempoBatalhasHoras, setTempoBatalhasHoras] = useState<number | null>(null);
-  const [, forceTick] = useState(0); // para re-render do countdown
-  const [winnerName, setWinnerName] = useState<string | null>(null); // <- nome p/ parabéns
+  const [, forceTick] = useState(0);
+  const [winnerName, setWinnerName] = useState<string | null>(null);
 
   useEffect(() => {
-    // lê variables/global { tempo_inscricoes: number, tempo_batalhas: number } (em horas)
     (async () => {
       try {
         const vSnap = await getDoc(doc(db, "variables", "global"));
@@ -152,7 +151,6 @@ export default function DisputaGinasioPage() {
           setTempoInscricoesHoras(Number(v?.tempo_inscricoes ?? 0));
           setTempoBatalhasHoras(Number(v?.tempo_batalhas ?? 0));
         } else {
-          // se não existir, deixa null (UI mostra aviso)
           setTempoInscricoesHoras(null);
           setTempoBatalhasHoras(null);
         }
@@ -161,9 +159,16 @@ export default function DisputaGinasioPage() {
         setTempoBatalhasHoras(null);
       }
     })();
-    const t = setInterval(() => forceTick((x) => x + 1), 30000); // atualiza contagem a cada 30s
+    const t = setInterval(() => forceTick((x) => x + 1), 30000);
     return () => clearInterval(t);
   }, []);
+
+  // auto-scroll pro fim do chat quando abre ou chega msg nova
+  useEffect(() => {
+    if (chatOpen && chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [chatOpen, chatMsgs.length]);
 
   const renderTipoIcon = (tipo?: string, size = 28) => {
     if (!tipo) return null;
@@ -246,7 +251,7 @@ export default function DisputaGinasioPage() {
         temporada_nome: dData.temporada_nome || "",
         origem: dData.origem as any,
         createdAtMs: toMillis(dData.createdAt),
-        vencedor_uid: dData.vencedor_uid ?? null, // <- ler vencedor
+        vencedor_uid: dData.vencedor_uid ?? null,
       });
       setLoading(false);
     });
@@ -422,10 +427,8 @@ export default function DisputaGinasioPage() {
     await updateDoc(doc(db, "disputas_ginasio_resultados", res.id), { status: novoStatus, atualizadoEm: Date.now() });
   };
 
-  // Meu participante
   const meuParticipante = userUid ? participantes.find((p) => p.usuario_uid === userUid) : null;
 
-  // Invalidar tipo se ficou indisponível durante inscrições
   useEffect(() => {
     const invalidarSeOcupou = async () => {
       if (!disputa || disputa.status !== "inscricoes" || !userUid || !meuParticipante?.id || !meuParticipante?.tipo_escolhido) return;
@@ -449,7 +452,6 @@ export default function DisputaGinasioPage() {
     invalidarSeOcupou();
   }, [disputa, userUid, meuParticipante?.id, meuParticipante?.tipo_escolhido, ocupados]);
 
-  // Pontuação
   const pontos = useMemo(() => {
     const map: Record<string, number> = {};
     participantes.forEach((p) => (map[p.usuario_uid] = 0));
@@ -469,7 +471,7 @@ export default function DisputaGinasioPage() {
     return [...participantes].sort((a, b) => ((pontos[b.usuario_uid] || 0) - (pontos[a.usuario_uid] || 0)));
   }, [participantes, pontos]);
 
-  // Finalização automática (apenas SUPERUSER)
+  // Finalização automática
   useEffect(() => {
     const aplicarFinalizacao = async () => {
       if (!disputa || !ginasio || !isSuper) return;
@@ -549,6 +551,15 @@ export default function DisputaGinasioPage() {
     return ref.id;
   }
 
+  function closeChat() {
+    setChatOpen(false);
+    setChatDesafioId(null);
+    setChatMsgs([]);
+    setChatInput("");
+    setChatOther(null);
+    setChatInfoOpen(false);
+  }
+
   async function openDesafioChat(desafioId: string) {
     if (!userUid) return;
 
@@ -562,12 +573,12 @@ export default function DisputaGinasioPage() {
     setChatMsgs([]);
     setChatInput("");
     setChatOther(null);
+    setChatInfoOpen(false);
 
     const dRef = doc(db, "desafios_ginasio", desafioId);
     const dSnap = await getDoc(dRef);
     if (!dSnap.exists()) {
-      setChatOpen(false);
-      setChatDesafioId(null);
+      closeChat();
       return;
     }
     const d = dSnap.data() as any;
@@ -580,22 +591,26 @@ export default function DisputaGinasioPage() {
         const du = u.data() as any;
         other = { id: otherUid, nome: du.nome || du.email || otherUid, email: du.email, friend_code: du.friend_code };
       }
-    } catch { }
+    } catch {}
     setChatOther(other);
 
-    const msgsQ = query(collection(db, "desafios_ginasio", desafioId, "mensagens"), orderBy("createdAt", "asc"));
+    const msgsQ = query(
+      collection(db, "desafios_ginasio", desafioId, "mensagens"),
+      orderBy("createdAt", "asc")
+    );
     chatUnsubRef.current = onSnapshot(
       msgsQ,
       (snap) => {
-        setChatMsgs(snap.docs.map((d) => {
-          const x = d.data() as any;
-          return { id: d.id, from: x.from, text: x.text, createdAt: x.createdAt };
-        }));
+        setChatMsgs(
+          snap.docs.map((d) => {
+            const x = d.data() as any;
+            return { id: d.id, from: x.from, text: x.text, createdAt: x.createdAt };
+          })
+        );
       },
       (err) => {
         console.error("Chat listener error:", err);
-        setChatOpen(false);
-        setChatDesafioId(null);
+        closeChat();
       }
     );
 
@@ -605,8 +620,7 @@ export default function DisputaGinasioPage() {
         if (!ds.exists()) return;
         const dd = ds.data() as any;
         if (dd.status === "concluido" || dd.status === "conflito") {
-          setChatOpen(false);
-          setChatDesafioId(null);
+          closeChat();
         }
       },
       (err) => console.error("Desafio listener error:", err)
@@ -622,12 +636,13 @@ export default function DisputaGinasioPage() {
   async function sendChatMessage() {
     if (!userUid || !chatDesafioId || !chatInput.trim()) return;
     await addDoc(collection(db, "desafios_ginasio", chatDesafioId, "mensagens"), {
-      from: userUid, text: chatInput.trim(), createdAt: serverTimestamp(),
+      from: userUid,
+      text: chatInput.trim(),
+      createdAt: serverTimestamp(),
     });
     setChatInput("");
   }
 
-  // ====== DERIVADOS ======
   const tiposPermitidos = TIPOS.filter((t) => {
     if (!disputa) return true;
     if (t === disputa.tipo_original) return true;
@@ -637,11 +652,11 @@ export default function DisputaGinasioPage() {
   const pendentesParaMim =
     userUid
       ? resultados.filter((r) => {
-        if (r.status !== "pendente") return false;
-        if (r.declarado_por === userUid) return false;
-        if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
-        return r.perdedor_uid === userUid;
-      })
+          if (r.status !== "pendente") return false;
+          if (r.declarado_por === userUid) return false;
+          if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
+          return r.perdedor_uid === userUid;
+        })
       : [];
 
   const participantesOrdenados = useMemo(() => {
@@ -655,7 +670,6 @@ export default function DisputaGinasioPage() {
   const deepLink = fc ? (isAndroid ? friendLinks!.androidIntent : friendLinks!.native) : null;
   const qrLink = fc ? qrUrl(friendLinks!.native) : null;
 
-  // ====== NOVO: cálculos de início/fim ======
   const battleStartMs =
     disputa?.createdAtMs != null && tempoInscricoesHoras != null
       ? disputa.createdAtMs + tempoInscricoesHoras * 3600000
@@ -666,13 +680,11 @@ export default function DisputaGinasioPage() {
       ? battleStartMs + tempoBatalhasHoras * 3600000
       : null;
 
-  // countdowns só nos status corretos
   const showStartCountdown =
     disputa?.status === "inscricoes" && battleStartMs != null;
   const showEndCountdown =
     (disputa?.status === "inscricoes" || disputa?.status === "batalhando") && disputeEndMs != null;
 
-  // carregar nome do vencedor quando finalizado
   useEffect(() => {
     const loadWinner = async () => {
       if (!disputa || disputa.status !== "finalizado") {
@@ -734,7 +746,6 @@ export default function DisputaGinasioPage() {
         )}
       </p>
 
-      {/* NOVO: bloco de prazos ou parabéns, sem remover nada do resto */}
       {disputa.status !== "finalizado" ? (
         <div className="bg-indigo-50 border border-indigo-200 rounded p-3 text-sm text-indigo-900">
           {tempoInscricoesHoras == null || tempoBatalhasHoras == null ? (
@@ -788,8 +799,9 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
-                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
+                meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
               <span className="capitalize">{t}</span>
@@ -875,11 +887,10 @@ export default function DisputaGinasioPage() {
                     const jaTemPlacar = existeResultadoEntre(userUid, p.usuario_uid);
 
                     return (
-                      p.usuario_uid !== userUid &&                    // não mostrar pra mim mesmo
-                      !!meuParticipante?.tipo_escolhido &&            // eu tenho tipo escolhido
-                      !!p.tipo_escolhido &&                           // ele tem tipo escolhido
-                      !jaTemPlacar &&                                 // ainda não existe placar entre nós
-                      (
+                      p.usuario_uid !== userUid &&
+                      !!meuParticipante?.tipo_escolhido &&
+                      !!p.tipo_escolhido &&
+                      !jaTemPlacar && (
                         <button
                           onClick={() => handleChamar(p.usuario_uid)}
                           className="bg-slate-800 text-white text-xs px-3 py-1 rounded"
@@ -946,69 +957,95 @@ export default function DisputaGinasioPage() {
 
       {chatOpen && chatDesafioId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setChatOpen(false); setChatDesafioId(null); }} />
-          <div className="relative bg-white w-full max-w-2xl rounded-xl shadow-xl p-4 md:p-6">
-            <div className="flex items-start justify-between gap-4">
+          <div className="absolute inset-0 bg-black/40" onClick={closeChat} />
+          <div className="relative bg-white w-full max-w-2xl max-h-[90vh] rounded-xl shadow-xl p-3 md:p-5 flex flex-col">
+            <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                {/* texto removido daqui, conforme pedido */}
               </div>
               <button
                 className="text-slate-500 hover:text-slate-800 text-sm"
-                onClick={() => { setChatOpen(false); setChatDesafioId(null); }}
+                onClick={closeChat}
               >
                 Fechar
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="border rounded-lg p-3">
-                <p className="text-xs text-slate-500">Adicionar {chatOther?.nome || "Treinador"}:</p>
+                <p className="text-xs text-slate-500">
+                  Adicionar {chatOther?.nome || "Treinador"}:
+                </p>
                 {fc ? (
                   <>
-                    <p className="text-sm font-semibold">FC: {fc}</p>
+                    <p className="text-sm font-semibold mt-1">FC: {fc}</p>
                     <div className="mt-2 flex flex-col items-start gap-2">
-                      {deepLink && <a href={deepLink} className="text-blue-600 text-sm hover:underline">Abrir no Pokémon GO</a>}
-                      {qrLink && <Image src={qrLink} alt="QR para adicionar" width={160} height={160} className="w-40 h-40 border rounded" />}
+                      {deepLink && (
+                        <a
+                          href={deepLink}
+                          className="text-blue-600 text-xs hover:underline"
+                        >
+                          Abrir no Pokémon GO
+                        </a>
+                      )}
+                      {qrLink && (
+                        <Image
+                          src={qrLink}
+                          alt="QR para adicionar"
+                          width={140}
+                          height={140}
+                          className="w-36 h-36 border rounded"
+                        />
+                      )}
 
-                      {/* linha com Copiar FC + Converse com o adversário + ícone de info */}
-                      <div className="flex items-center gap-2">
+                      <div className="w-full flex items-center justify-between gap-2">
                         <button
-                          onClick={() => (navigator as any)?.clipboard?.writeText?.(fc)}
-                          className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                          onClick={() =>
+                            (navigator as any)?.clipboard?.writeText?.(fc)
+                          }
+                          className="text-[11px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
                           type="button"
                         >
                           Copiar FC
                         </button>
-
-                        <span className="text-xs text-slate-700">
-                          Converse com o adversário
-                        </span>
-
                         <button
                           type="button"
                           onClick={() => setChatInfoOpen((v) => !v)}
-                          className="flex items-center justify-center w-5 h-5 rounded-full border border-slate-300 text-[10px] text-slate-600 hover:bg-slate-100"
-                          aria-label="Informações sobre como conversar com o adversário"
+                          className="flex items-center gap-1 text-[11px] text-slate-700"
                         >
-                          i
+                          <span>Converse com o adversário</span>
+                          <span className="w-4 h-4 flex items-center justify-center rounded-full bg-slate-100 border border-slate-300 text-[10px] font-bold">
+                            i
+                          </span>
                         </button>
                       </div>
 
                       {chatInfoOpen && (
-                        <p className="mt-1 text-xs text-slate-500">
-                          Mande uma mensagem. Combine horários, locais e meios de comunicação, como número telefônico.
-                        </p>
+                        <div className="text-[11px] text-slate-600 mt-1">
+                          <ul className="list-disc pl-4 space-y-1">
+                            <li>Combine dia, horário e se será presencial ou remoto.</li>
+                            <li>Confirme a liga usada e a quantidade de partidas.</li>
+                            <li>
+                              Se der problema (no app, conexão, atraso), registre aqui
+                              antes de declarar o resultado.
+                            </li>
+                          </ul>
+                        </div>
                       )}
                     </div>
                   </>
                 ) : (
-                  <p className="text-xs text-amber-600">O oponente não cadastrou FC.</p>
+                  <p className="text-xs text-amber-600 mt-1">
+                    O oponente não cadastrou FC.
+                  </p>
                 )}
               </div>
             </div>
 
-            <div className="mt-4 border rounded-lg p-3 max-h-72 overflow-auto bg-slate-50">
+            <div
+              ref={chatBoxRef}
+              className="mt-3 border rounded-lg p-2 max-h-52 md:max-h-60 overflow-auto bg-slate-50"
+            >
               {chatMsgs.length === 0 ? (
                 <p className="text-xs text-slate-500">Nenhuma mensagem ainda.</p>
               ) : (
@@ -1018,10 +1055,13 @@ export default function DisputaGinasioPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"
-                          }`}
+                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${
+                          mine
+                            ? "self-end bg-blue-600 text-white"
+                            : "self-start bg-white border"
+                        }`}
                       >
-                        <p className="text-xs">{m.text}</p>
+                        <p>{m.text}</p>
                       </div>
                     );
                   })}
@@ -1029,7 +1069,7 @@ export default function DisputaGinasioPage() {
               )}
             </div>
 
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-2 flex items-center gap-2">
               <input
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
@@ -1038,8 +1078,8 @@ export default function DisputaGinasioPage() {
                 placeholder="Escreva uma mensagem..."
               />
               <button
-                onClick={async () => { await sendChatMessage(); }}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded"
+                onClick={sendChatMessage}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 rounded"
                 type="button"
               >
                 Enviar
