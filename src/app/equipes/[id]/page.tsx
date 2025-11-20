@@ -6,9 +6,26 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { auth, db } from "@/lib/firebase";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  runTransaction,
+  increment,
+  deleteDoc,
+} from "firebase/firestore";
 
-type Usuario = { nome?: string; email?: string; friend_code?: string };
+type Usuario = {
+  nome?: string;
+  email?: string;
+  friend_code?: string;
+  pontosPresenca?: number;
+  pp_consumidos?: number;
+};
+
 type Participacao = { id: string; liga_nome?: string; pokemon: { nome: string }[] };
 type Liga = { id: string; nome: string };
 
@@ -54,9 +71,6 @@ function buildFormSlug(displayName: string): string | null {
   if (!m) return null;
   const base = slugifyBase(m[1]);
   const token = suffixToToken(m[2]);
-  // casos pontuais com nomes compostos na base
-  // mr. mime -> mr-mime (slugify já cobre), farfetch’d -> farfetchd (slugify cobre)
-  // maioria é: base-token
   return `${base}-${token}`;
 }
 
@@ -79,13 +93,11 @@ function PokemonThumb({
       const formSlug = buildFormSlug(displayName);
 
       if (formSlug) {
-        // tentar obter id da forma
         try {
           const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${formSlug}`);
           if (res.ok) {
             const data = await res.json();
             const formId = data?.id;
-            // para formas, usar sprite “clássico” (existe para TODAS as formas):
             if (!canceled && formId) {
               setSrc(
                 `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${formId}.png`
@@ -94,11 +106,10 @@ function PokemonThumb({
             }
           }
         } catch {
-          // cai no fallback
+          // fallback
         }
       }
 
-      // fallback: artwork da espécie base (melhor qualidade)
       if (baseId) {
         setSrc(
           `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${baseId}.png`
@@ -123,7 +134,6 @@ function PokemonThumb({
       width={size}
       height={size}
       onError={() => {
-        // último fallback: sprite base 1x (se tiver baseId)
         if (baseId) {
           setSrc(
             `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${baseId}.png`
@@ -152,7 +162,6 @@ export default function EquipesPage() {
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>("");
 
-  // Nome→ID da espécie base (1..1010)
   const [idByName, setIdByName] = useState<Record<string, number>>({});
 
   // auth + carga principal
@@ -213,7 +222,7 @@ export default function EquipesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, router]);
 
-  // baixa 1x a lista base (1..1010) para mapear espécie → id
+  // dex base para mapear espécie → id
   useEffect(() => {
     const loadDex = async () => {
       try {
@@ -241,77 +250,221 @@ export default function EquipesPage() {
     [participacoesDaLiga]
   );
 
+  // PPs do usuário (total, consumidos, disponíveis)
+  const pontosPresenca = usuario?.pontosPresenca ?? 0;
+  const ppConsumidos = usuario?.pp_consumidos ?? 0;
+  const ppDisponiveis = Math.max(0, pontosPresenca - ppConsumidos);
+
+  async function handlePassarBastao(
+    participacaoId: string,
+    pokemonIndex: number,
+    pokemonNome: string
+  ) {
+    if (!isOwnProfile) return;
+
+    const ok = window.confirm(
+      `Remover ${pokemonNome} da equipe consumindo 5 Pontos de Presença?\n\n` +
+      `Você tem atualmente ${ppDisponiveis} PPs disponíveis.`
+    );
+    if (!ok) return;
+
+    try {
+      // garantimos que ainda há esse Pokémon na participação (pegamos um doc)
+      const pokSnap = await getDocs(
+        query(
+          collection(db, "pokemon"),
+          where("participacao_id", "==", participacaoId),
+          where("nome", "==", pokemonNome)
+        )
+      );
+
+      if (pokSnap.empty) {
+        alert("Pokémon não encontrado no servidor. Tente recarregar a página.");
+        return;
+      }
+
+      const pokemonDoc = pokSnap.docs[0];
+      const pokemonRef = pokemonDoc.ref;
+
+      await runTransaction(db, async (tx) => {
+        const userRef = doc(db, "usuarios", id);
+        const userSnap = await tx.get(userRef);
+        if (!userSnap.exists()) {
+          throw new Error("USUARIO_INEXISTENTE");
+        }
+
+        const uData = userSnap.data() as any;
+        const total = (uData.pontosPresenca as number | undefined) ?? 0;
+        const consumidos = (uData.pp_consumidos as number | undefined) ?? 0;
+        const disponiveis = total - consumidos;
+
+        if (disponiveis < 5) {
+          throw new Error("SEM_PONTOS");
+        }
+
+        // cobra 5 PPs (campo só pode aumentar, regra já garante isso)
+        tx.update(userRef, { pp_consumidos: increment(5) });
+
+        // confere se o doc ainda existe
+        const pokeSnapTx = await tx.get(pokemonRef);
+        if (!pokeSnapTx.exists()) {
+          throw new Error("POKEMON_JA_REMOVIDO");
+        }
+        const pdata = pokeSnapTx.data() as any;
+        if (pdata.participacao_id !== participacaoId || pdata.nome !== pokemonNome) {
+          throw new Error("POKEMON_DIVERGENTE");
+        }
+
+        // remove o Pokémon da equipe
+        tx.delete(pokemonRef);
+      });
+
+      // se chegou aqui, deu certo: atualiza estado local
+      setUsuario((prev) =>
+        prev
+          ? {
+              ...prev,
+              pp_consumidos: (prev.pp_consumidos ?? 0) + 5,
+            }
+          : prev
+      );
+
+      setParticipacoes((prev) =>
+        prev.map((part) =>
+          part.id === participacaoId
+            ? {
+                ...part,
+                pokemon: part.pokemon.filter((_, idx) => idx !== pokemonIndex),
+              }
+            : part
+        )
+      );
+
+      alert("Pokémon removido com sucesso. 5 Pontos de Presença foram consumidos.");
+    } catch (e: any) {
+      if (e?.message === "SEM_PONTOS") {
+        alert("Você não tem Pontos de Presença suficientes para passar o bastão (mínimo 5).");
+      } else {
+        console.error(e);
+        alert("Não foi possível passar o bastão. Tente novamente em alguns instantes.");
+      }
+    }
+  }
+
   if (loading) return <p className="p-8">Carregando...</p>;
   if (erro) return <p className="p-8 text-red-600">{erro}</p>;
   if (!usuario) return <p className="p-8">Usuário não encontrado.</p>;
 
   return (
-      <div className="max-w-3xl mx-auto bg-white p-8 rounded shadow">
-        <div className="flex items-center justify-between gap-4 mb-6">
-          <h1 className="text-2xl font-bold text-blue-800">
-            Equipes de {usuario.nome ?? "Treinador"}
-          </h1>
+    <div className="max-w-3xl mx-auto bg-white p-8 rounded shadow">
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <h1 className="text-2xl font-bold text-blue-800">
+          Equipes de {usuario.nome ?? "Treinador"}
+        </h1>
 
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Liga</label>
-            <select
-              value={ligaSelecionada}
-              onChange={(e) => setLigaSelecionada(e.target.value)}
-              className="border rounded px-2 py-1 text-sm"
-            >
-              {ligas.map((l) => (
-                <option key={l.id} value={l.nome}>
-                  {l.nome}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Liga</label>
+          <select
+            value={ligaSelecionada}
+            onChange={(e) => setLigaSelecionada(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            {ligas.map((l) => (
+              <option key={l.id} value={l.nome}>
+                {l.nome}
+              </option>
+            ))}
+          </select>
         </div>
+      </div>
 
-        {participacoesDaLiga.length > 0 ? (
-          participacoesDaLiga.map((p) => (
-            <div key={p.id} className="mb-6 border-t pt-4">
-              <h2 className="text-lg font-semibold text-blue-700">
-                Liga: {p.liga_nome || "Desconhecida"}
-              </h2>
+      {isOwnProfile && (
+        <div className="mb-4 text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded px-3 py-2">
+          <p>PPs disponíveis: <strong>{ppDisponiveis}</strong></p>
+          <p className="mt-1 text-xs text-gray-600">
+            Cada “Passar Bastão” consome 5 Pontos de Presença.
+          </p>
+        </div>
+      )}
 
-              {p.pokemon && p.pokemon.length > 0 ? (
-                <ul className="mt-2 space-y-2">
-                  {p.pokemon.map((poke, j) => {
-                    const baseId = idByName[poke.nome.replace(/\s*\(.+\)\s*$/, "")];
-                    return (
-                      <li key={j} className="flex items-center gap-2 text-gray-700">
+      {participacoesDaLiga.length > 0 ? (
+        participacoesDaLiga.map((p) => (
+          <div key={p.id} className="mb-6 border-t pt-4">
+            <h2 className="text-lg font-semibold text-blue-700">
+              Liga: {p.liga_nome || "Desconhecida"}
+            </h2>
+
+            {p.pokemon && p.pokemon.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {p.pokemon.map((poke, j) => {
+                  const baseId = idByName[poke.nome.replace(/\s*\(.+\)\s*$/, "")];
+                  const canPassar =
+                    isOwnProfile && ppDisponiveis >= 5 && p.pokemon.length > 0;
+
+                  return (
+                    <li
+                      key={j}
+                      className="flex items-center justify-between gap-2 text-gray-700 bg-gray-50 rounded px-2 py-1"
+                    >
+                      <div className="flex items-center gap-2">
                         <PokemonThumb displayName={poke.nome} baseId={baseId} size={32} />
                         <span>{poke.nome}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="text-gray-500 text-sm mt-2">Nenhum Pokémon salvo para essa liga.</p>
-              )}
-            </div>
-          ))
-        ) : (
-          <p className="text-gray-600 mb-4">Nenhuma equipe registrada nessa liga ainda.</p>
-        )}
+                      </div>
 
-        {isOwnProfile && ligaSelecionada && !temEquipeNaLigaSelecionada && (
-          <div className="mt-8 space-y-4">
-            <h2 className="text-lg font-semibold text-blue-700">Cadastrar Equipe:</h2>
-            <Link
-              href={`/cadastro/equipe?user=${id}&liga=${encodeURIComponent(ligaSelecionada)}`}
-            >
-              <button className="block w-full mt-1 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md">
-                Cadastrar equipe {ligaSelecionada}
-              </button>
-            </Link>
+                      {isOwnProfile && (
+                        <button
+                          type="button"
+                          onClick={() => handlePassarBastao(p.id, j, poke.nome)}
+                          disabled={!canPassar}
+                          className={`text-xs px-3 py-1 rounded font-semibold ${
+                            canPassar
+                              ? "bg-red-600 text-white hover:bg-red-700"
+                              : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                          }`}
+                          title={
+                            canPassar
+                              ? "Remover este Pokémon consumindo 5 Pontos de Presença"
+                              : "Você precisa de pelo menos 5 Pontos de Presença disponíveis"
+                          }
+                        >
+                          Passar Bastão (-5 PP)
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-gray-500 text-sm mt-2">
+                Nenhum Pokémon salvo para essa liga.
+              </p>
+            )}
           </div>
-        )}
+        ))
+      ) : (
+        <p className="text-gray-600 mb-4">
+          Nenhuma equipe registrada nessa liga ainda.
+        </p>
+      )}
 
-        <footer className="mt-10 text-sm text-gray-500 text-center">
-          {logadoEmail && `Logado como: ${logadoEmail}`}
-        </footer>
-      </div>
+      {isOwnProfile && ligaSelecionada && !temEquipeNaLigaSelecionada && (
+        <div className="mt-8 space-y-4">
+          <h2 className="text-lg font-semibold text-blue-700">Cadastrar Equipe:</h2>
+          <Link
+            href={`/cadastro/equipe?user=${id}&liga=${encodeURIComponent(
+              ligaSelecionada
+            )}`}
+          >
+            <button className="block w-full mt-1 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md">
+              Cadastrar equipe {ligaSelecionada}
+            </button>
+          </Link>
+        </div>
+      )}
+
+      <footer className="mt-10 text-sm text-gray-500 text-center">
+        {logadoEmail && `Logado como: ${logadoEmail}`}
+      </footer>
+    </div>
   );
 }

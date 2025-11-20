@@ -12,6 +12,11 @@ import {
   where,
   getDocs,
   addDoc,
+  getDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  increment,
 } from "firebase/firestore";
 
 // prefixo pra salvar rascunho local de equipe
@@ -151,8 +156,19 @@ export default function PageContent() {
   const [loading, setLoading] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
 
+  // PPs
+  const [ppGanhos, setPpGanhos] = useState<number>(0);
+  const [ppConsumidos, setPpConsumidos] = useState<number>(0);
+  const ppDisponiveis = useMemo(
+    () => Math.max(0, ppGanhos - ppConsumidos),
+    [ppGanhos, ppConsumidos]
+  );
+
   // controle pra saber quando terminou de carregar Firestore + draft
   const [loadedInitial, setLoadedInitial] = useState(false);
+
+  // id da participação atual (pra achar/remover Pokémon)
+  const [participacaoId, setParticipacaoId] = useState<string | null>(null);
 
   // 1. auth
   useEffect(() => {
@@ -270,7 +286,7 @@ export default function PageContent() {
     fetchPokemonList();
   }, []);
 
-  // 4. carregar equipe já salva + rascunho local (se existir)
+  // 4a. carregar equipe já salva + rascunho local (se existir) + guardar participação
   useEffect(() => {
     const fetchParticipacaoExistente = async () => {
       if (!userId || !liga) {
@@ -309,6 +325,7 @@ export default function PageContent() {
 
         let nomesSalvos: string[] = [];
         if (participacao) {
+          setParticipacaoId(participacao.id);
           const pokSnap = await getDocs(
             query(
               collection(db, "pokemon"),
@@ -348,9 +365,34 @@ export default function PageContent() {
     fetchParticipacaoExistente();
   }, [userId, liga]);
 
+  // 4b. carregar PPs do usuário (ganhos/consumidos)
+  useEffect(() => {
+    const loadPP = async () => {
+      if (!userId) return;
+      try {
+        const uRef = doc(db, "usuarios", userId);
+        const snap = await getDoc(uRef);
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          setPpGanhos(data.pontosPresenca ?? 0);
+          setPpConsumidos(data.pp_consumidos ?? 0);
+        } else {
+          setPpGanhos(0);
+          setPpConsumidos(0);
+        }
+      } catch {
+        // se der erro, só deixa 0/0 mesmo
+        setPpGanhos(0);
+        setPpConsumidos(0);
+      }
+    };
+
+    loadPP();
+  }, [userId]);
+
   // 5. sempre que mudar o selectedPokemons, salvar rascunho local (sem tocar Firestore)
   useEffect(() => {
-    if (!loadedInitial) return;           // não grava antes de carregar inicial
+    if (!loadedInitial) return; // não grava antes de carregar inicial
     if (!userId || !liga) return;
     if (typeof window === "undefined") return;
 
@@ -359,8 +401,67 @@ export default function PageContent() {
   }, [selectedPokemons, userId, liga, loadedInitial]);
 
   const handleRemove = (name: string) => {
-    if (savedPokemons.includes(name)) return; // não remove os que já estão no Firestore
+    // só pode remover "de graça" quem ainda NÃO foi salvo no Firestore
+    if (savedPokemons.includes(name)) return;
     setSelectedPokemons((prev) => prev.filter((p) => p !== name));
+  };
+
+  // PASSAR BASTÃO: remover 1 Pokémon já registrado, gastando 5 PPs
+  const handlePassarBastao = async (name: string) => {
+    if (!userId || !participacaoId) {
+      alert("Não consegui localizar sua participação. Atualize a página.");
+      return;
+    }
+
+    if (ppDisponiveis < 5) {
+      alert("Você não tem pontos de presença suficientes. São necessários 5 PP.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Passar o bastão deste Pokémon vai consumir 5 pontos de presença.\n\n` +
+      `Pokémon: ${name}\n` +
+      `PP disponíveis: ${ppDisponiveis}\n\n` +
+      `Confirmar mesmo assim?`
+    );
+    if (!ok) return;
+
+    setLoading(true);
+    try {
+      // 1) debita 5 PPs (pp_consumidos só cresce)
+      const userRef = doc(db, "usuarios", userId);
+      await updateDoc(userRef, {
+        pp_consumidos: increment(5),
+      });
+
+      // 2) apaga 1 doc de pokemon correspondente à participação/nome
+      const pokSnap = await getDocs(
+        query(
+          collection(db, "pokemon"),
+          where("participacao_id", "==", participacaoId),
+          where("nome", "==", name)
+        )
+      );
+
+      if (pokSnap.empty) {
+        alert("Não encontrei esse Pokémon na sua equipe. Atualize a página.");
+      } else {
+        // Se por bug existir mais de um, apaga só o primeiro.
+        await deleteDoc(pokSnap.docs[0].ref);
+
+        // 3) atualiza estados locais
+        const novosSalvos = savedPokemons.filter((p) => p !== name);
+        const novosSelecionados = selectedPokemons.filter((p) => p !== name);
+        setSavedPokemons(novosSalvos);
+        setSelectedPokemons(novosSelecionados);
+        setPpConsumidos((prev) => prev + 5);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao passar o bastão. Tente novamente.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -369,7 +470,7 @@ export default function PageContent() {
     const ok = window.confirm(
       "Definir é definitivo!\n" +
       "Ao confirmar, você está dizendo que essas escolhas são as que vai usar para competir.\n" +
-      "Depois de confirmado, não será possível apagar os que já foram registrados.\n\n" +
+      "Depois de confirmado, não será possível apagar os que já foram registrados (apenas trocar com Passar Bastão consumindo PPs).\n\n" +
       "Quer continuar?"
     );
     if (!ok) return;
@@ -404,9 +505,9 @@ export default function PageContent() {
         where("temporada_id", "==", temporada.id)
       )
     );
-    let participacaoId = partSnap.docs[0]?.id as string | undefined;
+    let currentParticipacaoId = partSnap.docs[0]?.id as string | undefined;
 
-    if (!participacaoId) {
+    if (!currentParticipacaoId) {
       const nova = await addDoc(collection(db, "participacoes"), {
         usuario_id: userId,
         liga_id: ligaDoc.id,
@@ -415,12 +516,14 @@ export default function PageContent() {
         equipe_registrada: true,
         createdAt: Date.now(),
       });
-      participacaoId = nova.id;
+      currentParticipacaoId = nova.id;
     }
+
+    setParticipacaoId(currentParticipacaoId);
 
     // defesa contra múltiplas abas: recarrega do servidor
     const pokSnapAtual = await getDocs(
-      query(collection(db, "pokemon"), where("participacao_id", "==", participacaoId))
+      query(collection(db, "pokemon"), where("participacao_id", "==", currentParticipacaoId))
     );
     const pokemonsAtuais = pokSnapAtual.docs.map((d) => d.data().nome as string);
 
@@ -439,7 +542,7 @@ export default function PageContent() {
       for (const nome of aInserir) {
         await addDoc(collection(db, "pokemon"), {
           nome,
-          participacao_id: participacaoId,
+          participacao_id: currentParticipacaoId,
         });
       }
     }
@@ -460,26 +563,36 @@ export default function PageContent() {
   return (
     <div className="min-h-screen bg-blue-50 py-10 px-4">
       <div className="max-w-2xl mx-auto bg-white p-6 rounded shadow">
-        <div className="flex items-center gap-2 mb-4">
-          <h1 className="text-2xl font-bold text-blue-800">Registrar Equipe de desafiante</h1>
-          <button
-            type="button"
-            onClick={() => setShowInfo((v) => !v)}
-            className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 text-sm flex items-center justify-center"
-            title="Informações sobre registro"
-          >
-            ℹ️
-          </button>
+        <div className="flex flex-col gap-1 mb-4">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-blue-800">Registrar Equipe de desafiante</h1>
+            <button
+              type="button"
+              onClick={() => setShowInfo((v) => !v)}
+              className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 text-sm flex items-center justify-center"
+              title="Informações sobre registro"
+            >
+              ℹ️
+            </button>
+          </div>
           <span>Atenção ao regulamento da liga {liga}</span>
+
+          <div className="mt-2 text-xs text-gray-700 bg-blue-50 border border-blue-100 rounded p-2">
+            <p>
+              Pontos de Presença(PP) disponíveis:{" "}
+              <strong>{ppDisponiveis}</strong>
+            </p>
+          </div>
         </div>
 
         {showInfo && (
           <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-gray-700">
             <p>• Você pode registrar até <strong>6 Pokémon</strong> por liga/temporada.</p>
             <p>• Pode adicionar aos poucos, um por vez.</p>
-            <p>• Pokémon já registrados não podem ser removidos aqui — apenas os novos que ainda não foram salvos.</p>
+            <p>• Pokémon já registrados não podem ser removidos de graça.</p>
+            <p>• Para trocar um Pokémon já registrado, use <strong>Passar Bastão</strong>, que consome <strong>5 PPs</strong> e libera a vaga.</p>
             <p>• Só os Pokémon registrados ficam válidos para batalhas oficiais.</p>
-            <p>• O jogo só aceita Pokémon com poder de combate limitado para a liga Great(1500) Ultra(2500) Master(Ilimitado).</p>
+            <p>• O jogo só aceita Pokémon com poder de combate limitado para a liga Great (1500), Ultra (2500) ou Master (ilimitado).</p>
             <p>• Este campeonato aceita mega evolução, mantendo o limite de poder de combate da liga {liga}.</p>
           </div>
         )}
@@ -493,7 +606,8 @@ export default function PageContent() {
         {selectedPokemons.length > 0 && (
           <div className="mt-4 space-y-2">
             <p className="mt-2 text-sm font-semibold text-red-600">
-              Esta equipe será a única que você poderá usar para desafiar todos os treinadores e ginásios até o final da temporada. Escolha muito bem!
+              Esta equipe será a única que você poderá usar para desafiar todos os treinadores e ginásios até o final da temporada.
+              Escolha muito bem!
             </p>
 
             <p className="text-sm text-gray-700">
@@ -503,21 +617,33 @@ export default function PageContent() {
               {selectedPokemons.map((p) => {
                 const baseName = p.replace(/\s*\(.+\)\s*$/, "");
                 const baseId = nameToId[baseName];
+                const jaSalvo = savedPokemons.includes(p);
+
                 return (
                   <li
                     key={p}
                     className="flex flex-col items-center bg-yellow-100 px-3 py-1 rounded"
                   >
-                    <span className="flex items-center gap-2 text-blue-800 font-bold">
+                    <span className="flex items-center gap-2 text-blue-800 font-bold text-sm text-center">
                       <PokemonMini displayName={p} baseId={baseId} size={24} />
                       {p}
                     </span>
-                    {!savedPokemons.includes(p) && (
+
+                    {!jaSalvo ? (
                       <button
                         onClick={() => handleRemove(p)}
-                        className="text-red-600 font-bold hover:underline"
+                        disabled={loading}
+                        className="text-red-600 font-bold hover:underline text-xs mt-1 disabled:opacity-50"
                       >
                         Remover
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handlePassarBastao(p)}
+                        disabled={loading}
+                        className="text-purple-700 font-bold hover:underline text-xs mt-1 disabled:opacity-50"
+                      >
+                        Passar Bastão (-5 PP)
                       </button>
                     )}
                   </li>
