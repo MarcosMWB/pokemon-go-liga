@@ -869,7 +869,7 @@ export default function DisputaGinasioPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {meuParticipante?.tipo_escolhido != '' && p.tipo_escolhido && (
+                  {meuParticipante?.tipo_escolhido && p.tipo_escolhido && (
                     <button
                       onClick={() => handleChamar(p.usuario_uid)}
                       className="bg-slate-800 text-white text-xs px-3 py-1 rounded"
