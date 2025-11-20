@@ -193,7 +193,9 @@ export default function GinasiosPage() {
   const [desafios, setDesafios] = useState<Desafio[]>([]);
   const [bloqueios, setBloqueios] = useState<Bloqueio[]>([]);
   const [disputas, setDisputas] = useState<Disputa[]>([]);
-  const [participacoesDisputa, setParticipacoesDisputa] = useState<{ disputa_id: string; usuario_uid: string }[]>([]);
+  const [participacoesDisputa, setParticipacoesDisputa] = useState<
+    { disputa_id: string; usuario_uid: string }[]
+  >([]);
   const [temporada, setTemporada] = useState<{ id: string; nome?: string } | null>(null);
   const [minhasInsignias, setMinhasInsignias] = useState<Insignia[]>([]);
   const [loading, setLoading] = useState(true);
@@ -211,26 +213,43 @@ export default function GinasiosPage() {
   const [nomesUsuarios, setNomesUsuarios] = useState<Record<string, string>>({});
 
   // desafio selecionado por ginásio (para o líder alternar entre desafiantes)
-  const [desafioSelecionadoPorGinasio, setDesafioSelecionadoPorGinasio] = useState<Record<string, string>>({});
+  const [desafioSelecionadoPorGinasio, setDesafioSelecionadoPorGinasio] = useState<
+    Record<string, string>
+  >({});
 
   // CHAT
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDesafioId, setChatDesafioId] = useState<string | null>(null);
-  const [chatMsgs, setChatMsgs] = useState<{ id: string; from: string; text: string; createdAt: any }[]>([]);
+  const [chatMsgs, setChatMsgs] = useState<
+    { id: string; from: string; text: string; createdAt: any }[]
+  >([]);
   const [chatInput, setChatInput] = useState('');
   const [chatOtherName, setChatOtherName] = useState('Treinador');
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
+  const [showChatInfo, setShowChatInfo] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
-  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
+  const chatBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const isAndroid =
+    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
   const qrSrc = (data: string) =>
     `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(data)}`;
   const buildPoGoFriendLinks = (fc: string) => {
     const native = `pokemongo://?dl_action=AddFriend&DlId=${encodeURIComponent(fc)}`;
-    const androidIntent = `intent://?dl_action=AddFriend&DlId=${encodeURIComponent(fc)}#Intent;scheme=pokemongo;package=com.nianticlabs.pokemongo;end`;
+    const androidIntent = `intent://?dl_action=AddFriend&DlId=${encodeURIComponent(
+      fc
+    )}#Intent;scheme=pokemongo;package=com.nianticlabs.pokemongo;end`;
     return { native, androidIntent };
   };
+
+  // scroll automático pro fim do chat
+  useEffect(() => {
+    if (chatOpen && chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [chatOpen, chatMsgs.length]);
 
   // 1) auth
   useEffect(() => {
@@ -640,6 +659,7 @@ export default function GinasiosPage() {
     setChatDesafioId(desafioId);
     setChatMsgs([]);
     setChatInput('');
+    setShowChatInfo(false);
 
     const otherUid = d.lider_uid === userUid ? d.desafiante_uid : d.lider_uid;
     setSouLiderNoChat(d.lider_uid === userUid);
@@ -700,6 +720,7 @@ export default function GinasiosPage() {
     setChatMsgs([]);
     setChatInput('');
     setChatOtherFC(null);
+    setShowChatInfo(false);
   }
 
   async function sendChatMessage() {
@@ -877,10 +898,7 @@ export default function GinasiosPage() {
         );
 
         const desafiosPendentesGinasio = desafios.filter(
-          (d) =>
-            d.ginasio_id === g.id &&
-            !d.disputa_id &&
-            d.status === 'pendente'
+          (d) => d.ginasio_id === g.id && !d.disputa_id && d.status === 'pendente'
         );
 
         const souLiderDesseGinasio = g.lider_uid === userUid;
@@ -1193,7 +1211,37 @@ export default function GinasiosPage() {
               </div>
             </div>
 
-            <div className="mt-4 border rounded-lg p-3 max-h-72 overflow-auto bg-slate-50">
+            <div className="mt-3 flex items-start gap-2 text-xs text-slate-600">
+              <button
+                type="button"
+                onClick={() => setShowChatInfo((v) => !v)}
+                className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-100 border border-slate-300 text-[10px] font-bold"
+                title="Informações sobre o chat"
+              >
+                i
+              </button>
+              <div>
+                <p>
+                  Converse com o adversário para combinar horário, local e forma de
+                  contato da batalha.
+                </p>
+                {showChatInfo && (
+                  <ul className="list-disc pl-4 mt-1 space-y-1">
+                    <li>Combine dia, horário e se será presencial ou remoto.</li>
+                    <li>Confirme a liga usada e a quantidade de partidas.</li>
+                    <li>
+                      Se der algum problema, registre no chat antes de declarar o
+                      resultado.
+                    </li>
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            <div
+              ref={chatBoxRef}
+              className="mt-4 border rounded-lg p-3 max-h-60 overflow-auto bg-slate-50"
+            >
               {chatMsgs.length === 0 ? (
                 <p className="text-xs text-slate-500">Nenhuma mensagem ainda.</p>
               ) : (
