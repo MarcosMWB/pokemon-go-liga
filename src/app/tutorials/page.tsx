@@ -113,25 +113,33 @@ function TutorialDesafiosGinasio() {
 
       <div className="rounded-md border p-4 bg-indigo-50">
         <h3 className="font-semibold mb-1">Cadastro do Time da Temporada</h3>
+
         <p className="text-sm text-indigo-900">
           Cadastre seu time que será usado em todos os desafios da <b>temporada</b> na área de perfil do jogador (seu
-          cadastro de time). Monte um time ideal para enfrentar todos os desafios, você pode adicionar apenas um pokémon e adicionar os outros 5 conforme julgar necessário. Você pode apenas desafiar os líderes, usando qualquer Pokémon da espécie declarada.
-          <div className="rounded-md border p-4 bg-yellow-50">
-            <ul className="list-disc pl-5 text-sm text-yellow-900 space-y-1">
-              <li>Exemplo: Declarado Espécie Kyurem, pode usar qualquer Kyurem que possuí, desde que respeite a liga selecionada. Poderia ser Kyurem, Kyurem-Black, Kyurem-White até mesmo mega Kyurem. Só não poderia usar uma variação regional do Kyurem por ser considerado outro pokémon</li>
-            </ul>
-          </div>
+          cadastro de time). Monte um time ideal para enfrentar todos os desafios, você pode adicionar apenas um Pokémon
+          e adicionar os outros 5 conforme julgar necessário. Você pode apenas desafiar os líderes, usando qualquer
+          Pokémon da espécie declarada.
         </p>
+
+        <div className="mt-3 rounded-md border p-4 bg-yellow-50">
+          <ul className="list-disc pl-5 text-sm text-yellow-900 space-y-1">
+            <li>
+              Exemplo: Declarado espécie Kyurem, pode usar qualquer Kyurem que possuir, desde que respeite a liga
+              selecionada. Poderia ser Kyurem, Kyurem-Black, Kyurem-White, até mesmo mega Kyurem. Só não poderia usar uma
+              variação regional do Kyurem por ser considerado outro Pokémon.
+            </li>
+          </ul>
+        </div>
       </div>
+
       <div className="rounded-md border p-4 bg-yellow-50">
         <h3 className="font-semibold mb-1">Dicas rápidas</h3>
         <ul className="list-disc pl-5 text-sm text-yellow-900 space-y-1">
           <li>Use o chat do desafio para combinar horário, local e forma de contato.</li>
-
           <li>Respeite as regras específicas da liga e do ginásio (quando existirem).</li>
         </ul>
       </div>
-    </div >
+    </div>
   );
 }
 
