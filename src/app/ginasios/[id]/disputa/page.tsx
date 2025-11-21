@@ -91,17 +91,19 @@ function toMillis(v: any): number | null {
   return null;
 }
 function fmtCountdown(msDiff: number): string {
-  const neg = msDiff < 0;
-  const abs = Math.abs(msDiff);
-  const d = Math.floor(abs / 86400000);
-  const h = Math.floor((abs % 86400000) / 3600000);
-  const m = Math.floor((abs % 3600000) / 60000);
+  const ms = Math.max(0, msDiff);
+  const d = Math.floor(ms / 86400000);
+  const h = Math.floor((ms % 86400000) / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+
   const parts: string[] = [];
   if (d) parts.push(`${d}d`);
   if (h || d) parts.push(`${h}h`);
   parts.push(`${m}m`);
-  return neg ? `em: ${parts.join(" ")}` : `em ${parts.join(" ")}`;
+
+  return `em ${parts.join(" ")}`;
 }
+
 
 export default function DisputaGinasioPage() {
   const params = useParams();
@@ -434,7 +436,7 @@ export default function DisputaGinasioPage() {
       if (!disputa || disputa.status !== "inscricoes" || !userUid || !meuParticipante?.id || !meuParticipante?.tipo_escolhido) return;
 
       const escolhido = meuParticipante.tipo_escolhido;
-      const ocupou = escolhido !== disputa.tipo_original && ocupados.includes(escolhido);
+      const ocupou = ocupados.includes(escolhido);
       if (ocupou) {
         try {
           await updateDoc(doc(db, "disputas_ginasio_participantes", meuParticipante.id), {
@@ -591,7 +593,7 @@ export default function DisputaGinasioPage() {
         const du = u.data() as any;
         other = { id: otherUid, nome: du.nome || du.email || otherUid, email: du.email, friend_code: du.friend_code };
       }
-    } catch {}
+    } catch { }
     setChatOther(other);
 
     const msgsQ = query(
@@ -645,18 +647,17 @@ export default function DisputaGinasioPage() {
 
   const tiposPermitidos = TIPOS.filter((t) => {
     if (!disputa) return true;
-    if (t === disputa.tipo_original) return true;
     return !ocupados.includes(t);
   });
 
   const pendentesParaMim =
     userUid
       ? resultados.filter((r) => {
-          if (r.status !== "pendente") return false;
-          if (r.declarado_por === userUid) return false;
-          if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
-          return r.perdedor_uid === userUid;
-        })
+        if (r.status !== "pendente") return false;
+        if (r.declarado_por === userUid) return false;
+        if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
+        return r.perdedor_uid === userUid;
+      })
       : [];
 
   const participantesOrdenados = useMemo(() => {
@@ -684,6 +685,7 @@ export default function DisputaGinasioPage() {
     disputa?.status === "inscricoes" && battleStartMs != null;
   const showEndCountdown =
     (disputa?.status === "inscricoes" || disputa?.status === "batalhando") && disputeEndMs != null;
+  const now = Date.now();
 
   useEffect(() => {
     const loadWinner = async () => {
@@ -754,32 +756,49 @@ export default function DisputaGinasioPage() {
               <code>tempo_inscricoes</code> e <code>tempo_batalhas</code>.
             </p>
           ) : disputa.createdAtMs == null ? (
-            <p>Sem <code>createdAt</code> na disputa — não dá para calcular os prazos.</p>
+            <p>
+              Sem <code>createdAt</code> na disputa — não dá para calcular os prazos.
+            </p>
           ) : (
             <>
-              {showStartCountdown && (
-                <p>
-                  Fase de batalhas começa {fmtCountdown((battleStartMs ?? 0) - Date.now())}{" "}
-                  <span className="text-xs text-indigo-700">
-                    (inscrições: {tempoInscricoesHoras} horas de inscrições)
-                  </span>
-                </p>
+              {showStartCountdown && battleStartMs != null && (
+                now < battleStartMs ? (
+                  <p>
+                    Fase de batalhas começa {fmtCountdown(battleStartMs - now)}{" "}
+                    <span className="text-xs text-indigo-700">
+                      (inscrições: {tempoInscricoesHoras} horas de inscrições)
+                    </span>
+                  </p>
+                ) : (
+                  <p>
+                    Esperando administrador iniciar a fase de batalhas.
+                  </p>
+                )
               )}
-              {showEndCountdown && (
-                <p>
-                  Disputa pelo ginásio termina {fmtCountdown((disputeEndMs ?? 0) - Date.now())}{" "}
-                  <span className="text-xs text-indigo-700">
-                    (batalhas: {tempoBatalhasHoras} horas de batalhas)
-                  </span>
-                </p>
+
+              {showEndCountdown && disputeEndMs != null && (
+                now < disputeEndMs ? (
+                  <p>
+                    Disputa pelo ginásio termina {fmtCountdown(disputeEndMs - now)}{" "}
+                    <span className="text-xs text-indigo-700">
+                      (batalhas: {tempoBatalhasHoras} horas de batalhas)
+                    </span>
+                  </p>
+                ) : (
+                  <p>
+                    Esperando administrador encerrar a disputa.
+                  </p>
+                )
               )}
             </>
           )}
         </div>
       ) : (
+        // bloco verde de "Parabéns" que já existe
         <div className="bg-green-50 border border-green-200 rounded p-3 text-green-800">
           <p>
-            🎉 Parabéns <b>{winnerName || "ao novo líder"}</b>! Você é o novo líder do ginásio <b>{ginasio.nome}</b>.
+            🎉 Parabéns <b>{winnerName || "ao novo líder"}</b>! Você é o novo líder do ginásio{" "}
+            <b>{ginasio.nome}</b>.
           </p>
         </div>
       )}
@@ -799,9 +818,8 @@ export default function DisputaGinasioPage() {
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
-                meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
-              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
               <span className="capitalize">{t}</span>
@@ -1055,11 +1073,10 @@ export default function DisputaGinasioPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${
-                          mine
-                            ? "self-end bg-blue-600 text-white"
-                            : "self-start bg-white border"
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
+                          ? "self-end bg-blue-600 text-white"
+                          : "self-start bg-white border"
+                          }`}
                       >
                         <p>{m.text}</p>
                       </div>
