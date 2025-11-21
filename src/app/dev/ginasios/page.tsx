@@ -16,6 +16,7 @@ import {
   updateDoc,
   deleteDoc,
   doc,
+  writeBatch,
 } from "firebase/firestore";
 
 type Ginasio = {
@@ -48,6 +49,14 @@ type Renuncia = {
   createdAtMs?: number | null;
 };
 
+type JobDisputa = {
+  id: string;
+  ginasio_id: string;
+  acao: "criar_disputa" | "iniciar_disputa";
+  runAtMs: number;
+  status: "pendente" | "executado" | "erro" | "cancelado";
+};
+
 function toMillis(v: any): number | null {
   if (!v) return null;
   if (typeof v === "number") return v;
@@ -59,6 +68,7 @@ function toMillis(v: any): number | null {
   }
   return null;
 }
+
 function tempoRelativo(ms?: number | null) {
   if (!ms) return "indeterminado";
   const diff = Date.now() - ms;
@@ -70,6 +80,21 @@ function tempoRelativo(ms?: number | null) {
   if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24);
   return `${d}d`;
+}
+
+function formatCountdownFromNow(targetMs: number, nowMs: number) {
+  const diff = targetMs - nowMs;
+  if (diff <= 0) return "agora (ou já deveria ter rodado)";
+
+  const totalSec = Math.floor(diff / 1000);
+  const s = totalSec % 60;
+  const totalMin = Math.floor(totalSec / 60);
+  const m = totalMin % 60;
+  const h = Math.floor(totalMin / 60);
+
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 /** Fecha qualquer liderança ativa do ginásio (para registrar o término no histórico). */
@@ -177,6 +202,14 @@ export default function DevGinasiosPage() {
 
   const [temporada, setTemporada] = useState<Temporada>(null);
   const [renunciasMap, setRenunciasMap] = useState<Record<string, Renuncia>>({});
+  const [jobs, setJobs] = useState<JobDisputa[]>([]);
+  const [nowMs, setNowMs] = useState(Date.now());
+
+  // ticker de 1s para o countdown
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // 1) auth + superusers (getDoc direto no doc {uid})
   useEffect(() => {
@@ -297,6 +330,30 @@ export default function DevGinasiosPage() {
     }
 
     loadAll();
+  }, [isAdmin]);
+
+  // 3.1) carregar jobs pendentes de disputa (para countdown)
+  useEffect(() => {
+    if (isAdmin !== true) return;
+    (async () => {
+      const snap = await getDocs(
+        query(
+          collection(db, "jobs_disputas"),
+          where("status", "==", "pendente")
+        )
+      );
+      const list: JobDisputa[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          ginasio_id: data.ginasio_id,
+          acao: data.acao,
+          runAtMs: data.runAtMs || 0,
+          status: data.status || "pendente",
+        };
+      });
+      setJobs(list);
+    })();
   }, [isAdmin]);
 
   const getDisputaDoGinasio = (gId: string) =>
@@ -636,6 +693,150 @@ export default function DevGinasiosPage() {
     });
   };
 
+  const askHours = (label: string) => {
+    const input = prompt(`Em quantas horas deseja ${label}?`, "1");
+    if (!input) return null;
+    const h = Number(input.replace(",", "."));
+    if (isNaN(h) || h <= 0) {
+      alert("Valor inválido. Use um número maior que zero.");
+      return null;
+    }
+    return h;
+  };
+
+  const handleAgendarCriarDisputaCloud = async (g: Ginasio) => {
+    const ja = getDisputaDoGinasio(g.id);
+    if (ja) {
+      alert("Este ginásio já tem disputa aberta.");
+      return;
+    }
+
+    const h = askHours("CRIAR a disputa");
+    if (h == null) return;
+
+    const runAtMs = Date.now() + h * 60 * 60 * 1000;
+
+    try {
+      const ref = await addDoc(collection(db, "jobs_disputas"), {
+        ginasio_id: g.id,
+        acao: "criar_disputa",
+        runAtMs,
+        status: "pendente",
+        createdAt: Date.now(),
+        createdByUid: auth.currentUser?.uid || null,
+
+        // meta pra facilitar na Function (snapshot do estado atual)
+        liga: g.liga || g.liga_nome || "",
+        tipo_original: g.tipo || "",
+        temporada_id: temporada?.id || "",
+        temporada_nome: temporada?.nome || "",
+        origem: "agendado_cloud",
+      });
+
+      setJobs((prev) => [
+        ...prev,
+        {
+          id: ref.id,
+          ginasio_id: g.id,
+          acao: "criar_disputa",
+          runAtMs,
+          status: "pendente",
+        },
+      ]);
+
+      alert(`Job criado: disputa será criada em ~${h} hora(s) (Cloud).`);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao criar job de disputa (veja o console).");
+    }
+  };
+
+  const handleAgendarIniciarDisputaCloud = async (g: Ginasio) => {
+    const disputa = getDisputaDoGinasio(g.id);
+    if (!disputa || disputa.status !== "inscricoes") {
+      alert("Não há disputa em inscrições para iniciar.");
+      return;
+    }
+
+    const h = askHours("INICIAR a disputa");
+    if (h == null) return;
+
+    const runAtMs = Date.now() + h * 60 * 60 * 1000;
+
+    try {
+      const ref = await addDoc(collection(db, "jobs_disputas"), {
+        ginasio_id: g.id,
+        disputa_id: disputa.id,
+        acao: "iniciar_disputa",
+        runAtMs,
+        status: "pendente",
+        createdAt: Date.now(),
+        createdByUid: auth.currentUser?.uid || null,
+        origem: "agendado_cloud",
+      });
+
+      setJobs((prev) => [
+        ...prev,
+        {
+          id: ref.id,
+          ginasio_id: g.id,
+          acao: "iniciar_disputa",
+          runAtMs,
+          status: "pendente",
+        },
+      ]);
+
+      alert(`Job criado: disputa será iniciada em ~${h} hora(s) (Cloud).`);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao criar job de início de disputa (veja o console).");
+    }
+  };
+
+  const handleCancelarJobsCloud = async (g: Ginasio) => {
+    const ok = window.confirm(
+      `Cancelar TODOS os agendamentos (Cloud) pendentes deste ginásio?`
+    );
+    if (!ok) return;
+
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "jobs_disputas"),
+          where("ginasio_id", "==", g.id),
+          where("status", "==", "pendente")
+        )
+      );
+
+      if (snap.empty) {
+        alert("Nenhum agendamento pendente para este ginásio.");
+        return;
+      }
+
+      const batch = writeBatch(db);
+      snap.docs.forEach((jobDoc) => {
+        batch.update(jobDoc.ref, {
+          status: "cancelado",
+          canceladoPorUid: auth.currentUser?.uid || null,
+          canceladoEm: Date.now(),
+        });
+      });
+
+      await batch.commit();
+
+      setJobs((prev) =>
+        prev.filter(
+          (job) => !(job.ginasio_id === g.id && job.status === "pendente")
+        )
+      );
+
+      alert(`Cancelado(s) ${snap.size} agendamento(s).`);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao cancelar agendamentos (Cloud). Veja o console.");
+    }
+  };
+
   if (isAdmin === null || loading) return <p className="p-8">Carregando...</p>;
   if (isAdmin === false) return null;
 
@@ -678,6 +879,17 @@ export default function DevGinasiosPage() {
         const disputa = getDisputaDoGinasio(g.id);
         const ren = renunciasMap[g.id];
 
+        const jobsDoGinasio = jobs.filter(
+          (job) => job.ginasio_id === g.id && job.status === "pendente"
+        );
+        const proximoJob =
+          jobsDoGinasio.length === 0
+            ? null
+            : jobsDoGinasio.reduce<JobDisputa | null>((acc, job) => {
+                if (!acc) return job;
+                return job.runAtMs < acc.runAtMs ? job : acc;
+              }, null);
+
         return (
           <div
             key={g.id}
@@ -707,9 +919,21 @@ export default function DevGinasiosPage() {
                 Disputa: {disputa ? disputa.status : "nenhuma"}
               </p>
 
+              {proximoJob && (
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Próximo agendamento (
+                  {proximoJob.acao === "criar_disputa"
+                    ? "criar disputa"
+                    : "iniciar disputa"}
+                  ):{" "}
+                  {formatCountdownFromNow(proximoJob.runAtMs, nowMs)} (
+                  {new Date(proximoJob.runAtMs).toLocaleString("pt-BR")})
+                </p>
+              )}
+
               <Link
                 href={`/ginasios/${g.id}/disputa`}
-                className="text-xs text-blue-600 underline"
+                className="text-xs text-blue-600 underline mt-1 inline-block"
               >
                 Ver página da disputa
               </Link>
@@ -717,7 +941,8 @@ export default function DevGinasiosPage() {
               {ren && (
                 <div className="mt-2 text-xs text-gray-700">
                   <p>
-                    Renúncia por {ren.lider_uid} · há {tempoRelativo(ren.createdAtMs)}{" "}
+                    Renúncia por {ren.lider_uid} · há{" "}
+                    {tempoRelativo(ren.createdAtMs)}{" "}
                     {ren.motivo ? `· Motivo: ${ren.motivo}` : ""}
                   </p>
                   <p className="text-[10px] text-gray-400">ID renúncia: {ren.id}</p>
@@ -727,21 +952,41 @@ export default function DevGinasiosPage() {
 
             <div className="flex flex-col gap-2">
               {!disputa && (
-                <button
-                  onClick={() => handleCriarDisputa(g)}
-                  className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
-                >
-                  Criar disputa
-                </button>
+                <>
+                  <button
+                    onClick={() => handleCriarDisputa(g)}
+                    className="bg-purple-500 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Criar disputa
+                  </button>
+
+                  <button
+                    onClick={() => handleAgendarCriarDisputaCloud(g)}
+                    className="bg-purple-200 text-purple-900 px-3 py-1 rounded text-sm"
+                  >
+                    Agendar criação (Cloud)
+                  </button>
+                </>
               )}
+
               {disputa && disputa.status === "inscricoes" && (
-                <button
-                  onClick={() => handleIniciarDisputa(g)}
-                  className="bg-orange-500 text-white px-3 py-1 rounded text-sm"
-                >
-                  Iniciar disputa
-                </button>
+                <>
+                  <button
+                    onClick={() => handleIniciarDisputa(g)}
+                    className="bg-orange-500 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Iniciar disputa
+                  </button>
+
+                  <button
+                    onClick={() => handleAgendarIniciarDisputaCloud(g)}
+                    className="bg-orange-200 text-orange-900 px-3 py-1 rounded text-sm"
+                  >
+                    Agendar início (Cloud)
+                  </button>
+                </>
               )}
+
               {disputa && (
                 <button
                   onClick={() => handleEncerrarDisputa(g)}
@@ -750,6 +995,13 @@ export default function DevGinasiosPage() {
                   Encerrar disputa
                 </button>
               )}
+
+              <button
+                onClick={() => handleCancelarJobsCloud(g)}
+                className="bg-red-200 text-red-900 px-3 py-1 rounded text-xs"
+              >
+                Cancelar agendamentos (Cloud)
+              </button>
 
               {ren && (
                 <>
