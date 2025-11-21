@@ -254,8 +254,8 @@ export default function PontosPresencaPage() {
   const qrImg =
     qrUrl !== ''
       ? `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
-          qrUrl
-        )}`
+        qrUrl
+      )}`
       : ''
 
   const filtrados = usuarios.filter((u) =>
@@ -265,6 +265,22 @@ export default function PontosPresencaPage() {
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-8 flex flex-col gap-6">
       <h1 className="text-2xl font-bold text-slate-900">Pontos de Presença (PP)</h1>
+
+      <div className="w-full md:w-auto flex items-center justify-center">
+        {qrImg ? (
+          <Image
+            src={qrImg}
+            alt="QR Code de pontos de presença"
+            width={240}
+            height={240}
+            className="border rounded bg-white"
+          />
+        ) : (
+          <div className="w-60 h-60 border-dashed border-2 border-slate-300 rounded flex items-center justify-center text-sm text-slate-500 text-center p-4">
+            Nenhum QR Code ativo. Clique em &quot;Criar QR Code&quot;.
+          </div>
+        )}
+      </div>
 
       {/* Bloco do QRCode + ponto de encontro */}
       <div className="bg-white rounded-lg shadow p-4 flex flex-col md:flex-row gap-4">
@@ -332,22 +348,6 @@ export default function PontosPresencaPage() {
           {qrUrl && (
             <div className="mt-3 text-xs text-slate-500 break-all">
               URL de leitura: <span className="font-mono">{qrUrl}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="w-full md:w-auto flex items-center justify-center">
-          {qrImg ? (
-            <Image
-              src={qrImg}
-              alt="QR Code de pontos de presença"
-              width={240}
-              height={240}
-              className="border rounded bg-white"
-            />
-          ) : (
-            <div className="w-60 h-60 border-dashed border-2 border-slate-300 rounded flex items-center justify-center text-sm text-slate-500 text-center p-4">
-              Nenhum QR Code ativo. Clique em &quot;Criar QR Code&quot;.
             </div>
           )}
         </div>
