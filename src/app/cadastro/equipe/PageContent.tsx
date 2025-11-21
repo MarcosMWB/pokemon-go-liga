@@ -81,7 +81,7 @@ function computeBatonPassCost(base: number, up: number, uses: number) {
   const b = Number.isFinite(base) ? base : 5;
   const u = Number.isFinite(up) ? up : 0;
   const n = uses < 0 ? 0 : uses;
-  const level = Math.min(n, 2); // até a 3ª vez (0, 1, 2)
+  const level = Math.min(n, 3); // até a 3ª vez (0, 1, 2, 3)
   return b + u * level;
 }
 
@@ -169,8 +169,13 @@ export default function PageContent() {
   const [ppGanhos, setPpGanhos] = useState<number>(0);
   const [ppConsumidos, setPpConsumidos] = useState<number>(0);
 
-  // uso do Passar Bastão por usuário
+  // uso do Passar Bastão por usuário (controlado por temporada)
   const [batonUses, setBatonUses] = useState<number>(0);
+
+  // temporada ativa (pra saber se precisa resetar usos)
+  const [temporadaAtiva, setTemporadaAtiva] = useState<{ id: string; nome?: string } | null>(
+    null
+  );
 
   // config global do custo
   const [batonBaseCost, setBatonBaseCost] = useState<number>(5);
@@ -331,6 +336,29 @@ export default function PageContent() {
     loadConfig();
   }, []);
 
+  // 3c. carregar temporada ativa (para controle de usos por temporada)
+  useEffect(() => {
+    const loadTemporadaAtiva = async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, "temporadas"), where("ativa", "==", true))
+        );
+        if (!snap.empty) {
+          const d = snap.docs[0];
+          const data = d.data() as any;
+          setTemporadaAtiva({ id: d.id, nome: data.nome });
+        } else {
+          setTemporadaAtiva(null);
+        }
+      } catch (e) {
+        console.error("Erro ao carregar temporada ativa", e);
+        setTemporadaAtiva(null);
+      }
+    };
+
+    loadTemporadaAtiva();
+  }, []);
+
   // 4a. carregar equipe já salva + rascunho local (se existir) + guardar participação
   useEffect(() => {
     const fetchParticipacaoExistente = async () => {
@@ -410,7 +438,7 @@ export default function PageContent() {
     fetchParticipacaoExistente();
   }, [userId, liga]);
 
-  // 4b. carregar PPs do usuário (ganhos/consumidos + usos de Passar Bastão)
+  // 4b. carregar PPs do usuário (ganhos/consumidos + usos de Passar Bastão, por temporada)
   useEffect(() => {
     const loadPP = async () => {
       if (!userId) return;
@@ -419,11 +447,22 @@ export default function PageContent() {
         const snap = await getDoc(uRef);
         if (snap.exists()) {
           const data = snap.data() as any;
-          setPpGanhos(data.pontosPresenca ?? 0);
-          setPpConsumidos(
-            (data.pp_consumidos ?? data.pontosPresencaConsumidos ?? 0) as number
-          );
-          setBatonUses((data.pp_batonPass_uses ?? 0) as number);
+
+          const total = data.pontosPresenca ?? 0;
+          const consumidos = (data.pp_consumidos ?? data.pontosPresencaConsumidos ?? 0) as number;
+
+          const rawUses = (data.pp_batonPass_uses ?? 0) as number;
+          const storedSeasonId = data.pp_batonPass_temporadaId ?? null;
+          const activeSeasonId = temporadaAtiva?.id ?? null;
+
+          const effectiveUses =
+            activeSeasonId && storedSeasonId === activeSeasonId
+              ? Math.max(0, rawUses)
+              : 0;
+
+          setPpGanhos(total);
+          setPpConsumidos(consumidos);
+          setBatonUses(effectiveUses);
         } else {
           setPpGanhos(0);
           setPpConsumidos(0);
@@ -437,7 +476,7 @@ export default function PageContent() {
     };
 
     loadPP();
-  }, [userId]);
+  }, [userId, temporadaAtiva]);
 
   // 5. sempre que mudar o selectedPokemons, salvar rascunho local (sem tocar Firestore)
   useEffect(() => {
@@ -455,7 +494,7 @@ export default function PageContent() {
     setSelectedPokemons((prev) => prev.filter((p) => p !== name));
   };
 
-  // PASSAR BASTÃO: remover 1 Pokémon já registrado, gastando PPs dinâmicos
+  // PASSAR BASTÃO: remover 1 Pokémon já registrado, gastando PPs dinâmicos por temporada
   const handlePassarBastao = async (name: string) => {
     if (!userId || !participacaoId) {
       alert("Não consegui localizar sua participação. Atualize a página.");
@@ -491,7 +530,15 @@ export default function PageContent() {
       const total: number = uData.pontosPresenca ?? 0;
       const consumidosAtual: number =
         (uData.pp_consumidos ?? uData.pontosPresencaConsumidos ?? 0) as number;
-      const usesAtual: number = (uData.pp_batonPass_uses ?? 0) as number;
+
+      const rawUses: number = (uData.pp_batonPass_uses ?? 0) as number;
+      const storedSeasonId: string | null = uData.pp_batonPass_temporadaId ?? null;
+      const activeSeasonId: string | null = temporadaAtiva?.id ?? null;
+
+      const usesAtual =
+        activeSeasonId && storedSeasonId === activeSeasonId
+          ? Math.max(0, rawUses)
+          : 0;
 
       const custo = computeBatonPassCost(batonBaseCost, batonUpCost, usesAtual);
       const saldo = total - consumidosAtual;
@@ -516,17 +563,18 @@ export default function PageContent() {
 
       const pokemonRef = pokSnap.docs[0].ref;
 
-      // 3) debita PPs + incrementa uso + apaga o Pokémon
+      const novoConsumidos = consumidosAtual + custo;
+      const novoUses = usesAtual + 1;
+
+      // debita PPs + grava usos da temporada atual + apaga o Pokémon
       await Promise.all([
         updateDoc(userRef, {
           pp_consumidos: increment(custo),
-          pp_batonPass_uses: increment(1),
+          pp_batonPass_uses: novoUses,
+          pp_batonPass_temporadaId: activeSeasonId ?? null,
         }),
         deleteDoc(pokemonRef),
       ]);
-
-      const novoConsumidos = consumidosAtual + custo;
-      const novoUses = usesAtual + 1;
 
       setPpGanhos(total);
       setPpConsumidos(novoConsumidos);

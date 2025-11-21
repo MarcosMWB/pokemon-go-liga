@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 import { auth, db } from '@/lib/firebase'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import {
@@ -20,7 +21,9 @@ import {
 type Usuario = {
   id: string
   nome: string
-  pontosPresenca?: number
+  pontosPresencaTotal: number
+  ppConsumidos: number
+  ppDisponiveis: number
 }
 
 // PONTO PADRÃO (Campo Grande / West Shopping)
@@ -28,7 +31,10 @@ const DEFAULT_LAT = -22.941834
 const DEFAULT_LNG = -43.057178
 
 export default function PontosPresencaPage() {
+  const router = useRouter()
+
   const [user, setUser] = useState<User | null>(null)
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
@@ -40,7 +46,9 @@ export default function PontosPresencaPage() {
   const [origin, setOrigin] = useState('')
 
   // localização usada para o QR atual
-  const [currentQrLoc, setCurrentQrLoc] = useState<{ lat: number; lng: number } | null>(null)
+  const [currentQrLoc, setCurrentQrLoc] = useState<{ lat: number; lng: number } | null>(
+    null
+  )
 
   // inputs de ponto de encontro
   const [adminLatInput, setAdminLatInput] = useState<string>('')
@@ -53,20 +61,38 @@ export default function PontosPresencaPage() {
     }
   }, [])
 
+  // Checa superuser e já decide se carrega ou redireciona
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u)
+
+      // não logado
       if (!u) {
+        setIsAdmin(false)
         setLoading(false)
         return
       }
 
+      // verifica se é superuser
+      const snap = await getDocs(collection(db, 'superusers'))
+      const is = snap.docs.some((d) => d.id === u.uid)
+      setIsAdmin(is)
+
+      // se não for admin, manda pro perfil
+      if (!is) {
+        setLoading(false)
+        router.replace(`/perfil/${u.uid}`)
+        return
+      }
+
+      // se for admin, carrega dados da página
       await Promise.all([loadUsuarios(), loadCurrentQr()])
       setLoading(false)
     })
 
     return () => unsub()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router])
 
   async function loadUsuarios() {
     setLoadingUsuarios(true)
@@ -74,10 +100,18 @@ export default function PontosPresencaPage() {
 
     const list: Usuario[] = snap.docs.map((d) => {
       const data = d.data() as any
+
+      const total: number = data.pontosPresenca ?? 0
+      const consumidos: number =
+        (data.pp_consumidos ?? data.pontosPresencaConsumidos ?? 0) as number
+      const disponiveis = Math.max(0, total - consumidos)
+
       return {
         id: d.id,
         nome: data.nome || data.friend_code || 'Treinador',
-        pontosPresenca: data.pontosPresenca || 0,
+        pontosPresencaTotal: total,
+        ppConsumidos: consumidos,
+        ppDisponiveis: disponiveis,
       }
     })
 
@@ -175,7 +209,9 @@ export default function PontosPresencaPage() {
   async function handleGrantPoint(usuario: Usuario) {
     if (!user) return
 
-    const ok = window.confirm(`Dar 1 ponto de presença para ${usuario.nome}?`)
+    const ok = window.confirm(
+      `Dar 1 ponto de presença para ${usuario.nome} (PP atual: ${usuario.ppDisponiveis})?`
+    )
     if (!ok) return
 
     const userRef = doc(db, 'usuarios', usuario.id)
@@ -193,13 +229,27 @@ export default function PontosPresencaPage() {
     await loadUsuarios()
   }
 
+  // estados de carregamento / acesso
   if (loading) {
     return <div className="p-6">Carregando...</div>
   }
 
+  // não logado
+  if (!user) {
+    return (
+      <div className="p-6 text-sm text-red-600">
+        Você precisa estar logado para acessar esta página.
+      </div>
+    )
+  }
+
+  // logado mas não admin — já está sendo redirecionado no useEffect
+  if (isAdmin === false) {
+    return <div className="p-6 text-sm">Redirecionando para seu perfil...</div>
+  }
+
   const qrUrl =
-    currentQrId && origin ? `${origin}/pp/scan?qr=${encodeURIComponent(currentQrId)}`
-    : ''
+    currentQrId && origin ? `${origin}/pp/scan?qr=${encodeURIComponent(currentQrId)}` : ''
 
   const qrImg =
     qrUrl !== ''
@@ -230,8 +280,8 @@ export default function PontosPresencaPage() {
           <div className="mt-2 mb-3">
             <p className="text-sm font-semibold text-slate-800 mb-1">Ponto de encontro</p>
             <p className="text-xs text-slate-500 mb-2">
-              Se você não preencher, será usado o ponto padrão
-              (Lat: {DEFAULT_LAT}, Lng: {DEFAULT_LNG}).
+              Se você não preencher, será usado o ponto padrão (Lat: {DEFAULT_LAT}, Lng:{' '}
+              {DEFAULT_LNG}).
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
@@ -259,11 +309,7 @@ export default function PontosPresencaPage() {
               Usar minha localização atual
             </button>
 
-            {locMsg && (
-              <p className="text-[11px] text-slate-500 mt-1">
-                {locMsg}
-              </p>
-            )}
+            {locMsg && <p className="text-[11px] text-slate-500 mt-1">{locMsg}</p>}
 
             {currentQrLoc && (
               <p className="text-[11px] text-slate-500 mt-1">
@@ -309,7 +355,9 @@ export default function PontosPresencaPage() {
 
       {/* Bloco de busca e aplicação manual de pontos */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h2 className="text-lg font-semibold text-slate-900 mb-3">Aplicar ponto manualmente</h2>
+        <h2 className="text-lg font-semibold text-slate-900 mb-3">
+          Aplicar ponto manualmente
+        </h2>
         <p className="text-xs text-slate-500 mb-3">
           Use quando o jogador participou do evento (check-in no Campfire, presença em raid,
           etc.) e você quer dar 1 PP manualmente.
@@ -335,9 +383,16 @@ export default function PontosPresencaPage() {
                 className="flex items-center justify-between border rounded px-3 py-2 bg-slate-50"
               >
                 <div>
-                  <p className="text-sm font-medium text-slate-800">{u.nome}</p>
+                  <p className="text-sm font-medium text-slate-800">
+                    {u.nome}{' '}
+                    <span className="text-xs text-slate-500">
+                      (PP: {u.ppDisponiveis})
+                    </span>
+                  </p>
                   <p className="text-xs text-slate-500">
-                    Pontos de presença: <strong>{u.pontosPresenca ?? 0}</strong>
+                    Total: <strong>{u.pontosPresencaTotal}</strong> | Consumidos:{' '}
+                    <strong>{u.ppConsumidos}</strong> | Disponíveis:{' '}
+                    <strong>{u.ppDisponiveis}</strong>
                   </p>
                 </div>
                 <button

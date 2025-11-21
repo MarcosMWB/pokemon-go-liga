@@ -25,6 +25,7 @@ type Usuario = {
   pp_consumidos?: number;              // campo oficial
   pontosPresencaConsumidos?: number;   // alias antigo (apenas leitura)
   pp_batonPass_uses?: number;          // quantas vezes já usou "Passar Bastão"
+  pp_batonPass_temporadaId?: string;   // temporada em que esses usos valem
 };
 
 type Participacao = { id: string; liga_nome?: string; pokemon: { nome: string }[] };
@@ -76,11 +77,15 @@ function buildFormSlug(displayName: string): string | null {
 }
 
 // custo dinâmico do Passar Bastão
+// base = PPcustoBatonPass.valor
+// up   = PPupBatonPass.valor
+// uses = quantas vezes o jogador já usou na temporada atual
+// ex: base=10, up=2 → 10, 12, 14, 16, 16, 16...
 function computeBatonPassCost(base: number, up: number, uses: number) {
   const b = Number.isFinite(base) ? base : 5;
   const u = Number.isFinite(up) ? up : 0;
   const n = uses < 0 ? 0 : uses;
-  const level = Math.min(n, 2); // até a 3ª vez (0, 1, 2)
+  const level = Math.min(n, 3); // até a 3ª vez (0, 1, 2, 3)
   return b + u * level;
 }
 
@@ -178,6 +183,9 @@ export default function EquipesPage() {
   const [batonBaseCost, setBatonBaseCost] = useState<number>(5);
   const [batonUpCost, setBatonUpCost] = useState<number>(0);
 
+  // temporada ativa (para resetar usos por temporada)
+  const [temporadaAtiva, setTemporadaAtiva] = useState<{ id: string; nome?: string } | null>(null);
+
   // carrega config de custo (global) do Firestore
   useEffect(() => {
     const loadConfig = async () => {
@@ -198,6 +206,29 @@ export default function EquipesPage() {
       }
     };
     loadConfig();
+  }, []);
+
+  // carrega temporada ativa
+  useEffect(() => {
+    const loadTemporadaAtiva = async () => {
+      try {
+        const qTemp = query(
+          collection(db, "temporadas"),
+          where("ativa", "==", true)
+        );
+        const snap = await getDocs(qTemp);
+        if (!snap.empty) {
+          const d = snap.docs[0];
+          const data = d.data() as any;
+          setTemporadaAtiva({ id: d.id, nome: data.nome });
+        } else {
+          setTemporadaAtiva(null);
+        }
+      } catch (e) {
+        console.warn("Erro carregando temporada ativa:", e);
+      }
+    };
+    loadTemporadaAtiva();
   }, []);
 
   // auth + carga principal
@@ -293,7 +324,17 @@ export default function EquipesPage() {
     0) as number;
   const ppDisponiveis = Math.max(0, pontosPresenca - ppConsumidos);
 
-  const batonUses = ((usuario as any)?.pp_batonPass_uses ?? 0) as number;
+  // usos do Baton Pass por temporada
+  const batonUsesRaw = ((usuario as any)?.pp_batonPass_uses ?? 0) as number;
+  const batonSeasonId = ((usuario as any)?.pp_batonPass_temporadaId ??
+    null) as string | null;
+
+  // se a temporada salva for diferente da temporada ativa, zera os usos para cálculo
+  const batonUses =
+    !temporadaAtiva?.id || batonSeasonId === temporadaAtiva.id
+      ? Math.max(0, batonUsesRaw)
+      : 0;
+
   const batonPassCost = computeBatonPassCost(batonBaseCost, batonUpCost, batonUses);
 
   async function handlePassarBastao(
@@ -330,7 +371,14 @@ export default function EquipesPage() {
       const total: number = uData.pontosPresenca ?? 0;
       const consumidosAtual: number =
         (uData.pp_consumidos ?? uData.pontosPresencaConsumidos ?? 0) as number;
-      const usesAtual: number = (uData.pp_batonPass_uses ?? 0) as number;
+
+      const seasonIdAtiva = temporadaAtiva?.id ?? null;
+      const storedSeasonId: string | null =
+        (uData.pp_batonPass_temporadaId as string | undefined) ?? null;
+      const rawUses: number = (uData.pp_batonPass_uses ?? 0) as number;
+
+      const usesAtual =
+        !seasonIdAtiva || storedSeasonId === seasonIdAtiva ? Math.max(0, rawUses) : 0;
 
       const custo = computeBatonPassCost(batonBaseCost, batonUpCost, usesAtual);
       const saldo = total - consumidosAtual;
@@ -346,7 +394,8 @@ export default function EquipesPage() {
                 ...prev,
                 pontosPresenca: total,
                 pp_consumidos: consumidosAtual,
-                pp_batonPass_uses: usesAtual,
+                pp_batonPass_uses: rawUses,
+                pp_batonPass_temporadaId: storedSeasonId ?? undefined,
               }
             : prev
         );
@@ -356,22 +405,23 @@ export default function EquipesPage() {
       const ok = window.confirm(
         `Remover ${pokemonNome} da equipe consumindo ${custo} Pontos de Presença?\n\n` +
           `PP disponíveis (atual no servidor): ${saldo}\n` +
-          `Após esta ação, o custo pode aumentar até a 3ª utilização.`
+          `O custo aumenta até a 3ª utilização em cada temporada.`
       );
       if (!ok) return;
 
       const pokemonRef = pokSnap.docs[0].ref;
 
+      const novoConsumidos = consumidosAtual + custo;
+      const novoUses = usesAtual + 1;
+
       const batch = writeBatch(db);
       batch.update(userRef, {
         pp_consumidos: increment(custo),
-        pp_batonPass_uses: increment(1),
+        pp_batonPass_uses: novoUses,
+        pp_batonPass_temporadaId: seasonIdAtiva || null,
       });
       batch.delete(pokemonRef);
       await batch.commit();
-
-      const novoConsumidos = consumidosAtual + custo;
-      const novoUses = usesAtual + 1;
 
       setUsuario((prev) =>
         prev
@@ -380,6 +430,7 @@ export default function EquipesPage() {
               pontosPresenca: total,
               pp_consumidos: novoConsumidos,
               pp_batonPass_uses: novoUses,
+              pp_batonPass_temporadaId: seasonIdAtiva || undefined,
             }
           : prev
       );
@@ -435,8 +486,8 @@ export default function EquipesPage() {
             PPs disponíveis: <strong>{ppDisponiveis}</strong>
           </p>
           <p className="mt-1 text-xs text-gray-600">
-            Custo atual do “Passar Bastão”: <strong>{batonPassCost} PP</strong> (pode
-            aumentar até a 3ª vez que você usar).
+            Custo atual do “Passar Bastão”: <strong>{batonPassCost} PP</strong>{" "}
+            (aumenta até a 3ª vez em cada temporada).
           </p>
         </div>
       )}
