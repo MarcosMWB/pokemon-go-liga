@@ -971,11 +971,11 @@ export default function PerfilPage() {
         setUsuario((prev) =>
           prev
             ? {
-                ...prev,
-                pontosPresencaTotal: total,
-                ppConsumidos: consumidosAtual,
-                ppDisponiveis: disponiveis,
-              }
+              ...prev,
+              pontosPresencaTotal: total,
+              ppConsumidos: consumidosAtual,
+              ppDisponiveis: disponiveis,
+            }
             : prev
         );
         setWishUses(usesAtual);
@@ -984,7 +984,7 @@ export default function PerfilPage() {
 
       const ok = window.confirm(
         `Gastar ${custo} PP para remover 1 derrota do ginásio "${g.nome}"?\n\n` +
-          `PP disponíveis (no servidor): ${disponiveis}`
+        `PP disponíveis (no servidor): ${disponiveis}`
       );
       if (!ok) return;
 
@@ -1006,11 +1006,11 @@ export default function PerfilPage() {
       setUsuario((prev) =>
         prev
           ? {
-              ...prev,
-              pontosPresencaTotal: total,
-              ppConsumidos: novoConsumidos,
-              ppDisponiveis: Math.max(0, disponiveis - custo),
-            }
+            ...prev,
+            pontosPresencaTotal: total,
+            ppConsumidos: novoConsumidos,
+            ppDisponiveis: Math.max(0, disponiveis - custo),
+          }
           : prev
       );
       setWishUses(novoUses);
@@ -1029,13 +1029,17 @@ export default function PerfilPage() {
   }
 
   /* =======================
-     RENUNCIAR – FECHANDO MANDATO
-  ======================= */
+   RENUNCIAR – FECHANDO MANDATO
+======================= */
 
   async function handleRenunciar(g: Ginasio) {
     if (renunciando) return;
     setRenunciando(g.id);
+
     try {
+      const now = Date.now();
+
+      // Fechar mandatos abertos desse líder nesse ginásio
       if (g.lider_uid) {
         const qAberto = query(
           collection(db, 'ginasios_liderancas'),
@@ -1045,21 +1049,27 @@ export default function PerfilPage() {
         );
         const snapAberto = await getDocs(qAberto);
         await Promise.all(
-          snapAberto.docs.map((d) => updateDoc(d.ref, { fim: Date.now() }))
+          snapAberto.docs.map((d) => updateDoc(d.ref, { fim: now }))
         );
       }
 
-      await addDoc(collection(db, 'disputas_ginasio'), {
+      // Criar JOB para a Cloud Function gerar a disputa automaticamente
+      await addDoc(collection(db, 'jobs_disputas'), {
+        acao: 'criar_disputa',
+        status: 'pendente',
         ginasio_id: g.id,
-        status: 'inscricoes',
         tipo_original: g.tipo || '',
         lider_anterior_uid: g.lider_uid || '',
         temporada_id: temporadaAtiva?.id || '',
         temporada_nome: temporadaAtiva?.nome || '',
         liga: g.liga || '',
-        createdAt: Date.now(),
+        origem: 'renuncia_perfil',
+        runAtMs: now,           // rodar agora
+        createdAt: now,
+        createdByUid: perfilUid,
       });
 
+      // Atualizar ginásio: sem líder, em disputa, derrota resetada
       await updateDoc(doc(db, 'ginasios', g.id), {
         lider_uid: '',
         em_disputa: true,
@@ -1403,8 +1413,8 @@ export default function PerfilPage() {
                     tempId === '__sem_temporada__'
                       ? 'Sem temporada'
                       : temporadasMap[tempId]?.nome ||
-                        arr[0]?.temporada_nome ||
-                        tempId;
+                      arr[0]?.temporada_nome ||
+                      tempId;
 
                   return (
                     <div key={tempId}>
@@ -1602,11 +1612,10 @@ export default function PerfilPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded ${
-                          mine
-                            ? 'self-end bg-blue-600 text-white'
-                            : 'self-start bg-white border'
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded ${mine
+                          ? 'self-end bg-blue-600 text-white'
+                          : 'self-start bg-white border'
+                          }`}
                       >
                         <p className="text-xs">{m.text}</p>
                       </div>

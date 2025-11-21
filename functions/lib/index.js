@@ -232,18 +232,23 @@ exports.processDisputeJobs = (0, scheduler_1.onSchedule)({
     timeZone: "America/Sao_Paulo",
 }, async () => {
     const now = Date.now();
+    // busca jobs pendentes (sem índice composto com runAtMs)
     const jobsSnap = await db
         .collection("jobs_disputas")
         .where("status", "==", "pendente")
-        .where("runAtMs", "<=", now)
-        .limit(20)
+        .limit(50)
         .get();
-    if (jobsSnap.empty) {
-        console.log("Nenhum job pendente.");
+    const dueJobs = jobsSnap.docs.filter((doc) => {
+        const data = doc.data();
+        const runAtMs = typeof data.runAtMs === "number" ? data.runAtMs : 0;
+        return runAtMs <= now;
+    });
+    if (dueJobs.length === 0) {
+        console.log("Nenhum job pendente no horário.");
         return;
     }
-    console.log(`Encontrados ${jobsSnap.size} job(s) pendentes.`);
-    for (const jobDoc of jobsSnap.docs) {
+    console.log(`Encontrados ${dueJobs.length} job(s) vencidos.`);
+    for (const jobDoc of dueJobs) {
         const job = jobDoc.data();
         try {
             if (job.acao === "criar_disputa") {

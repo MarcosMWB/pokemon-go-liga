@@ -23,8 +23,24 @@ import {
 } from "firebase/firestore";
 
 const TIPOS = [
-  "normal", "fire", "water", "grass", "electric", "ice", "fighting", "poison", "ground", "flying",
-  "psychic", "bug", "rock", "ghost", "dragon", "dark", "steel", "fairy",
+  "normal",
+  "fire",
+  "water",
+  "grass",
+  "electric",
+  "ice",
+  "fighting",
+  "poison",
+  "ground",
+  "flying",
+  "psychic",
+  "bug",
+  "rock",
+  "ghost",
+  "dragon",
+  "dark",
+  "steel",
+  "fairy",
 ];
 
 type Ginasio = {
@@ -104,7 +120,6 @@ function fmtCountdown(msDiff: number): string {
   return `em ${parts.join(" ")}`;
 }
 
-
 export default function DisputaGinasioPage() {
   const params = useParams();
   const router = useRouter();
@@ -127,13 +142,16 @@ export default function DisputaGinasioPage() {
   // CHAT
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDesafioId, setChatDesafioId] = useState<string | null>(null);
-  const [chatMsgs, setChatMsgs] = useState<{ id: string; from: string; text: string; createdAt: any }[]>([]);
+  const [chatMsgs, setChatMsgs] = useState<
+    { id: string; from: string; text: string; createdAt: any }[]
+  >([]);
   const [chatOther, setChatOther] = useState<Usuario | null>(null);
   const [chatInput, setChatInput] = useState("");
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
   const chatBoxRef = useRef<HTMLDivElement | null>(null); // para auto-scroll
-  const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
+  const isAndroid =
+    typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
 
   // info do "Converse com o adversário"
   const [chatInfoOpen, setChatInfoOpen] = useState(false);
@@ -184,11 +202,15 @@ export default function DisputaGinasioPage() {
     return `${x}__${y}__${gId}__${dId}`;
   }
   function qrUrl(data: string) {
-    return `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(data)}`;
+    return `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+      data
+    )}`;
   }
   function buildPoGoFriendLinks(fc: string) {
     const native = `pokemongo://?dl_action=AddFriend&DlId=${encodeURIComponent(fc)}`;
-    const androidIntent = `intent://?dl_action=AddFriend&DlId=${encodeURIComponent(fc)}#Intent;scheme=pokemongo;package=com.nianticlabs.pokemongo;end`;
+    const androidIntent = `intent://?dl_action=AddFriend&DlId=${encodeURIComponent(
+      fc
+    )}#Intent;scheme=pokemongo;package=com.nianticlabs.pokemongo;end`;
     return { native, androidIntent };
   }
 
@@ -276,7 +298,12 @@ export default function DisputaGinasioPage() {
       const base = snap.docs
         .map((p) => {
           const d = p.data() as any;
-          return { id: p.id, usuario_uid: d.usuario_uid, tipo_escolhido: d.tipo_escolhido || "", removido: d.removido === true };
+          return {
+            id: p.id,
+            usuario_uid: d.usuario_uid,
+            tipo_escolhido: d.tipo_escolhido || "",
+            removido: d.removido === true,
+          };
         })
         .filter((p) => !p.removido);
 
@@ -285,9 +312,19 @@ export default function DisputaGinasioPage() {
         const uSnap = await getDoc(doc(db, "usuarios", p.usuario_uid));
         if (uSnap.exists()) {
           const u = uSnap.data() as any;
-          withNames.push({ id: p.id, usuario_uid: p.usuario_uid, tipo_escolhido: p.tipo_escolhido, nome: u.nome, email: u.email });
+          withNames.push({
+            id: p.id,
+            usuario_uid: p.usuario_uid,
+            tipo_escolhido: p.tipo_escolhido,
+            nome: u.nome,
+            email: u.email,
+          });
         } else {
-          withNames.push({ id: p.id, usuario_uid: p.usuario_uid, tipo_escolhido: p.tipo_escolhido });
+          withNames.push({
+            id: p.id,
+            usuario_uid: p.usuario_uid,
+            tipo_escolhido: p.tipo_escolhido,
+          });
         }
       }
       setParticipantes(withNames);
@@ -300,7 +337,10 @@ export default function DisputaGinasioPage() {
   useEffect(() => {
     if (!disputa) return;
 
-    const qRes = query(collection(db, "disputas_ginasio_resultados"), where("disputa_id", "==", disputa.id));
+    const qRes = query(
+      collection(db, "disputas_ginasio_resultados"),
+      where("disputa_id", "==", disputa.id)
+    );
     const unsub = onSnapshot(qRes, (snap) => {
       const list = snap.docs.map((r) => {
         const d = r.data() as any;
@@ -352,9 +392,15 @@ export default function DisputaGinasioPage() {
     return resultados.some((r) => {
       if (r.status === "contestado") return false;
       if (r.tipo === "empate") {
-        return ((r.jogador1_uid === a && r.jogador2_uid === b) || (r.jogador1_uid === b && r.jogador2_uid === a));
+        return (
+          (r.jogador1_uid === a && r.jogador2_uid === b) ||
+          (r.jogador1_uid === b && r.jogador2_uid === a)
+        );
       }
-      return ((r.vencedor_uid === a && r.perdedor_uid === b) || (r.vencedor_uid === b && r.perdedor_uid === a));
+      return (
+        (r.vencedor_uid === a && r.perdedor_uid === b) ||
+        (r.vencedor_uid === b && r.perdedor_uid === a)
+      );
     });
   };
 
@@ -398,9 +444,13 @@ export default function DisputaGinasioPage() {
     }
     setDeclarando(true);
     await addDoc(collection(db, "disputas_ginasio_resultados"), {
-      disputa_id: disputa.id, ginasio_id: disputa.ginasio_id,
-      vencedor_uid: userUid, perdedor_uid: oponente, declarado_por: userUid,
-      status: "pendente", createdAt: Date.now(),
+      disputa_id: disputa.id,
+      ginasio_id: disputa.ginasio_id,
+      vencedor_uid: userUid,
+      perdedor_uid: oponente,
+      declarado_por: userUid,
+      status: "pendente",
+      createdAt: Date.now(),
     });
     setDeclarando(false);
   };
@@ -418,34 +468,59 @@ export default function DisputaGinasioPage() {
     }
     setDeclarando(true);
     await addDoc(collection(db, "disputas_ginasio_resultados"), {
-      disputa_id: disputa.id, ginasio_id: disputa.ginasio_id,
-      tipo: "empate", jogador1_uid: userUid, jogador2_uid: oponente,
-      declarado_por: userUid, status: "pendente", createdAt: Date.now(),
+      disputa_id: disputa.id,
+      ginasio_id: disputa.ginasio_id,
+      tipo: "empate",
+      jogador1_uid: userUid,
+      jogador2_uid: oponente,
+      declarado_por: userUid,
+      status: "pendente",
+      createdAt: Date.now(),
     });
     setDeclarando(false);
   };
 
-  const handleConfirmarResultado = async (res: Resultado, novoStatus: "confirmado" | "contestado") => {
-    await updateDoc(doc(db, "disputas_ginasio_resultados", res.id), { status: novoStatus, atualizadoEm: Date.now() });
+  const handleConfirmarResultado = async (
+    res: Resultado,
+    novoStatus: "confirmado" | "contestado"
+  ) => {
+    await updateDoc(doc(db, "disputas_ginasio_resultados", res.id), {
+      status: novoStatus,
+      atualizadoEm: Date.now(),
+    });
   };
 
-  const meuParticipante = userUid ? participantes.find((p) => p.usuario_uid === userUid) : null;
+  const meuParticipante = userUid
+    ? participantes.find((p) => p.usuario_uid === userUid)
+    : null;
 
   useEffect(() => {
     const invalidarSeOcupou = async () => {
-      if (!disputa || disputa.status !== "inscricoes" || !userUid || !meuParticipante?.id || !meuParticipante?.tipo_escolhido) return;
+      if (
+        !disputa ||
+        disputa.status !== "inscricoes" ||
+        !userUid ||
+        !meuParticipante?.id ||
+        !meuParticipante?.tipo_escolhido
+      )
+        return;
 
       const escolhido = meuParticipante.tipo_escolhido;
       const ocupou = ocupados.includes(escolhido);
       if (ocupou) {
         try {
-          await updateDoc(doc(db, "disputas_ginasio_participantes", meuParticipante.id), {
-            tipo_escolhido: "",
-            invalidado: true,
-            invalidado_motivo: "tipo_indisponivel",
-            invalidadoEm: Date.now(),
-          });
-          setAvisoTipoInvalidado(`Seu tipo "${escolhido}" ficou indisponível na liga e foi removido. Escolha outro.`);
+          await updateDoc(
+            doc(db, "disputas_ginasio_participantes", meuParticipante.id),
+            {
+              tipo_escolhido: "",
+              invalidado: true,
+              invalidado_motivo: "tipo_indisponivel",
+              invalidadoEm: Date.now(),
+            }
+          );
+          setAvisoTipoInvalidado(
+            `Seu tipo "${escolhido}" ficou indisponível na liga e foi removido. Escolha outro.`
+          );
         } catch (e) {
           console.error("falha ao invalidar tipo", e);
         }
@@ -454,89 +529,173 @@ export default function DisputaGinasioPage() {
     invalidarSeOcupou();
   }, [disputa, userUid, meuParticipante?.id, meuParticipante?.tipo_escolhido, ocupados]);
 
+  // PONTOS: inclui WO automático quando disputa está finalizada
   const pontos = useMemo(() => {
     const map: Record<string, number> = {};
     participantes.forEach((p) => (map[p.usuario_uid] = 0));
+
     resultados.forEach((r) => {
+      // só conta resultado CONFIRMADO
       if (r.status !== "confirmado") return;
+
       if (r.tipo === "empate") {
-        if (r.jogador1_uid) map[r.jogador1_uid] = (map[r.jogador1_uid] || 0) + 1;
-        if (r.jogador2_uid) map[r.jogador2_uid] = (map[r.jogador2_uid] || 0) + 1;
+        if (r.jogador1_uid) {
+          map[r.jogador1_uid] = (map[r.jogador1_uid] || 0) + 1;
+        }
+        if (r.jogador2_uid) {
+          map[r.jogador2_uid] = (map[r.jogador2_uid] || 0) + 1;
+        }
       } else if (r.vencedor_uid) {
         map[r.vencedor_uid] = (map[r.vencedor_uid] || 0) + 3;
       }
     });
+
     return map;
   }, [participantes, resultados]);
 
   const ranking = useMemo(() => {
-    return [...participantes].sort((a, b) => ((pontos[b.usuario_uid] || 0) - (pontos[a.usuario_uid] || 0)));
+    return [...participantes].sort(
+      (a, b) => (pontos[b.usuario_uid] || 0) - (pontos[a.usuario_uid] || 0)
+    );
   }, [participantes, pontos]);
 
+  // Finalização automática (inclui WO)
   // Finalização automática
   useEffect(() => {
     const aplicarFinalizacao = async () => {
       if (!disputa || !ginasio || !isSuper) return;
       if (disputa.status !== "finalizado" || disputa.finalizacao_aplicada) return;
 
-      try {
-        if (ranking.length === 0) return;
-        const topo = ranking[0];
-        const pTopo = pontos[topo.usuario_uid] || 0;
-        const empatadosTopo = ranking.filter((p) => (pontos[p.usuario_uid] || 0) === pTopo);
-        if (empatadosTopo.length > 1) {
-          await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
-            empate_no_topo: true,
-            finalizacao_aplicada: false,
-            tentativa_finalizacao_em: Date.now(),
-          });
-          return;
+      // 1) WO AUTOMÁTICO APENAS PARA DECLARAÇÃO UNILATERAL
+
+      // agrupar resultados por par de jogadores (A__B)
+      type ResultadoSimples = Resultado;
+      const grupos: Record<string, ResultadoSimples[]> = {};
+
+      resultados.forEach((r) => {
+        if (r.tipo === "empate") return; // nunca WO em empate
+        const a = r.vencedor_uid;
+        const b = r.perdedor_uid;
+        if (!a || !b) return;
+
+        const [x, y] = [a, b].sort();
+        const key = `${x}__${y}`;
+        if (!grupos[key]) grupos[key] = [];
+        grupos[key].push(r);
+      });
+
+      const paraConfirmar: ResultadoSimples[] = [];
+
+      Object.values(grupos).forEach((lista) => {
+        const pendentes = lista.filter((r) => r.status === "pendente");
+        const confirmados = lista.filter((r) => r.status === "confirmado");
+
+        // se já tem algum confirmado nesse par, não faz nada
+        if (confirmados.length > 0) return;
+
+        // SÓ faz WO se houver EXATAMENTE 1 pendente no par
+        if (pendentes.length === 1) {
+          paraConfirmar.push(pendentes[0]);
         }
 
-        const novoLiderUid = topo.usuario_uid;
-        const tipoNovo = topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
-        const ligaDoGinasio = ginasio.liga || disputa.liga || disputa.liga_nome || "";
+        // se pendentes.length >= 2 → conflito (ex: os dois declararam vitória)
+        // nesse caso, NÃO faz WO pra ninguém.
+        // (se quiser, aqui dá pra marcar todos como "contestado" automático)
+      });
 
-        await updateDoc(doc(db, "ginasios", ginasio.id), {
-          lider_uid: novoLiderUid,
-          tipo: tipoNovo,
-          em_disputa: false,
-          derrotas_seguidas: 0,
-        });
+      if (paraConfirmar.length > 0) {
+        await Promise.all(
+          paraConfirmar.map((r) =>
+            updateDoc(doc(db, "disputas_ginasio_resultados", r.id), {
+              status: "confirmado",
+              confirmadoPorWoAutomatico: true,
+              confirmadoPorWoEm: Date.now(),
+            })
+          )
+        );
 
-        await addDoc(collection(db, "ginasios_liderancas"), {
-          ginasio_id: ginasio.id,
-          lider_uid: novoLiderUid,
-          inicio: Date.now(),
-          fim: null,
-          origem: "disputa",
-          liga: ligaDoGinasio || "",
-          temporada_id: disputa.temporada_id || "",
-          temporada_nome: disputa.temporada_nome || "",
-          tipo_no_periodo: tipoNovo || "",
-          createdByAdminUid: auth.currentUser?.uid || null,
-          endedByAdminUid: null,
-        });
+        // deixa o effect rodar de novo, agora com pontos recalculados
+        return;
+      }
 
+      // 2) ESCOLHA DO LÍDER (usa só resultados confirmados, incluindo WO acima)
+
+      if (ranking.length === 0) {
+        // ninguém com resultado confirmado → opcional: marcar "sem vencedor"
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
           finalizacao_aplicada: true,
-          vencedor_uid: novoLiderUid,
-          aplicado_em: Date.now(),
-          aplicadoPorAdminUid: auth.currentUser?.uid || null,
+          vencedor_uid: null,
+          sem_vencedor: true,
+          tentativa_finalizacao_em: Date.now(),
         });
-      } catch (e) {
-        console.warn("Falha ao aplicar finalização da disputa:", e);
+        return;
       }
+
+      const topo = ranking[0];
+      const pTopo = pontos[topo.usuario_uid] || 0;
+
+      const empatadosTopo = ranking.filter(
+        (p) => (pontos[p.usuario_uid] || 0) === pTopo
+      );
+
+      if (empatadosTopo.length > 1) {
+        // empate no topo → não escolhe líder automático
+        await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+          empate_no_topo: true,
+          finalizacao_aplicada: true, // trava a finalização pra não ficar em loop
+          tentativa_finalizacao_em: Date.now(),
+        });
+        return;
+      }
+
+      // tem um único primeiro lugar
+      const novoLiderUid = topo.usuario_uid;
+      const tipoNovo =
+        topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
+      const ligaDoGinasio =
+        ginasio.liga || disputa.liga || disputa.liga_nome || "";
+
+      await updateDoc(doc(db, "ginasios", ginasio.id), {
+        lider_uid: novoLiderUid,
+        tipo: tipoNovo,
+        em_disputa: false,
+        derrotas_seguidas: 0,
+      });
+
+      await addDoc(collection(db, "ginasios_liderancas"), {
+        ginasio_id: ginasio.id,
+        lider_uid: novoLiderUid,
+        inicio: Date.now(),
+        fim: null,
+        origem: "disputa",
+        liga: ligaDoGinasio || "",
+        temporada_id: disputa.temporada_id || "",
+        temporada_nome: disputa.temporada_nome || "",
+        tipo_no_periodo: tipoNovo || "",
+        createdByAdminUid: auth.currentUser?.uid || null,
+        endedByAdminUid: null,
+      });
+
+      await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+        finalizacao_aplicada: true,
+        vencedor_uid: novoLiderUid,
+        aplicado_em: Date.now(),
+        aplicadoPorAdminUid: auth.currentUser?.uid || null,
+      });
     };
+
     aplicarFinalizacao();
-  }, [disputa, ginasio, ranking, pontos, isSuper]);
+  }, [disputa, ginasio, ranking, pontos, isSuper, resultados]);
 
   // ====== CHAT / DESAFIO ======
   async function ensureDesafio(opponentUid: string) {
     if (!userUid || !disputa || !ginasio) return null;
     const pairKey = makePairKey(userUid, opponentUid, ginasio.id, disputa.id);
 
-    const qDes = query(collection(db, "desafios_ginasio"), where("pairKey", "==", pairKey));
+    const qDes = query(
+      collection(db, "desafios_ginasio"),
+      where("pairKey", "==", pairKey)
+    );
     const found = await getDocs(qDes);
     if (!found.empty) return found.docs[0].id;
 
@@ -591,7 +750,12 @@ export default function DisputaGinasioPage() {
       const u = await getDoc(doc(db, "usuarios", otherUid));
       if (u.exists()) {
         const du = u.data() as any;
-        other = { id: otherUid, nome: du.nome || du.email || otherUid, email: du.email, friend_code: du.friend_code };
+        other = {
+          id: otherUid,
+          nome: du.nome || du.email || otherUid,
+          email: du.email,
+          friend_code: du.friend_code,
+        };
       }
     } catch { }
     setChatOther(other);
@@ -655,7 +819,8 @@ export default function DisputaGinasioPage() {
       ? resultados.filter((r) => {
         if (r.status !== "pendente") return false;
         if (r.declarado_por === userUid) return false;
-        if (r.tipo === "empate") return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
+        if (r.tipo === "empate")
+          return r.jogador1_uid === userUid || r.jogador2_uid === userUid;
         return r.perdedor_uid === userUid;
       })
       : [];
@@ -663,12 +828,20 @@ export default function DisputaGinasioPage() {
   const participantesOrdenados = useMemo(() => {
     return participantes
       .slice()
-      .sort((a, b) => ((a.nome || a.email || a.usuario_uid).localeCompare(b.nome || b.email || b.usuario_uid)));
+      .sort((a, b) =>
+        (a.nome || a.email || a.usuario_uid).localeCompare(
+          b.nome || b.email || b.usuario_uid
+        )
+      );
   }, [participantes]);
 
   const fc = chatOther?.friend_code || null;
   const friendLinks = fc ? buildPoGoFriendLinks(fc) : null;
-  const deepLink = fc ? (isAndroid ? friendLinks!.androidIntent : friendLinks!.native) : null;
+  const deepLink = fc
+    ? isAndroid
+      ? friendLinks!.androidIntent
+      : friendLinks!.native
+    : null;
   const qrLink = fc ? qrUrl(friendLinks!.native) : null;
 
   const battleStartMs =
@@ -684,7 +857,8 @@ export default function DisputaGinasioPage() {
   const showStartCountdown =
     disputa?.status === "inscricoes" && battleStartMs != null;
   const showEndCountdown =
-    (disputa?.status === "inscricoes" || disputa?.status === "batalhando") && disputeEndMs != null;
+    (disputa?.status === "inscricoes" || disputa?.status === "batalhando") &&
+    disputeEndMs != null;
   const now = Date.now();
 
   useEffect(() => {
@@ -719,7 +893,10 @@ export default function DisputaGinasioPage() {
     return (
       <div className="p-8">
         <p className="mb-4">Nenhuma disputa aberta para este ginásio.</p>
-        <button onClick={() => router.push("/ginasios")} className="bg-blue-600 text-white px-4 py-2 rounded">
+        <button
+          onClick={() => router.push("/ginasios")}
+          className="bg-blue-600 text-white px-4 py-2 rounded"
+        >
           Voltar
         </button>
       </div>
@@ -730,12 +907,18 @@ export default function DisputaGinasioPage() {
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">
         Disputa do ginásio {ginasio.nome}
-        {disputa.liga_nome ? <span className="ml-2 text-sm text-gray-500">({disputa.liga_nome})</span> : null}
+        {disputa.liga_nome ? (
+          <span className="ml-2 text-sm text-gray-500">
+            ({disputa.liga_nome})
+          </span>
+        ) : null}
       </h1>
 
       {!ginasio.lider_uid && (
         <p className="text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
-          Ginásio sem líder. Quem tiver mais pontos quando o admin encerrar fica com a vaga.
+          Ginásio sem líder. Quem tiver mais ao final fica com a vaga, se não
+          obtiver resposta, declare sua vitória para ganhar de WO no
+          encerramento.
         </p>
       )}
 
@@ -743,7 +926,9 @@ export default function DisputaGinasioPage() {
         Status: {disputa.status === "inscricoes" ? "inscrições abertas" : disputa.status}
         {disputa.status === "finalizado" && (
           <span className="ml-2 text-xs text-gray-500">
-            {disputa.finalizacao_aplicada ? " (aplicado)" : " (aguardando aplicação pelo admin)"}
+            {disputa.finalizacao_aplicada
+              ? " (aplicado)"
+              : " (aguardando aplicação pelo admin)"}
           </span>
         )}
       </p>
@@ -757,48 +942,50 @@ export default function DisputaGinasioPage() {
             </p>
           ) : disputa.createdAtMs == null ? (
             <p>
-              Sem <code>createdAt</code> na disputa — não dá para calcular os prazos.
+              Sem <code>createdAt</code> na disputa — não dá para calcular os
+              prazos.
             </p>
           ) : (
             <>
               {showStartCountdown && battleStartMs != null && (
-                now < battleStartMs ? (
-                  <p>
-                    Fase de batalhas começa {fmtCountdown(battleStartMs - now)}{" "}
-                    <span className="text-xs text-indigo-700">
-                      (inscrições: {tempoInscricoesHoras} horas de inscrições)
-                    </span>
-                  </p>
-                ) : (
-                  <p>
-                    Esperando administrador iniciar a fase de batalhas.
-                  </p>
-                )
+                <>
+                  {now < battleStartMs ? (
+                    <p>
+                      Fase de batalhas começa {fmtCountdown(battleStartMs - now)}{" "}
+                      <span className="text-xs text-indigo-700">
+                        (inscrições: {tempoInscricoesHoras} horas de inscrições)
+                      </span>
+                    </p>
+                  ) : (
+                    <p>Esperando administrador iniciar a fase de batalhas.</p>
+                  )}
+                </>
               )}
 
               {showEndCountdown && disputeEndMs != null && (
-                now < disputeEndMs ? (
-                  <p>
-                    Disputa pelo ginásio termina {fmtCountdown(disputeEndMs - now)}{" "}
-                    <span className="text-xs text-indigo-700">
-                      (batalhas: {tempoBatalhasHoras} horas de batalhas)
-                    </span>
-                  </p>
-                ) : (
-                  <p>
-                    Esperando administrador encerrar a disputa.
-                  </p>
-                )
+                <>
+                  {now < disputeEndMs ? (
+                    <p>
+                      Disputa pelo ginásio termina{" "}
+                      {fmtCountdown(disputeEndMs - now)}{" "}
+                      <span className="text-xs text-indigo-700">
+                        (batalhas: {tempoBatalhasHoras} horas de batalhas)
+                      </span>
+                    </p>
+                  ) : (
+                    <p>Esperando administrador encerrar a disputa.</p>
+                  )}
+                </>
               )}
             </>
           )}
         </div>
       ) : (
-        // bloco verde de "Parabéns" que já existe
+        // bloco verde de "Parabéns"
         <div className="bg-green-50 border border-green-200 rounded p-3 text-green-800">
           <p>
-            🎉 Parabéns <b>{winnerName || "ao novo líder"}</b>! Você é o novo líder do ginásio{" "}
-            <b>{ginasio.nome}</b>.
+            🎉 Parabéns <b>{winnerName || "ao novo líder"}</b>! Você é o novo
+            líder do ginásio <b>{ginasio.nome}</b>.
           </p>
         </div>
       )}
@@ -811,14 +998,20 @@ export default function DisputaGinasioPage() {
 
       <div className="card p-4">
         <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
-        {disputaTravada && <p className="text-xs text-red-500 mb-2">Disputa iniciada. Não dá mais pra trocar.</p>}
+        {disputaTravada && (
+          <p className="text-xs text-red-500 mb-2">
+            Disputa iniciada. Não dá mais pra trocar.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           {tiposPermitidos.map((t) => (
             <button
               key={t}
               onClick={() => handleEscolherTipo(t)}
               disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t
+                ? "bg-blue-600 text-white"
+                : "bg-gray-200"
                 } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {renderTipoIcon(t, 20)}
@@ -828,30 +1021,45 @@ export default function DisputaGinasioPage() {
         </div>
         {meuParticipante?.tipo_escolhido ? (
           <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
-            Você escolheu: {renderTipoIcon(meuParticipante.tipo_escolhido, 24)}
+            Você escolheu:{" "}
+            {renderTipoIcon(meuParticipante.tipo_escolhido, 24)}
             <span className="capitalize">{meuParticipante.tipo_escolhido}</span>
           </p>
         ) : (
-          <p className="text-xs text-gray-500 mt-2">Escolha um tipo disponível da liga para participar.</p>
+          <p className="text-xs text-gray-500 mt-2">
+            Escolha um tipo disponível da liga para participar.
+          </p>
         )}
       </div>
 
       {disputa.status === "batalhando" && (
         <div className="card p-4 space-y-3">
           <h2 className="font-semibold">Declarar resultado</h2>
-          <p className="text-sm text-gray-500">Só vale 1 confronto por dupla. Empate = 1 ponto pra cada.</p>
+          <p className="text-sm text-gray-500">
+            Só vale 1 confronto por dupla. Empate = 1 ponto pra cada.
+          </p>
           <div className="flex items-center gap-2">
-            <select value={oponente} onChange={(e) => setOponente(e.target.value)} className="border px-2 py-1 rounded">
+            <select
+              value={oponente}
+              onChange={(e) => setOponente(e.target.value)}
+              className="border px-2 py-1 rounded"
+            >
               <option value="">Selecione o adversário</option>
-              {participantes.filter((p) => p.usuario_uid !== userUid).map((p) => (
-                <option key={p.usuario_uid} value={p.usuario_uid}>
-                  {p.nome || p.email || p.usuario_uid}{p.tipo_escolhido ? ` (${p.tipo_escolhido})` : ""}
-                </option>
-              ))}
+              {participantes
+                .filter((p) => p.usuario_uid !== userUid)
+                .map((p) => (
+                  <option key={p.usuario_uid} value={p.usuario_uid}>
+                    {p.nome || p.email || p.usuario_uid}
+                    {p.tipo_escolhido ? ` (${p.tipo_escolhido})` : ""}
+                  </option>
+                ))}
             </select>
 
             {!!oponente && (
-              <button onClick={() => handleChamar(oponente)} className="bg-slate-800 text-white px-3 py-1 rounded text-sm">
+              <button
+                onClick={() => handleChamar(oponente)}
+                className="bg-slate-800 text-white px-3 py-1 rounded text-sm"
+              >
                 Abrir chat
               </button>
             )}
@@ -860,14 +1068,18 @@ export default function DisputaGinasioPage() {
           <div className="flex gap-2">
             <button
               onClick={handleDeclararVitoria}
-              disabled={declarando || !oponente || !meuParticipante?.tipo_escolhido}
+              disabled={
+                declarando || !oponente || !meuParticipante?.tipo_escolhido
+              }
               className="bg-green-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
             >
               Eu ganhei
             </button>
             <button
               onClick={handleDeclararEmpate}
-              disabled={declarando || !oponente || !meuParticipante?.tipo_escolhido}
+              disabled={
+                declarando || !oponente || !meuParticipante?.tipo_escolhido
+              }
               className="bg-yellow-500 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
             >
               Empatamos
@@ -883,9 +1095,14 @@ export default function DisputaGinasioPage() {
         ) : (
           <ul className="space-y-2">
             {participantesOrdenados.map((p) => (
-              <li key={p.id} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
+              <li
+                key={p.id}
+                className="flex items-center justify-between bg-gray-50 rounded px-3 py-2"
+              >
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{p.nome || p.email || p.usuario_uid}</p>
+                  <p className="text-sm font-medium truncate">
+                    {p.nome || p.email || p.usuario_uid}
+                  </p>
                   <div className="text-xs text-gray-600 flex items-center gap-2">
                     <span>Tipo:</span>
                     {p.tipo_escolhido ? (
@@ -902,7 +1119,10 @@ export default function DisputaGinasioPage() {
                   {(() => {
                     if (!userUid) return null;
 
-                    const jaTemPlacar = existeResultadoEntre(userUid, p.usuario_uid);
+                    const jaTemPlacar = existeResultadoEntre(
+                      userUid,
+                      p.usuario_uid
+                    );
 
                     return (
                       p.usuario_uid !== userUid &&
@@ -930,20 +1150,48 @@ export default function DisputaGinasioPage() {
           <h2 className="font-semibold mb-2">Resultados para confirmar</h2>
           <ul className="space-y-2">
             {pendentesParaMim.map((r) => {
-              const outroUid = r.tipo === "empate" ? (r.jogador1_uid === userUid ? r.jogador2_uid : r.jogador1_uid) : r.vencedor_uid;
-              const outro = participantes.find((p) => p.usuario_uid === (outroUid || ""));
+              const outroUid =
+                r.tipo === "empate"
+                  ? r.jogador1_uid === userUid
+                    ? r.jogador2_uid
+                    : r.jogador1_uid
+                  : r.vencedor_uid;
+              const outro = participantes.find(
+                (p) => p.usuario_uid === (outroUid || "")
+              );
               return (
-                <li key={r.id} className="flex justify-between items-center gap-2">
+                <li
+                  key={r.id}
+                  className="flex justify-between items-center gap-2"
+                >
                   <span className="text-sm">
-                    {r.tipo === "empate"
-                      ? <>{outro?.nome || outro?.email || outroUid} disse que empatou com você.</>
-                      : <>{outro?.nome || outro?.email || outroUid} disse que ganhou de você.</>}
+                    {r.tipo === "empate" ? (
+                      <>
+                        {outro?.nome || outro?.email || outroUid} disse que
+                        empatou com você.
+                      </>
+                    ) : (
+                      <>
+                        {outro?.nome || outro?.email || outroUid} disse que
+                        ganhou de você.
+                      </>
+                    )}
                   </span>
                   <div className="flex gap-2">
-                    <button onClick={() => handleConfirmarResultado(r, "confirmado")} className="bg-blue-600 text-white px-2 py-1 rounded text-xs">
+                    <button
+                      onClick={() =>
+                        handleConfirmarResultado(r, "confirmado")
+                      }
+                      className="bg-blue-600 text-white px-2 py-1 rounded text-xs"
+                    >
                       Confirmar
                     </button>
-                    <button onClick={() => handleConfirmarResultado(r, "contestado")} className="bg-red-500 text-white px-2 py-1 rounded text-xs">
+                    <button
+                      onClick={() =>
+                        handleConfirmarResultado(r, "contestado")
+                      }
+                      className="bg-red-500 text-white px-2 py-1 rounded text-xs"
+                    >
                       Contestar
                     </button>
                   </div>
@@ -961,12 +1209,17 @@ export default function DisputaGinasioPage() {
         ) : (
           <ul className="space-y-1">
             {ranking.map((p) => (
-              <li key={p.usuario_uid} className="flex justify-between items-center text-sm">
+              <li
+                key={p.usuario_uid}
+                className="flex justify-between items-center text-sm"
+              >
                 <span className="flex items-center gap-2">
                   {p.nome || p.email || p.usuario_uid}
                   {p.tipo_escolhido && renderTipoIcon(p.tipo_escolhido, 20)}
                 </span>
-                <span className="font-semibold">{pontos[p.usuario_uid] || 0} pts</span>
+                <span className="font-semibold">
+                  {pontos[p.usuario_uid] || 0} pts
+                </span>
               </li>
             ))}
           </ul>
@@ -979,7 +1232,9 @@ export default function DisputaGinasioPage() {
           <div className="relative bg-white w-full max-w-2xl max-h-[90vh] rounded-xl shadow-xl p-3 md:p-5 flex flex-col">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Desafio & Chat
+                </h3>
               </div>
               <button
                 className="text-slate-500 hover:text-slate-800 text-sm"
@@ -1041,11 +1296,16 @@ export default function DisputaGinasioPage() {
                       {chatInfoOpen && (
                         <div className="text-[11px] text-slate-600 mt-1">
                           <ul className="list-disc pl-4 space-y-1">
-                            <li>Combine dia, horário e se será presencial ou remoto.</li>
-                            <li>Confirme a liga usada e a quantidade de partidas.</li>
                             <li>
-                              Se der problema (no app, conexão, atraso), registre aqui
-                              antes de declarar o resultado.
+                              Combine dia, horário e se será presencial ou
+                              remoto.
+                            </li>
+                            <li>
+                              Confirme a liga usada e a quantidade de partidas.
+                            </li>
+                            <li>
+                              Se der problema (no app, conexão, atraso),
+                              registre aqui antes de declarar o resultado.
                             </li>
                           </ul>
                         </div>

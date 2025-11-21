@@ -1,3 +1,4 @@
+// functions/src/index.ts
 import * as admin from "firebase-admin";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
@@ -6,9 +7,8 @@ admin.initializeApp();
 const db = admin.firestore();
 
 /**
- * Trigger de Firestore:
+ * TRIGGER DE FIRESTORE:
  * dispara em qualquer write em disputas_ginasio_resultados/{resultadoId}
- * (mesma região do Firestore: southamerica-east1)
  */
 export const onResultadoWrite = onDocumentWritten(
   {
@@ -87,8 +87,65 @@ export const onResultadoWrite = onDocumentWritten(
 );
 
 /**
- * HELPERS PARA OS JOBS DE DISPUTA (CRON)
+ * ===== HELPERS PARA OS JOBS DE DISPUTA (CRON) =====
  */
+
+// lê tempo_inscricoes em horas de variables/global e devolve em ms
+async function getTempoInscricoesMs(): Promise<number> {
+  try {
+    const snap = await db.collection("variables").doc("global").get();
+    if (!snap.exists) return 0;
+    const data = snap.data() as any;
+    const raw = data?.tempo_inscricoes;
+    const horas =
+      typeof raw === "number"
+        ? raw
+        : raw != null
+        ? Number(raw)
+        : 0;
+    if (!isNaN(horas) && horas > 0) {
+      return horas * 60 * 60 * 1000;
+    }
+    return 0;
+  } catch (e) {
+    console.warn("Falha ao ler variables/global.tempo_inscricoes", e);
+    return 0;
+  }
+}
+
+async function scheduleIniciarDisputaJob(
+  ginasioId: string,
+  disputaId: string
+): Promise<void> {
+  const tempoMs = await getTempoInscricoesMs();
+
+  if (tempoMs <= 0) {
+    console.log(
+      "tempo_inscricoes não configurado (>0). Iniciando disputa imediatamente."
+    );
+    await processIniciarDisputaJob({
+      ginasio_id: ginasioId,
+      disputa_id: disputaId,
+    });
+    return;
+  }
+
+  const runAtMs = Date.now() + tempoMs;
+
+  await db.collection("jobs_disputas").add({
+    acao: "iniciar_disputa",
+    status: "pendente",
+    ginasio_id: ginasioId,
+    disputa_id: disputaId,
+    origem: "auto_from_criar_disputa",
+    runAtMs,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  console.log(
+    `Job INICIAR_DISPUTA agendado para ${runAtMs} (em ${tempoMs} ms) para disputa ${disputaId}`
+  );
+}
 
 async function processCriarDisputaJob(job: any) {
   console.log("Processando job CRIAR_DISPUTA", job);
@@ -122,12 +179,13 @@ async function processCriarDisputaJob(job: any) {
   const temporadaId = job.temporada_id || "";
   const temporadaNome = job.temporada_nome || "";
   const liga = job.liga || g.liga || g.liga_nome || "";
+  const liderAnterior = job.lider_anterior_uid || g.lider_uid || "";
 
   const novaDisputaRef = await db.collection("disputas_ginasio").add({
     ginasio_id: job.ginasio_id,
     status: "inscricoes",
     tipo_original: tipoOriginal,
-    lider_anterior_uid: g.lider_uid || "",
+    lider_anterior_uid: liderAnterior,
     temporada_id: temporadaId,
     temporada_nome: temporadaNome,
     liga,
@@ -140,6 +198,9 @@ async function processCriarDisputaJob(job: any) {
   await gRef.update({
     em_disputa: true,
   });
+
+  // agenda automaticamente o job para INICIAR a disputa
+  await scheduleIniciarDisputaJob(job.ginasio_id, novaDisputaRef.id);
 }
 
 async function processIniciarDisputaJob(job: any) {
@@ -158,7 +219,10 @@ async function processIniciarDisputaJob(job: any) {
       .doc(job.disputa_id)
       .get();
     if (!snap.exists) {
-      console.warn("Disputa do job não existe mais, ignorando.", job.disputa_id);
+      console.warn(
+        "Disputa do job não existe mais, ignorando.",
+        job.disputa_id
+      );
       return;
     }
     disputaRef = snap.ref;
@@ -242,6 +306,7 @@ export const processDisputeJobs = onSchedule(
   {
     schedule: "every 5 minutes",
     timeZone: "America/Sao_Paulo",
+    region: "southamerica-east1",
   },
   async () => {
     const now = Date.now();
@@ -249,18 +314,24 @@ export const processDisputeJobs = onSchedule(
     const jobsSnap = await db
       .collection("jobs_disputas")
       .where("status", "==", "pendente")
-      .where("runAtMs", "<=", now)
-      .limit(20)
+      .limit(50)
       .get();
 
-    if (jobsSnap.empty) {
-      console.log("Nenhum job pendente.");
+    const dueJobs = jobsSnap.docs.filter((doc) => {
+      const data = doc.data() as any;
+      const runAtMs =
+        typeof data.runAtMs === "number" ? data.runAtMs : 0;
+      return runAtMs <= now;
+    });
+
+    if (dueJobs.length === 0) {
+      console.log("Nenhum job pendente no horário.");
       return;
     }
 
-    console.log(`Encontrados ${jobsSnap.size} job(s) pendentes.`);
+    console.log(`Processando ${dueJobs.length} job(s) vencidos.`);
 
-    for (const jobDoc of jobsSnap.docs) {
+    for (const jobDoc of dueJobs) {
       const job = jobDoc.data() as any;
 
       try {
