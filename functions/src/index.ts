@@ -96,7 +96,7 @@ async function getTempoInscricoesMs(): Promise<number> {
     const snap = await db.collection("variables").doc("global").get();
     if (!snap.exists) return 0;
     const data = snap.data() as any;
-    const raw = data?.tempo_inscricoes;
+    const raw = toHours(data?.tempo_inscricoes);
     const horas =
       typeof raw === "number"
         ? raw
@@ -146,6 +146,61 @@ async function scheduleIniciarDisputaJob(
     `Job INICIAR_DISPUTA agendado para ${runAtMs} (em ${tempoMs} ms) para disputa ${disputaId}`
   );
 }
+
+/** ===== NOVO: tempo de batalhas + agendamento do encerramento ===== */
+async function getTempoBatalhasMs(): Promise<number> {
+  try {
+    const snap = await db.collection("variables").doc("global").get();
+    if (!snap.exists) return 0;
+    const data = snap.data() as any;
+    const raw = toHours(data?.tempo_batalhas);
+    const horas =
+      typeof raw === "number"
+        ? raw
+        : raw != null
+        ? Number(raw)
+        : 0;
+    if (!isNaN(horas) && horas > 0) {
+      return horas * 60 * 60 * 1000;
+    }
+    return 0;
+  } catch (e) {
+    console.warn("Falha ao ler variables/global.tempo_batalhas", e);
+    return 0;
+  }
+}
+
+function toHours(raw: any): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") {
+    const n = parseFloat(raw.trim().replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+async function scheduleEncerrarDisputaJob(
+  ginasioId: string,
+  disputaId: string
+): Promise<void> {
+  const tempoMs = await getTempoBatalhasMs();
+  const runAtMs = Date.now() + (tempoMs > 0 ? tempoMs : 0);
+
+  await db.collection("jobs_disputas").add({
+    acao: "encerrar_disputa",
+    status: "pendente",
+    ginasio_id: ginasioId,
+    disputa_id: disputaId,
+    origem: "auto_from_iniciar_disputa",
+    runAtMs,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  console.log(
+    `Job ENCERRAR_DISPUTA agendado para ${runAtMs} (em ${tempoMs} ms) para disputa ${disputaId}`
+  );
+}
+/** ===== FIM DO BLOCO NOVO ===== */
 
 async function processCriarDisputaJob(job: any) {
   console.log("Processando job CRIAR_DISPUTA", job);
@@ -295,8 +350,102 @@ async function processIniciarDisputaJob(job: any) {
     iniciadaEm: admin.firestore.FieldValue.serverTimestamp(),
   });
 
+  /** NOVO: agenda encerramento após o período de batalhas */
+  await scheduleEncerrarDisputaJob(job.ginasio_id, disputaId);
+
   console.log("Disputa iniciada via job:", disputaId);
 }
+
+/** ===== NOVO: encerramento automático da disputa ===== */
+async function processEncerrarDisputaJob(job: any) {
+  console.log("Processando job ENCERRAR_DISPUTA", job);
+  const { ginasio_id, disputa_id } = job;
+  if (!ginasio_id || !disputa_id) throw new Error("Job sem ginasio_id/disputa_id");
+
+  const dRef = db.collection("disputas_ginasio").doc(disputa_id);
+  const dSnap = await dRef.get();
+  if (!dSnap.exists) return;
+  const d = dSnap.data() as any;
+
+  // encerra apenas se ainda estiver batalhando
+  if (d.status !== "batalhando") {
+    console.log("Disputa não está mais batalhando, ignorando encerramento.");
+    return;
+  }
+
+  // coleta resultados confirmados
+  const resSnap = await db.collection("disputas_ginasio_resultados")
+    .where("disputa_id", "==", disputa_id)
+    .where("status", "==", "confirmado")
+    .get();
+
+  const vitorias = new Map<string, number>();
+  for (const docu of resSnap.docs) {
+    const r = docu.data() as any;
+    const uid = r.vencedor_uid as string | undefined;
+    if (!uid) continue;
+    vitorias.set(uid, (vitorias.get(uid) || 0) + 1);
+  }
+
+  if (vitorias.size === 0) {
+    // sem resultados confirmados
+    await dRef.update({
+      status: "finalizado",
+      encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      motivo_encerramento: "sem_resultados_confirmados",
+    });
+    await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+    await db.collection("ginasios").doc(ginasio_id).update({ em_disputa: false });
+    console.log("Disputa encerrada sem vencedor (sem resultados).");
+    return;
+  }
+
+  // escolhe o UID com mais vitórias (desempate determinístico por UID)
+  const vencedorUid = [...vitorias.entries()]
+    .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))[0][0];
+
+  const gRef = db.collection("ginasios").doc(ginasio_id);
+
+  // fecha lideranças abertas e cria a nova
+  const abertas = await db.collection("ginasios_liderancas")
+    .where("ginasio_id", "==", ginasio_id)
+    .where("fim", "==", null)
+    .get();
+
+  const batch = db.batch();
+  for (const l of abertas.docs) {
+    batch.update(l.ref, { fim: admin.firestore.FieldValue.serverTimestamp() });
+  }
+  batch.set(db.collection("ginasios_liderancas").doc(), {
+    ginasio_id,
+    lider_uid: vencedorUid,
+    inicio: admin.firestore.FieldValue.serverTimestamp(),
+    fim: null,
+    origem: "encerramento_automatico",
+    disputa_id,
+  });
+  await batch.commit();
+
+  // aplica no ginásio
+  await gRef.update({
+    lider_uid: vencedorUid,
+    em_disputa: false,
+    derrotas_seguidas: 0,
+  });
+
+  // finaliza disputa
+  await dRef.update({
+    status: "finalizado",
+    encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+    vencedor_uid: vencedorUid,
+  });
+
+  // resolve alerta
+  await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+
+  console.log(`Disputa ${disputa_id} encerrada. Novo líder: ${vencedorUid}`);
+}
+/** ===== FIM DO BLOCO NOVO ===== */
 
 /**
  * FUNÇÃO AGENDADA – V2
@@ -339,6 +488,8 @@ export const processDisputeJobs = onSchedule(
           await processCriarDisputaJob(job);
         } else if (job.acao === "iniciar_disputa") {
           await processIniciarDisputaJob(job);
+        } else if (job.acao === "encerrar_disputa") {
+          await processEncerrarDisputaJob(job);
         } else {
           console.warn("Ação desconhecida:", job.acao);
         }

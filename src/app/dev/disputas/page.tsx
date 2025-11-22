@@ -202,7 +202,7 @@ export default function DevDisputasPage() {
     try {
       const raw = localStorage.getItem("dismissedReadyAlerts");
       if (raw) dismissedRef.current = new Set(JSON.parse(raw));
-    } catch {}
+    } catch { }
   }, []);
   function dismissAlert(disputaId: string) {
     const s = new Set(dismissedRef.current);
@@ -210,7 +210,7 @@ export default function DevDisputasPage() {
     dismissedRef.current = s;
     try {
       localStorage.setItem("dismissedReadyAlerts", JSON.stringify([...s]));
-    } catch {}
+    } catch { }
     setAlertsReady((prev) => prev.filter((a) => a.disputaId !== disputaId));
   }
 
@@ -313,36 +313,79 @@ export default function DevDisputasPage() {
   // recalcula alertsReady sempre que pendentes/disputas/nome de gym mudarem
   useEffect(() => {
     if (isAdmin !== true) return;
+    let alive = true;
 
     (async () => {
-      const next: Array<{ disputaId: string; ginasioId: string; ginasioNome: string }> = [];
-
-      for (const d of disputasAtivas) {
-        if (!d.ginasio_id) continue;
-        if (dismissedRef.current.has(d.id)) continue;
-
-        if ((pendentesPorDisputa[d.id] ?? 0) !== 0) continue;
-
-        // precisa ter pelo menos 1 resultado (qualquer status)
-        const total = await getCountFromServer(
-          query(collection(db, "disputas_ginasio_resultados"), where("disputa_id", "==", d.id))
-        );
-        if ((total.data().count || 0) === 0) continue;
-
-        // nome do ginásio
-        let nome = gMap[d.ginasio_id]?.nome;
-        if (!nome) {
-          try {
-            const g = await getDoc(doc(db, "ginasios", d.ginasio_id));
-            if (g.exists()) nome = (g.data() as any).nome || d.ginasio_id;
-          } catch {}
-        }
-        next.push({ disputaId: d.id, ginasioId: d.ginasio_id, ginasioNome: nome || d.ginasio_id });
+      // 1) base: só disputas com 0 pendentes e não dispensadas
+      const base = disputasAtivas.filter((d) => {
+        if (!d.ginasio_id) return false;
+        if (dismissedRef.current.has(d.id)) return false;
+        return (pendentesPorDisputa[d.id] ?? 0) === 0;
+      });
+      if (base.length === 0) {
+        if (alive) setAlertsReady([]);
+        return;
       }
 
-      setAlertsReady(next);
+      // 2) contar CONFIRMADOS por disputa (em paralelo)
+      const counts = await Promise.all(
+        base.map(async (d) => {
+          const confirmed = await getCountFromServer(
+            query(
+              collection(db, "disputas_ginasio_resultados"),
+              where("disputa_id", "==", d.id),
+              where("status", "==", "confirmado")
+            )
+          );
+          // se preferir sua regra antiga (qualquer resultado):
+          // const total = await getCountFromServer(
+          //   query(collection(db, "disputas_ginasio_resultados"), where("disputa_id", "==", d.id))
+          // );
+          return {
+            d,
+            confirmedCount: confirmed.data().count || 0,
+            // totalCount: total.data().count || 0,
+          };
+        })
+      );
+
+      // 3) filtrar realmente "pronto"
+      const ready = counts
+        // regra SUGERIDA (confirmado > 0):
+        .filter((x) => x.confirmedCount > 0)
+        // // regra ANTIGA (algum resultado):
+        // .filter((x) => x.totalCount > 0)
+        .map((x) => x.d);
+
+      if (ready.length === 0) {
+        if (alive) setAlertsReady([]);
+        return;
+      }
+
+      // 4) resolver nomes de ginásio em paralelo só quando faltarem
+      const withNames = await Promise.all(
+        ready.map(async (d) => {
+          let nome = gMap[d.ginasio_id]?.nome;
+          if (!nome) {
+            try {
+              const g = await getDoc(doc(db, "ginasios", d.ginasio_id));
+              if (g.exists()) nome = (g.data() as any).nome || d.ginasio_id;
+            } catch { }
+          }
+          return {
+            disputaId: d.id,
+            ginasioId: d.ginasio_id,
+            ginasioNome: nome || d.ginasio_id,
+          };
+        })
+      );
+
+      if (alive) setAlertsReady(withNames);
     })();
+
+    return () => { alive = false; };
   }, [isAdmin, disputasAtivas, pendentesPorDisputa, gMap]);
+
 
   // desafios 1 lado
   useEffect(() => {
