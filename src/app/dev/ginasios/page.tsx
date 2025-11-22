@@ -52,10 +52,12 @@ type Renuncia = {
 type JobDisputa = {
   id: string;
   ginasio_id: string;
-  acao: "criar_disputa" | "iniciar_disputa";
+  disputa_id?: string;
+  acao: "criar_disputa" | "iniciar_disputa" | "encerrar_disputa";
   runAtMs: number;
   status: "pendente" | "executado" | "erro" | "cancelado";
 };
+
 
 function toMillis(v: any): number | null {
   if (!v) return null;
@@ -134,7 +136,7 @@ async function startLeadership(
       liga = g.liga || g.liga_nome || "";
       if (!tipo) tipo = g.tipo || "";
     }
-  } catch {}
+  } catch { }
 
   await addDoc(collection(db, "ginasios_liderancas"), {
     ginasio_id: ginasioId,
@@ -159,7 +161,25 @@ async function deleteParticipantsOfDispute(disputaId: string) {
       where("disputa_id", "==", disputaId)
     )
   );
-  await Promise.all(ps.docs.map((d) => deleteDoc(d.ref)));
+
+  await Promise.all(
+    ps.docs.map(async (d) => {
+      try {
+        await deleteDoc(d.ref);
+      } catch {
+        // fallback se as rules não deixarem apagar: apenas "desativa"
+        try {
+          await updateDoc(d.ref, {
+            removido: true,
+            removidoPorAdminUid: auth.currentUser?.uid || null,
+            removidoEm: Date.now(),
+          });
+        } catch {
+          // mantém a execução mesmo assim
+        }
+      }
+    })
+  );
 }
 
 /** Fecha desafios pendentes do ginásio e limpa mensagens. */
@@ -179,15 +199,15 @@ async function closePendingChallengesOfGym(ginasioId: string) {
           fechadoPorAdminUid: auth.currentUser?.uid || null,
           fechadoEm: Date.now(),
         });
-      } catch {}
+      } catch { }
       try {
         const msgs = await getDocs(
           collection(db, "desafios_ginasio", d.id, "mensagens")
         );
         await Promise.all(msgs.docs.map((m) => deleteDoc(m.ref)));
-      } catch {}
+      } catch { }
     }
-  } catch {}
+  } catch { }
 }
 
 export default function DevGinasiosPage() {
@@ -337,16 +357,14 @@ export default function DevGinasiosPage() {
     if (isAdmin !== true) return;
     (async () => {
       const snap = await getDocs(
-        query(
-          collection(db, "jobs_disputas"),
-          where("status", "==", "pendente")
-        )
+        query(collection(db, "jobs_disputas"), where("status", "==", "pendente"))
       );
       const list: JobDisputa[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
           id: d.id,
           ginasio_id: data.ginasio_id,
+          disputa_id: data.disputa_id || undefined,
           acao: data.acao,
           runAtMs: data.runAtMs || 0,
           status: data.status || "pendente",
@@ -356,13 +374,146 @@ export default function DevGinasiosPage() {
     })();
   }, [isAdmin]);
 
+
   const getDisputaDoGinasio = (gId: string) =>
     disputas.find((d) => d.ginasio_id === gId);
 
+  // agenda automaticamente jobs de iniciar/encerrar para uma disputa recém-criada
+  const scheduleJobsForDisputa = async (
+    g: Ginasio,
+    disputaId: string,
+    createdAtMs: number
+  ) => {
+    try {
+      const vSnap = await getDoc(doc(db, "variables", "global"));
+      if (!vSnap.exists()) return;
+
+      const v = vSnap.data() as any;
+
+      const tempoInscricoes =
+        typeof v.tempo_inscricoes === "number"
+          ? v.tempo_inscricoes
+          : Number(v.tempo_inscricoes ?? 0);
+      const tempoBatalhas =
+        typeof v.tempo_batalhas === "number"
+          ? v.tempo_batalhas
+          : Number(v.tempo_batalhas ?? 0);
+
+      const jobsToCreate: { acao: JobDisputa["acao"]; runAtMs: number }[] = [];
+
+      if (tempoInscricoes > 0) {
+        const battleStart = createdAtMs + tempoInscricoes * 60 * 60 * 1000;
+        jobsToCreate.push({ acao: "iniciar_disputa", runAtMs: battleStart });
+      }
+
+      if (tempoBatalhas > 0) {
+        const battleStart =
+          tempoInscricoes > 0
+            ? createdAtMs + tempoInscricoes * 60 * 60 * 1000
+            : createdAtMs;
+        const battleEnd = battleStart + tempoBatalhas * 60 * 60 * 1000;
+        jobsToCreate.push({ acao: "encerrar_disputa", runAtMs: battleEnd });
+      }
+
+      if (!jobsToCreate.length) return;
+
+      const now = Date.now();
+      const createdByUid = auth.currentUser?.uid || null;
+      const novosJobs: JobDisputa[] = [];
+
+      for (const j of jobsToCreate) {
+        const ref = await addDoc(collection(db, "jobs_disputas"), {
+          ginasio_id: g.id,
+          disputa_id: disputaId,
+          acao: j.acao,
+          runAtMs: j.runAtMs,
+          status: "pendente",
+          createdAt: now,
+          createdByUid,
+          liga: g.liga || g.liga_nome || "",
+          tipo_original: g.tipo || "",
+          origem: "auto_disputa",
+        });
+
+        novosJobs.push({
+          id: ref.id,
+          ginasio_id: g.id,
+          disputa_id: disputaId,
+          acao: j.acao,
+          runAtMs: j.runAtMs,
+          status: "pendente",
+        });
+      }
+
+      if (novosJobs.length) {
+        setJobs((prev) => [...prev, ...novosJobs]);
+      }
+    } catch (e) {
+      console.error("Erro ao agendar jobs automáticos da disputa:", e);
+    }
+  };
+
+  // quando o admin faz manualmente (criar/iniciar/encerrar), marcamos os jobs pendentes como executado
+  const finalizeJobsForManualAction = async (
+    ginasioId: string,
+    acao: JobDisputa["acao"],
+    disputaId?: string
+  ) => {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "jobs_disputas"),
+          where("ginasio_id", "==", ginasioId),
+          where("status", "==", "pendente")
+        )
+      );
+
+      const batch = writeBatch(db);
+      let count = 0;
+
+      snap.docs.forEach((jobDoc) => {
+        const data = jobDoc.data() as any;
+        if (data.acao !== acao) return;
+        if (disputaId && data.disputa_id && data.disputa_id !== disputaId) return;
+
+        batch.update(jobDoc.ref, {
+          status: "executado",
+          executadoPorAdminUid: auth.currentUser?.uid || null,
+          executadoEm: Date.now(),
+        });
+        count++;
+      });
+
+      if (count > 0) {
+        await batch.commit();
+
+        setJobs((prev) =>
+          prev.filter(
+            (job) =>
+              !(
+                job.ginasio_id === ginasioId &&
+                job.status === "pendente" &&
+                job.acao === acao &&
+                (!disputaId || job.disputa_id === disputaId)
+              )
+          )
+        );
+      }
+    } catch (e) {
+      console.error("Erro ao marcar jobs como executados manualmente:", e);
+    }
+  };
+
+  // criar disputa manual
   // criar disputa manual
   const handleCriarDisputa = async (g: Ginasio) => {
     const ja = getDisputaDoGinasio(g.id);
     if (ja) return;
+
+    // se existia job de criar_disputa pendente, marca como executado manualmente
+    await finalizeJobsForManualAction(g.id, "criar_disputa");
+
+    const nowMs = Date.now();
 
     const nova = await addDoc(collection(db, "disputas_ginasio"), {
       ginasio_id: g.id,
@@ -373,7 +524,7 @@ export default function DevGinasiosPage() {
       temporada_nome: temporada?.nome || "",
       liga: g.liga || g.liga_nome || "",
       origem: "manual",
-      createdAt: Date.now(),
+      createdAt: nowMs,
     });
 
     await updateDoc(doc(db, "ginasios", g.id), { em_disputa: true });
@@ -390,7 +541,25 @@ export default function DevGinasiosPage() {
     setGinasios((prev) =>
       prev.map((gg) => (gg.id === g.id ? { ...gg, em_disputa: true } : gg))
     );
+
+    // agenda automático: início e encerramento da disputa
+    await scheduleJobsForDisputa(g, nova.id, nowMs);
   };
+
+  async function hardDeleteDisputa(disputaId: string) {
+    try {
+      await deleteDoc(doc(db, "disputas_ginasio", disputaId));
+    } catch {
+      try {
+        await updateDoc(doc(db, "disputas_ginasio", disputaId), {
+          _softDeleted: true,
+          _deletedAt: Date.now(),
+          _deletedBy: auth.currentUser?.uid || null,
+        });
+      } catch { }
+    }
+  }
+
 
   // iniciar disputa (checa se há pelo menos 2 participantes válidos)
   const handleIniciarDisputa = async (g: Ginasio) => {
@@ -436,6 +605,8 @@ export default function DevGinasiosPage() {
     setDisputas((prev) =>
       prev.map((d) => (d.id === disputa.id ? { ...d, status: "batalhando" } : d))
     );
+
+    await finalizeJobsForManualAction(g.id, "iniciar_disputa", disputa.id);
   };
 
   // encerrar disputa → registra liderança, apaga participantes e fecha desafios pendentes do ginásio
@@ -443,6 +614,7 @@ export default function DevGinasiosPage() {
     const disputa = getDisputaDoGinasio(g.id);
     if (!disputa) return;
 
+    // 1) Carrega participantes válidos
     const partSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_participantes"),
@@ -460,16 +632,18 @@ export default function DevGinasiosPage() {
       })
       .filter(Boolean) as { usuario_uid: string; tipo_escolhido: string }[];
 
-    // GUARDA: sem participantes válidos → finaliza sem vencedor
+    // sem participantes válidos → finaliza sem vencedor
     if (participantes.length === 0) {
       await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
         status: "finalizado",
         encerradaEm: Date.now(),
         vencedor_uid: "",
+        finalizacao_aplicada: true,
       });
 
       await deleteParticipantsOfDispute(disputa.id);
       await updateDoc(doc(db, "ginasios", g.id), { em_disputa: false });
+      await hardDeleteDisputa(disputa.id);
 
       setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
       setGinasios((prev) =>
@@ -477,9 +651,68 @@ export default function DevGinasiosPage() {
       );
 
       await closePendingChallengesOfGym(g.id);
+      await finalizeJobsForManualAction(g.id, "encerrar_disputa", disputa.id);
       return;
     }
 
+    // 2) WO automático entre pares (resultado unilateral pendente)
+    {
+      const resSnapAll = await getDocs(
+        query(
+          collection(db, "disputas_ginasio_resultados"),
+          where("disputa_id", "==", disputa.id)
+        )
+      );
+
+      type ResultadoDoc = { id: string; data: any };
+      const grupos: Record<string, ResultadoDoc[]> = {};
+
+      resSnapAll.docs.forEach((rDoc) => {
+        const d = rDoc.data() as any;
+
+        if (d.tipo && String(d.tipo).toLowerCase() === "empate") return;
+
+        const a = d.vencedor_uid as string | undefined;
+        const b = d.perdedor_uid as string | undefined;
+        if (!a || !b) return;
+
+        const [x, y] = [a, b].sort();
+        const key = `${x}__${y}`;
+
+        if (!grupos[key]) grupos[key] = [];
+        grupos[key].push({ id: rDoc.id, data: d });
+      });
+
+      const updates: Promise<void>[] = [];
+
+      Object.values(grupos).forEach((lista) => {
+        const pendentes = lista.filter(
+          (r) => (r.data.status || "pendente") === "pendente"
+        );
+        const confirmados = lista.filter(
+          (r) => r.data.status === "confirmado"
+        );
+
+        if (confirmados.length > 0) return;
+
+        if (pendentes.length === 1) {
+          const r = pendentes[0];
+          updates.push(
+            updateDoc(doc(db, "disputas_ginasio_resultados", r.id), {
+              status: "confirmado",
+              confirmadoPorWoAutomatico: true,
+              confirmadoPorWoEm: Date.now(),
+            }) as any
+          );
+        }
+      });
+
+      if (updates.length > 0) {
+        await Promise.all(updates);
+      }
+    }
+
+    // 3) Agora sim: resultados CONFIRMADOS para pontuar
     const resSnap = await getDocs(
       query(
         collection(db, "disputas_ginasio_resultados"),
@@ -502,7 +735,7 @@ export default function DevGinasiosPage() {
     participantes.forEach((p) => (pontos[p.usuario_uid] = 0));
 
     resultados.forEach((r) => {
-      if (r.tipo === "empate") {
+      if (r.tipo && r.tipo.toLowerCase() === "empate") {
         if (r.jogador1_uid)
           pontos[r.jogador1_uid] = (pontos[r.jogador1_uid] || 0) + 1;
         if (r.jogador2_uid)
@@ -516,62 +749,114 @@ export default function DevGinasiosPage() {
     for (const uid in pontos) if (pontos[uid] > maior) maior = pontos[uid];
     const empatados = Object.keys(pontos).filter((uid) => pontos[uid] === maior);
 
-    // empate → reabre nova disputa com empatados
-    if (empatados.length > 1) {
-      const nova = await addDoc(collection(db, "disputas_ginasio"), {
-        ginasio_id: g.id,
-        status: "inscricoes",
-        tipo_original: disputa.tipo_original || g.tipo || "",
-        lider_anterior_uid: g.lider_uid || "",
-        reaberta_por_empate: true,
-        temporada_id: temporada?.id || "",
-        temporada_nome: temporada?.nome || "",
-        liga: g.liga || g.liga_nome || "",
-        origem: "empate",
-        createdAt: Date.now(),
-      });
+    // protege contra estado externo (ginásio já com líder)
+    const gFreshSnap = await getDoc(doc(db, "ginasios", g.id));
+    const gFresh = gFreshSnap.exists() ? (gFreshSnap.data() as any) : null;
 
-      for (const uid of empatados) {
-        const partOrig = participantes.find((p) => p.usuario_uid === uid);
-        await addDoc(collection(db, "disputas_ginasio_participantes"), {
-          disputa_id: nova.id,
-          ginasio_id: g.id,
-          usuario_uid: uid,
-          tipo_escolhido:
-            partOrig?.tipo_escolhido || disputa.tipo_original || g.tipo || "",
-          createdAt: Date.now(),
-        });
-      }
-
+    if (gFresh?.lider_uid) {
       await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
         status: "finalizado",
         encerradaEm: Date.now(),
+        finalizacao_aplicada: true,
       });
 
       await deleteParticipantsOfDispute(disputa.id);
+      await updateDoc(doc(db, "ginasios", g.id), { em_disputa: false });
+      await hardDeleteDisputa(disputa.id);
 
-      setDisputas((prev) => {
-        const semAntiga = prev.filter((d) => d.id !== disputa.id);
-        return [
-          ...semAntiga,
-          {
-            id: nova.id,
-            ginasio_id: g.id,
-            status: "inscricoes",
-            tipo_original: disputa.tipo_original || g.tipo || "",
-          },
-        ];
-      });
+      setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
+      setGinasios((prev) =>
+        prev.map((gg) => (gg.id === g.id ? { ...gg, em_disputa: false } : gg))
+      );
 
-      await updateDoc(doc(db, "ginasios", g.id), { em_disputa: true });
-
-      // fecha desafios pendentes (chat) deste ginásio
       await closePendingChallengesOfGym(g.id);
+      await finalizeJobsForManualAction(g.id, "encerrar_disputa", disputa.id);
+      return;
+    }
+
+    // EMPATE → reabre nova disputa com empatados
+    if (empatados.length > 1) {
+      let novaId: string | null = null;
+
+      try {
+        const nowMs = Date.now();
+        const nova = await addDoc(collection(db, "disputas_ginasio"), {
+          ginasio_id: g.id,
+          status: "inscricoes",
+          tipo_original: disputa.tipo_original || g.tipo || "",
+          lider_anterior_uid: g.lider_uid || "",
+          reaberta_por_empate: true,
+          temporada_id: temporada?.id || "",
+          temporada_nome: temporada?.nome || "",
+          liga: g.liga || g.liga_nome || "",
+          origem: "empate",
+          createdAt: nowMs,
+        });
+        novaId = nova.id;
+
+        // agenda jobs automáticos para a nova disputa reaberta
+        await scheduleJobsForDisputa(g, nova.id, nowMs);
+
+        for (const uid of empatados) {
+          try {
+            const partOrig = participantes.find((p) => p.usuario_uid === uid);
+            await addDoc(collection(db, "disputas_ginasio_participantes"), {
+              disputa_id: nova.id,
+              ginasio_id: g.id,
+              usuario_uid: uid,
+              tipo_escolhido:
+                partOrig?.tipo_escolhido ||
+                disputa.tipo_original ||
+                g.tipo ||
+                "",
+              createdAt: Date.now(),
+            });
+          } catch (e) {
+            console.warn("Seed de participante do empate falhou:", e);
+          }
+        }
+      } finally {
+        await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
+          status: "finalizado",
+          encerradaEm: Date.now(),
+          finalizacao_aplicada: true,
+          vencedor_uid: null,
+        });
+
+        await deleteParticipantsOfDispute(disputa.id);
+        await updateDoc(doc(db, "ginasios", g.id), { em_disputa: !!novaId });
+        await hardDeleteDisputa(disputa.id);
+
+        setDisputas((prev) => {
+          const semAntiga = prev.filter((d) => d.id !== disputa.id);
+          return novaId
+            ? [
+              ...semAntiga,
+              {
+                id: novaId,
+                ginasio_id: g.id,
+                status: "inscricoes",
+                tipo_original: disputa.tipo_original || g.tipo || "",
+              },
+            ]
+            : semAntiga;
+        });
+
+        setGinasios((prev) =>
+          prev.map((gg) =>
+            gg.id === g.id ? { ...gg, em_disputa: !!novaId } : gg
+          )
+        );
+
+        await closePendingChallengesOfGym(g.id);
+        await finalizeJobsForManualAction(g.id, "encerrar_disputa", disputa.id);
+      }
+
       return;
     }
 
     // vencedor definido
-    const vencedorUid = empatados[0]; // seguro aqui: length === 1
+    const vencedorUid = empatados[0];
     const participanteVencedor = participantes.find(
       (p) => p.usuario_uid === vencedorUid
     );
@@ -586,6 +871,7 @@ export default function DevGinasiosPage() {
       status: "finalizado",
       encerradaEm: Date.now(),
       vencedor_uid: vencedorUid,
+      finalizacao_aplicada: true,
     });
 
     await endActiveLeadership(g.id);
@@ -602,23 +888,24 @@ export default function DevGinasiosPage() {
     });
 
     await deleteParticipantsOfDispute(disputa.id);
+    await hardDeleteDisputa(disputa.id);
 
     setDisputas((prev) => prev.filter((d) => d.id !== disputa.id));
     setGinasios((prev) =>
       prev.map((gg) =>
         gg.id === g.id
           ? {
-              ...gg,
-              em_disputa: false,
-              lider_uid: vencedorUid,
-              tipo: tipoDoVencedor,
-            }
+            ...gg,
+            em_disputa: false,
+            lider_uid: vencedorUid,
+            tipo: tipoDoVencedor,
+          }
           : gg
       )
     );
 
-    // fecha desafios pendentes (chat) deste ginásio
     await closePendingChallengesOfGym(g.id);
+    await finalizeJobsForManualAction(g.id, "encerrar_disputa", disputa.id);
   };
 
   // ===== RENÚNCIA
@@ -629,6 +916,7 @@ export default function DevGinasiosPage() {
     await endActiveLeadership(g.id);
 
     if (!disputaExistente) {
+      const nowMs = Date.now();
       const nova = await addDoc(collection(db, "disputas_ginasio"), {
         ginasio_id: g.id,
         status: "inscricoes",
@@ -638,7 +926,7 @@ export default function DevGinasiosPage() {
         temporada_nome: temporada?.nome || "",
         liga: g.liga || g.liga_nome || r.liga || "",
         origem: "renuncia",
-        createdAt: Date.now(),
+        createdAt: nowMs,
       });
 
       setDisputas((prev) => [
@@ -650,6 +938,9 @@ export default function DevGinasiosPage() {
           tipo_original: g.tipo || "",
         },
       ]);
+
+      // agenda automático para essa disputa criada pela renúncia
+      await scheduleJobsForDisputa(g, nova.id, nowMs);
     }
 
     await updateDoc(doc(db, "ginasios", g.id), {
@@ -670,7 +961,6 @@ export default function DevGinasiosPage() {
       confirmadoPorAdminEm: Date.now(),
     });
 
-    // por segurança, fecha desafios pendentes deste ginásio
     await closePendingChallengesOfGym(g.id);
 
     setRenunciasMap((prev) => {
@@ -725,7 +1015,6 @@ export default function DevGinasiosPage() {
         createdAt: Date.now(),
         createdByUid: auth.currentUser?.uid || null,
 
-        // meta pra facilitar na Function (snapshot do estado atual)
         liga: g.liga || g.liga_nome || "",
         tipo_original: g.tipo || "",
         temporada_id: temporada?.id || "",
@@ -886,9 +1175,9 @@ export default function DevGinasiosPage() {
           jobsDoGinasio.length === 0
             ? null
             : jobsDoGinasio.reduce<JobDisputa | null>((acc, job) => {
-                if (!acc) return job;
-                return job.runAtMs < acc.runAtMs ? job : acc;
-              }, null);
+              if (!acc) return job;
+              return job.runAtMs < acc.runAtMs ? job : acc;
+            }, null);
 
         return (
           <div
@@ -924,9 +1213,10 @@ export default function DevGinasiosPage() {
                   Próximo agendamento (
                   {proximoJob.acao === "criar_disputa"
                     ? "criar disputa"
-                    : "iniciar disputa"}
-                  ):{" "}
-                  {formatCountdownFromNow(proximoJob.runAtMs, nowMs)} (
+                    : proximoJob.acao === "iniciar_disputa"
+                      ? "iniciar disputa"
+                      : "encerrar disputa"}
+                  ): {formatCountdownFromNow(proximoJob.runAtMs, nowMs)} (
                   {new Date(proximoJob.runAtMs).toLocaleString("pt-BR")})
                 </p>
               )}

@@ -1053,23 +1053,30 @@ export default function PerfilPage() {
         );
       }
 
-      // Criar JOB para a Cloud Function gerar a disputa automaticamente
-      await addDoc(collection(db, 'jobs_disputas'), {
-        acao: 'criar_disputa',
-        status: 'pendente',
-        ginasio_id: g.id,
-        tipo_original: g.tipo || '',
-        lider_anterior_uid: g.lider_uid || '',
-        temporada_id: temporadaAtiva?.id || '',
-        temporada_nome: temporadaAtiva?.nome || '',
-        liga: g.liga || '',
-        origem: 'renuncia_perfil',
-        runAtMs: now,           // rodar agora
-        createdAt: now,
-        createdByUid: perfilUid,
-      });
+      // Evita duplicar disputa: checa se já existe aberta
+      const qExistente = query(
+        collection(db, 'disputas_ginasio'),
+        where('ginasio_id', '==', g.id),
+        where('status', 'in', ['inscricoes', 'batalhando'])
+      );
+      const existe = await getDocs(qExistente);
 
-      // Atualizar ginásio: sem líder, em disputa, derrota resetada
+      // Cria disputa diretamente se não existir uma aberta
+      if (existe.empty) {
+        await addDoc(collection(db, 'disputas_ginasio'), {
+          ginasio_id: g.id,
+          status: 'inscricoes',
+          tipo_original: g.tipo || '',
+          lider_anterior_uid: g.lider_uid || '',
+          temporada_id: temporadaAtiva?.id || '',
+          temporada_nome: temporadaAtiva?.nome || '',
+          liga: g.liga || '',
+          origem: 'renuncia',
+          createdAt: now,
+        });
+      }
+
+      // Atualiza ginásio: sem líder, em disputa, derrota resetada
       await updateDoc(doc(db, 'ginasios', g.id), {
         lider_uid: '',
         em_disputa: true,

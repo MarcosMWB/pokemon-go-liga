@@ -3,7 +3,7 @@
 
 import type { User } from "firebase/auth";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
 import { TYPE_ICONS } from "@/utils/typeIcons";
 import Image from "next/image";
 import { auth, db } from "@/lib/firebase";
@@ -123,6 +123,8 @@ function fmtCountdown(msDiff: number): string {
 export default function DisputaGinasioPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams(); // <— NOVO
+  const pathname = usePathname(); // <— NOVO
   const ginasioId = params?.id as string;
 
   const [userUid, setUserUid] = useState<string | null>(null);
@@ -156,7 +158,12 @@ export default function DisputaGinasioPage() {
   // info do "Converse com o adversário"
   const [chatInfoOpen, setChatInfoOpen] = useState(false);
 
-  // ====== NOVO: variáveis globais (horas) ======
+  // ====== NOVO: suporte ao deep-link ?inscricao=1 ======
+  const [inscricaoModalOpen, setInscricaoModalOpen] = useState(false);
+  const inscricaoSectionRef = useRef<HTMLDivElement | null>(null);
+  const [inscricaoFlash, setInscricaoFlash] = useState(false);
+
+  // ====== variáveis globais (horas) ======
   const [tempoInscricoesHoras, setTempoInscricoesHoras] = useState<number | null>(null);
   const [tempoBatalhasHoras, setTempoBatalhasHoras] = useState<number | null>(null);
   const [, forceTick] = useState(0);
@@ -559,7 +566,6 @@ export default function DisputaGinasioPage() {
     );
   }, [participantes, pontos]);
 
-  // Finalização automática (inclui WO)
   // Finalização automática
   useEffect(() => {
     const aplicarFinalizacao = async () => {
@@ -597,10 +603,6 @@ export default function DisputaGinasioPage() {
         if (pendentes.length === 1) {
           paraConfirmar.push(pendentes[0]);
         }
-
-        // se pendentes.length >= 2 → conflito (ex: os dois declararam vitória)
-        // nesse caso, NÃO faz WO pra ninguém.
-        // (se quiser, aqui dá pra marcar todos como "contestado" automático)
       });
 
       if (paraConfirmar.length > 0) {
@@ -621,7 +623,6 @@ export default function DisputaGinasioPage() {
       // 2) ESCOLHA DO LÍDER (usa só resultados confirmados, incluindo WO acima)
 
       if (ranking.length === 0) {
-        // ninguém com resultado confirmado → opcional: marcar "sem vencedor"
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
           finalizacao_aplicada: true,
           vencedor_uid: null,
@@ -639,7 +640,6 @@ export default function DisputaGinasioPage() {
       );
 
       if (empatadosTopo.length > 1) {
-        // empate no topo → não escolhe líder automático
         await updateDoc(doc(db, "disputas_ginasio", disputa.id), {
           empate_no_topo: true,
           finalizacao_aplicada: true, // trava a finalização pra não ficar em loop
@@ -648,7 +648,6 @@ export default function DisputaGinasioPage() {
         return;
       }
 
-      // tem um único primeiro lugar
       const novoLiderUid = topo.usuario_uid;
       const tipoNovo =
         topo.tipo_escolhido || ginasio.tipo || disputa.tipo_original || "";
@@ -887,6 +886,65 @@ export default function DisputaGinasioPage() {
     loadWinner();
   }, [disputa?.status, disputa?.vencedor_uid, ginasio?.lider_uid]);
 
+  // ====== NOVO: responder ao query ?inscricao=1 ======
+  useEffect(() => {
+    const wantsInscricao = searchParams?.get("inscricao");
+    if (!wantsInscricao) return;
+
+    // se estiver em "inscricoes", abre modal; senão só destaca a seção
+    if (disputa?.status === "inscricoes") {
+      setInscricaoModalOpen(true);
+    } else {
+      inscricaoSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setInscricaoFlash(true);
+      const t = setTimeout(() => setInscricaoFlash(false), 2400);
+      return () => clearTimeout(t);
+    }
+  }, [searchParams, disputa?.status]);
+
+  const closeInscricaoModal = () => {
+    setInscricaoModalOpen(false);
+    // limpa o query param sem recarregar
+    router.replace(pathname, { scroll: false });
+  };
+
+  // ====== UI reutilizável do seletor de tipos (usado na seção e no modal) ======
+  const TipoPicker: React.FC = () => (
+    <>
+      {disputaTravada && (
+        <p className="text-xs text-red-500 mb-2">
+          Disputa iniciada. Não dá mais pra trocar.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {tiposPermitidos.map((t) => (
+          <button
+            key={t}
+            onClick={() => handleEscolherTipo(t)}
+            disabled={salvandoTipo || disputaTravada}
+            className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
+              meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+            } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            {renderTipoIcon(t, 20)}
+            <span className="capitalize">{t}</span>
+          </button>
+        ))}
+      </div>
+      {meuParticipante?.tipo_escolhido ? (
+        <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
+          Você escolheu:{" "}
+          {renderTipoIcon(meuParticipante.tipo_escolhido, 24)}
+          <span className="capitalize">{meuParticipante.tipo_escolhido}</span>
+        </p>
+      ) : (
+        <p className="text-xs text-gray-500 mt-2">
+          Escolha um tipo disponível da liga para participar.
+        </p>
+      )}
+    </>
+  );
+
   if (loading) return <p className="p-8">Carregando disputa...</p>;
   if (!ginasio) return <p className="p-8">Ginásio não encontrado.</p>;
   if (!disputa) {
@@ -996,40 +1054,13 @@ export default function DisputaGinasioPage() {
         </div>
       )}
 
-      <div className="card p-4">
+      {/* SEÇÃO: SEU TIPO NA DISPUTA (ancorada para o deep-link) */}
+      <div
+        ref={inscricaoSectionRef}
+        className={`card p-4 ${inscricaoFlash ? "ring-2 ring-blue-400 animate-pulse" : ""}`}
+      >
         <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
-        {disputaTravada && (
-          <p className="text-xs text-red-500 mb-2">
-            Disputa iniciada. Não dá mais pra trocar.
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {tiposPermitidos.map((t) => (
-            <button
-              key={t}
-              onClick={() => handleEscolherTipo(t)}
-              disabled={salvandoTipo || disputaTravada}
-              className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200"
-                } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              {renderTipoIcon(t, 20)}
-              <span className="capitalize">{t}</span>
-            </button>
-          ))}
-        </div>
-        {meuParticipante?.tipo_escolhido ? (
-          <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
-            Você escolheu:{" "}
-            {renderTipoIcon(meuParticipante.tipo_escolhido, 24)}
-            <span className="capitalize">{meuParticipante.tipo_escolhido}</span>
-          </p>
-        ) : (
-          <p className="text-xs text-gray-500 mt-2">
-            Escolha um tipo disponível da liga para participar.
-          </p>
-        )}
+        <TipoPicker />
       </div>
 
       {disputa.status === "batalhando" && (
@@ -1333,10 +1364,11 @@ export default function DisputaGinasioPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
-                          ? "self-end bg-blue-600 text-white"
-                          : "self-start bg-white border"
-                          }`}
+                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${
+                          mine
+                            ? "self-end bg-blue-600 text-white"
+                            : "self-start bg-white border"
+                        }`}
                       >
                         <p>{m.text}</p>
                       </div>
@@ -1362,6 +1394,28 @@ export default function DisputaGinasioPage() {
                 Enviar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* NOVO: Modal de Inscrição (abre com ?inscricao=1) */}
+      {inscricaoModalOpen && disputa?.status === "inscricoes" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={closeInscricaoModal} />
+          <div className="relative bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-xl p-4 flex flex-col">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <h3 className="text-lg font-semibold">Inscrição na disputa</h3>
+              <button
+                className="text-slate-500 hover:text-slate-800 text-sm"
+                onClick={closeInscricaoModal}
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="text-sm text-slate-600 mb-3">
+              Escolha seu tipo para participar desta disputa.
+            </div>
+            <TipoPicker />
           </div>
         </div>
       )}
