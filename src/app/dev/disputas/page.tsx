@@ -159,12 +159,12 @@ async function endActiveLeadership(ginasioId: string) {
     query(
       collection(db, "ginasios_liderancas"),
       where("ginasio_id", "==", ginasioId),
-      where("endedAt", "==", null)
+      where("fim", "==", null)
     )
   );
   for (const d of snap.docs) {
     await updateDoc(d.ref, {
-      endedAt: Date.now(),
+      fim: Date.now(),
       endedByAdminUid: auth.currentUser?.uid || null,
     });
   }
@@ -808,8 +808,10 @@ export default function DevDisputasPage() {
             const dias = r.createdAtMs ? Math.floor((Date.now() - r.createdAtMs) / 86400000) : null;
             const velho = dias !== null && dias >= 7;
 
-            const aUid = r.tipo === "empate" ? r.jogador1_uid! : r.vencedor_uid!;
-            const bUid = r.tipo === "empate" ? r.jogador2_uid! : r.perdedor_uid!;
+            const aUid = r.tipo === "empate" ? r.jogador1_uid : r.vencedor_uid;
+            const bUid = r.tipo === "empate" ? r.jogador2_uid : r.perdedor_uid;
+            if (!aUid || !bUid) return null;
+
             const aName = uMap[aUid]?.display || aUid;
             const bName = uMap[bUid]?.display || bUid;
 

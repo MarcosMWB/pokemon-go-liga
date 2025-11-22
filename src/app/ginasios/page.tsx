@@ -586,7 +586,7 @@ export default function GinasiosPage() {
   async function encerrarLideratoSeAberto(ginasioId: string, liderUid: string) {
     try {
       const qAberto = query(
-        collection(db, 'ginasios_lideratos'),
+        collection(db, 'ginasios_liderancas'),
         where('ginasio_id', '==', ginasioId),
         where('lider_uid', '==', liderUid)
       );
@@ -596,7 +596,7 @@ export default function GinasiosPage() {
         return x.fim === null || x.fim === undefined;
       });
       await Promise.all(
-        pendentes.map((d) => updateDoc(doc(db, 'ginasios_lideratos', d.id), { fim: Date.now() }))
+        pendentes.map((d) => updateDoc(doc(db, 'ginasios_liderancas', d.id), { fim: Date.now() }))
       );
     } catch (e) {
       console.warn('Falha ao encerrar líderato aberto', e);
