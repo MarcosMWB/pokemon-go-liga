@@ -113,6 +113,25 @@ function formatDate(ms: number | null) {
   return d.toLocaleString();
 }
 
+function VsTipo({ tipo }: { tipo?: string }) {
+  return (
+    <div className="justify-self-center flex flex-col items-center">
+      <div className="w-20 h-20 sm:w-32 sm:h-32 rounded-full border-4 border-red-600
+                text-red-600 flex items-center justify-center font-extrabold
+                text-2xl sm:text-5xl leading-none">
+        VS
+      </div>
+
+      <span className="mt-2 sm:hidden">
+        <TipoBadge tipo={tipo} size={56} />
+      </span>
+      <span className="mt-2 hidden sm:inline-block">
+        <TipoBadge tipo={tipo} size={100} />
+      </span>
+    </div>
+  );
+}
+
 /** --------- Tipo badge --------- */
 function TipoBadge({ tipo, size = 22 }: { tipo?: string; size?: number }) {
   if (!tipo) return <span className="text-xs text-gray-500">—</span>;
@@ -1203,8 +1222,8 @@ export default function GinasioOverviewPage() {
                                   key={nome}
                                   displayName={nome}
                                   baseId={baseId}
-                                  sizeSm={44}
-                                  sizeMd={80}
+                                  sizeSm={22}
+                                  sizeMd={36}
                                 />
                               );
                             })}
@@ -1274,53 +1293,13 @@ export default function GinasioOverviewPage() {
         {souLiderDesseGinasio ? (
           pendentes.length > 0 && dSel ? (
             <>
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-600">
-                    Desafiante: {nomesUsuarios[dSel.desafiante_uid] || dSel.desafiante_uid}
-                  </span>
-                  <div className="flex flex-wrap gap-1 sm:-space-x-1">
-                    {equipeDesafianteSelecionado.slice(0, 6).map((nome) => {
-                      const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
-                      const baseId = nameToId[baseName];
-                      return (
-                        <PokemonMiniResponsive
-                          key={nome}
-                          displayName={nome}
-                          baseId={baseId}
-                          sizeSm={44}
-                          sizeMd={80}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="flex items-center">
-                  <span className="text-3xl sm:text-6xl font-bold leading-none">VS</span>
-                  <span className="ml-2 sm:hidden">
-                    <TipoBadge tipo={tipo} size={56} />
-                  </span>
-                  <span className="ml-2 hidden sm:inline-block">
-                    <TipoBadge tipo={tipo} size={100} />
-                  </span>
-                </div>
-              </div>
-              {equipeDesafianteSelecionado.length === 0 && (
-                <p className="text-xs text-gray-500 mt-2">Time do desafiante não informado.</p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-gray-600">Sem desafiante selecionado.</p>
-          )
-        ) : (
-          <>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-600">
-                  Sua equipe{ligaParaEquipe ? ` (${ligaParaEquipe})` : ""}:
+              <div className="flex flex-col items-center text-center gap-2">
+                <span className="self-start text-xs text-gray-600">
+                  Desafiante: {nomesUsuarios[dSel.desafiante_uid] || dSel.desafiante_uid}
                 </span>
-                <div className="flex flex-wrap gap-1 sm:-space-x-1">
-                  {minhaEquipeLiga.slice(0, 6).map((nome) => {
+
+                <div className="flex flex-wrap justify-center gap-1 sm:-space-x-1">
+                  {equipeDesafianteSelecionado.slice(0, 6).map((nome) => {
                     const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
                     const baseId = nameToId[baseName];
                     return (
@@ -1334,17 +1313,43 @@ export default function GinasioOverviewPage() {
                     );
                   })}
                 </div>
+
+                <VsTipo tipo={tipo} /> <b>MonoType</b>
               </div>
-              <div className="flex items-center">
-                <span className="text-3xl sm:text-6xl font-bold leading-none">VS</span>
-                <span className="ml-2 sm:hidden">
-                  <TipoBadge tipo={tipo} size={56} />
-                </span>
-                <span className="ml-2 hidden sm:inline-block">
-                  <TipoBadge tipo={tipo} size={100} />
-                </span>
+
+              {equipeDesafianteSelecionado.length === 0 && (
+                <p className="text-xs text-gray-500 mt-2">Time do desafiante não informado.</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-gray-600">Sem desafiante selecionado.</p>
+          )
+        ) : (
+          <>
+            <div className="flex flex-col items-center text-center gap-2">
+              <span className="text-xs text-gray-600">
+                Sua equipe{ligaParaEquipe ? ` (${ligaParaEquipe})` : ""}:
+              </span>
+
+              <div className="flex flex-wrap justify-center gap-1 sm:-space-x-1">
+                {minhaEquipeLiga.slice(0, 6).map((nome) => {
+                  const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
+                  const baseId = nameToId[baseName];
+                  return (
+                    <PokemonMiniResponsive
+                      key={nome}
+                      displayName={nome}
+                      baseId={baseId}
+                      sizeSm={44}
+                      sizeMd={80}
+                    />
+                  );
+                })}
               </div>
+
+              <VsTipo tipo={tipo} />
             </div>
+
             {minhaEquipeLiga.length === 0 && (
               <p className="text-xs text-gray-500 mt-2">
                 Cadastre sua equipe na liga do ginásio para visualizar aqui.
