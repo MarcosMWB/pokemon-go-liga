@@ -3,7 +3,7 @@
 
 import type { User } from "firebase/auth";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { auth, db } from "@/lib/firebase";
