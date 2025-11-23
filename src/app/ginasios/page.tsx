@@ -881,6 +881,7 @@ export default function GinasiosPage() {
           </select>
         )}
         <button
+          type="button"
           onClick={() => router.push(`/tutorials`)}
           className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
         >
@@ -943,7 +944,21 @@ export default function GinasiosPage() {
         return (
           <div
             key={g.id}
-            className="card p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              const el = e.target as HTMLElement;
+              // se clicou em elemento interativo, não navega
+              if (el.closest('a,button,input,select,textarea,label,[role="button"]')) return;
+              router.push(`/ginasios/${g.id}`);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && e.currentTarget === e.target) {
+                router.push(`/ginasios/${g.id}`);
+              }
+            }}
+            className="card p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between cursor-pointer"
+            aria-label={`Abrir página do ginásio ${g.nome}`}
           >
             <div>
               <h2 className="text-lg font-semibold">
@@ -980,6 +995,7 @@ export default function GinasiosPage() {
                 {g.lider_uid ? (
                   <Link
                     href={`/perfil/${g.lider_uid}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="text-blue-600 hover:underline"
                   >
                     {liderNomes[g.lider_uid] || g.lider_uid}
@@ -990,7 +1006,10 @@ export default function GinasiosPage() {
               </p>
             </div>
 
-            <div className="flex flex-col gap-2 items-stretch md:items-end w-full md:w-auto">
+            <div
+              className="flex flex-col gap-2 items-stretch md:items-end w-full md:w-auto"
+              onClick={(e) => e.stopPropagation()} // trocado de onClickCapture para onClick (bolha)
+            >
               {disputaDoGinasio ? (
                 <>
                   {jaNaDisputa ? (
@@ -1068,6 +1087,7 @@ export default function GinasiosPage() {
                       )}
 
                       <button
+                        type="button"
                         onClick={() => openDesafioChat(desafioSelecionado.id)}
                         className="px-3 py-1 bg-slate-800 text-white rounded text-xs md:text-sm"
                       >
@@ -1100,6 +1120,7 @@ export default function GinasiosPage() {
                     </div>
                   )}
                   <button
+                    type="button"
                     onClick={() => openDesafioChat(meuDesafioComoDesafiante.id)}
                     className="px-3 py-1 bg-slate-800 text-white rounded text-xs md:text-sm self-end"
                   >
@@ -1128,6 +1149,7 @@ export default function GinasiosPage() {
                     </div>
                   )}
                   <button
+                    type="button"
                     onClick={() => handleDesafiar(g)}
                     disabled={bloqueado || semLider || jaTemInsignia || g.lider_uid === userUid}
                     className="px-3 py-1 bg-yellow-500 text-white rounded text-sm disabled:opacity-50 w-full md:w-auto"
@@ -1135,12 +1157,12 @@ export default function GinasiosPage() {
                     {g.lider_uid === userUid
                       ? 'Você é o líder'
                       : semLider
-                      ? 'Sem líder'
-                      : jaTemInsignia
-                      ? 'Já ganhou'
-                      : bloqueado
-                      ? 'Aguarde novo desafio'
-                      : 'Desafiar'}
+                        ? 'Sem líder'
+                        : jaTemInsignia
+                          ? 'Já ganhou'
+                          : bloqueado
+                            ? 'Aguarde novo desafio'
+                            : 'Desafiar'}
                   </button>
                 </div>
               )}
@@ -1161,6 +1183,7 @@ export default function GinasiosPage() {
                 </p>
               </div>
               <button
+                type="button"
                 className="text-slate-500 hover:text-slate-800 text-sm"
                 onClick={closeDesafioChat}
               >
@@ -1195,6 +1218,7 @@ export default function GinasiosPage() {
                           />
                           <div className="w-full flex items-center justify-between gap-2">
                             <button
+                              type="button"
                               onClick={() =>
                                 navigator.clipboard?.writeText(chatOtherFC!)
                               }
