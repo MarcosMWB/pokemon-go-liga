@@ -867,17 +867,23 @@ export default function DisputaGinasioPage() {
     disputeEndMs != null;
   const now = Date.now();
 
+  const disputaStatus = disputa?.status ?? null;
+  const disputaVencedorUid = disputa?.vencedor_uid ?? null;
+  const ginasioLiderUid = ginasio?.lider_uid ?? null;
+
   useEffect(() => {
     const loadWinner = async () => {
-      if (!disputa || disputa.status !== "finalizado") {
+      if (disputaStatus !== "finalizado") {
         setWinnerName(null);
         return;
       }
-      const uid = disputa.vencedor_uid || ginasio?.lider_uid || null;
+
+      const uid = disputaVencedorUid || ginasioLiderUid || null;
       if (!uid) {
         setWinnerName(null);
         return;
       }
+
       try {
         const u = await getDoc(doc(db, "usuarios", uid));
         if (u.exists()) {
@@ -890,8 +896,9 @@ export default function DisputaGinasioPage() {
         setWinnerName(uid);
       }
     };
+
     loadWinner();
-  }, [disputa?.status, disputa?.vencedor_uid, ginasio?.lider_uid]);
+  }, [disputaStatus, disputaVencedorUid, ginasioLiderUid]);
 
   // ====== NOVO: responder ao query ?inscricao=1 ======
   useEffect(() => {

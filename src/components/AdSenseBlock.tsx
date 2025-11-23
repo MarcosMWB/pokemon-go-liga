@@ -1,34 +1,39 @@
 // src/components/AdSenseBlock.tsx
 "use client";
+
 import { useEffect } from "react";
 
-declare global {
-  interface Window { adsbygoogle: unknown[]; }
-}
-
 type Props = {
-  slot: string;        // data-ad-slot do bloco criado no AdSense
-  layout?: string;     // e.g., "in-article", "in-feed"
-  style?: React.CSSProperties;
+  slot: string;
+  className?: string;
 };
 
-export default function AdSenseBlock({ slot, layout, style }: Props) {
+declare global {
+  interface Window {
+    adsbygoogle: any[];
+  }
+}
+
+export default function AdSenseBlock({ slot, className }: Props) {
   useEffect(() => {
     try {
-      // @ts-ignore
-      (window.adsbygoogle = window.adsbygoogle || []).push({});
-    } catch {}
-  }, [slot]);
+      if (typeof window !== "undefined") {
+        window.adsbygoogle = window.adsbygoogle || [];
+        window.adsbygoogle.push({});
+      }
+    } catch {
+      // ignora erros de inicialização
+    }
+  }, []);
 
   return (
     <ins
-      className="adsbygoogle"
-      style={style ?? { display: "block" }}
-      data-ad-client={process.env.NEXT_PUBLIC_ADSENSE_CLIENT}
+      className={`adsbygoogle block ${className ?? ""}`}
+      style={{ display: "block" }}
+      data-ad-client="ca-pub-2608686864167308"
       data-ad-slot={slot}
       data-ad-format="auto"
       data-full-width-responsive="true"
-      {...(layout ? { "data-ad-layout": layout } : {})}
     />
   );
 }
