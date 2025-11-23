@@ -105,80 +105,77 @@ exports.onResultadoWrite = (0, firestore_1.onDocumentWritten)({
 /**
  * ===== HELPERS PARA OS JOBS DE DISPUTA (CRON) =====
  */
-// lê tempo_inscricoes em horas de variables/global e devolve em ms
+// converte string/number de horas para ms
+function hoursToMs(raw) {
+    if (typeof raw === "number")
+        return raw * 3600000;
+    if (typeof raw === "string") {
+        const n = parseFloat(raw.trim().replace(",", "."));
+        return Number.isFinite(n) ? n * 3600000 : 0;
+    }
+    return 0;
+}
 async function getTempoInscricoesMs() {
+    var _a;
     try {
         const snap = await db.collection("variables").doc("global").get();
-        if (!snap.exists)
-            return 0;
-        const data = snap.data();
-        const raw = toHours(data === null || data === void 0 ? void 0 : data.tempo_inscricoes);
-        const horas = typeof raw === "number" ? raw : raw != null ? Number(raw) : 0;
-        if (!isNaN(horas) && horas > 0) {
-            return horas * 60 * 60 * 1000;
-        }
-        return 0;
+        const v = snap.exists ? (_a = snap.data()) === null || _a === void 0 ? void 0 : _a.tempo_inscricoes : 0;
+        return hoursToMs(v);
     }
-    catch (e) {
-        console.warn("Falha ao ler variables/global.tempo_inscricoes", e);
+    catch (_b) {
         return 0;
     }
 }
-async function scheduleIniciarDisputaJob(ginasioId, disputaId) {
-    const tempoMs = await getTempoInscricoesMs();
-    const runAtMs = Date.now() + (tempoMs > 0 ? tempoMs : 0);
-    await db.collection("jobs_disputas").add({
+async function getTempoBatalhasMs() {
+    var _a;
+    try {
+        const snap = await db.collection("variables").doc("global").get();
+        const v = snap.exists ? (_a = snap.data()) === null || _a === void 0 ? void 0 : _a.tempo_batalhas : 0;
+        return hoursToMs(v);
+    }
+    catch (_b) {
+        return 0;
+    }
+}
+/** Agenda início da disputa e denormaliza nextStartAtMs para o front */
+async function scheduleIniciarDisputaJob(ginasioId, disputaId, opts) {
+    var _a;
+    const delay = typeof (opts === null || opts === void 0 ? void 0 : opts.delayMs) === "number" ? opts.delayMs : await getTempoInscricoesMs();
+    const runAtMs = Date.now() + Math.max(0, delay);
+    const origem = (_a = opts === null || opts === void 0 ? void 0 : opts.origem) !== null && _a !== void 0 ? _a : "auto_from_criar_disputa";
+    const batch = db.batch();
+    batch.set(db.collection("jobs_disputas").doc(), {
         acao: "iniciar_disputa",
         status: "pendente",
         ginasio_id: ginasioId,
         disputa_id: disputaId,
-        origem: "auto_from_criar_disputa",
+        origem,
         runAtMs,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    console.log(`Job INICIAR_DISPUTA agendado para ${runAtMs} (em ${tempoMs} ms) para disputa ${disputaId}`);
+    batch.set(db.doc(`disputas_ginasio/${disputaId}`), { nextStartAtMs: runAtMs }, { merge: true });
+    await batch.commit();
+    return runAtMs;
 }
-/** ===== tempo de batalhas + agendamento do encerramento ===== */
-async function getTempoBatalhasMs() {
-    try {
-        const snap = await db.collection("variables").doc("global").get();
-        if (!snap.exists)
-            return 0;
-        const data = snap.data();
-        const raw = toHours(data === null || data === void 0 ? void 0 : data.tempo_batalhas);
-        const horas = typeof raw === "number" ? raw : raw != null ? Number(raw) : 0;
-        if (!isNaN(horas) && horas > 0) {
-            return horas * 60 * 60 * 1000;
-        }
-        return 0;
-    }
-    catch (e) {
-        console.warn("Falha ao ler variables/global.tempo_batalhas", e);
-        return 0;
-    }
-}
-function toHours(raw) {
-    if (typeof raw === "number")
-        return raw;
-    if (typeof raw === "string") {
-        const n = parseFloat(raw.trim().replace(",", "."));
-        return Number.isFinite(n) ? n : 0;
-    }
-    return 0;
-}
-async function scheduleEncerrarDisputaJob(ginasioId, disputaId) {
-    const tempoMs = await getTempoBatalhasMs();
-    const runAtMs = Date.now() + (tempoMs > 0 ? tempoMs : 0);
-    await db.collection("jobs_disputas").add({
+/** Agenda encerramento da disputa e denormaliza nextEndAtMs para o front */
+async function scheduleEncerrarDisputaJob(ginasioId, disputaId, opts) {
+    var _a;
+    const delay = typeof (opts === null || opts === void 0 ? void 0 : opts.delayMs) === "number" ? opts.delayMs : await getTempoBatalhasMs();
+    const runAtMs = Date.now() + Math.max(0, delay);
+    const origem = (_a = opts === null || opts === void 0 ? void 0 : opts.origem) !== null && _a !== void 0 ? _a : "auto_from_iniciar_disputa";
+    const batch = db.batch();
+    batch.set(db.collection("jobs_disputas").doc(), {
         acao: "encerrar_disputa",
         status: "pendente",
         ginasio_id: ginasioId,
         disputa_id: disputaId,
-        origem: "auto_from_iniciar_disputa",
+        origem,
         runAtMs,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    console.log(`Job ENCERRAR_DISPUTA agendado para ${runAtMs} (em ${tempoMs} ms) para disputa ${disputaId}`);
+    batch.set(db.doc(`disputas_ginasio/${disputaId}`), { nextEndAtMs: runAtMs }, { merge: true });
+    await batch.commit();
+    return runAtMs;
 }
 /** ===== FIM DO BLOCO ===== */
 async function processCriarDisputaJob(job) {
@@ -289,14 +286,9 @@ async function processIniciarDisputaJob(job) {
         .filter((d) => !d.removido && d.tipo_escolhido && d.tipo_escolhido !== "").length;
     if (validos < 2) {
         console.log(`Menos de 2 participantes válidos em ${disputaId}. Reagendando verificação.`);
-        await db.collection("jobs_disputas").add({
-            acao: "iniciar_disputa",
-            status: "pendente",
-            ginasio_id: job.ginasio_id,
-            disputa_id: disputaId,
+        await scheduleIniciarDisputaJob(job.ginasio_id, disputaId, {
+            delayMs: 60 * 60 * 1000, // +1h
             origem: "retry_participantes",
-            runAtMs: Date.now() + 60 * 60 * 1000, // +1h
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         return;
     }
@@ -304,6 +296,8 @@ async function processIniciarDisputaJob(job) {
         status: "batalhando",
         iniciadaEm: admin.firestore.FieldValue.serverTimestamp(),
     });
+    // limpa contador de início no doc (front não deve exibir após iniciar)
+    await disputaRef.set({ nextStartAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
     // agenda encerramento após o período de batalhas
     await scheduleEncerrarDisputaJob(job.ginasio_id, disputaId);
     console.log("Disputa iniciada via job:", disputaId);
@@ -359,6 +353,7 @@ async function processEncerrarDisputaJob(job) {
         });
         await gRef.update({ em_disputa: false });
         await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+        await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
         return { changed: true, reason: "sem_participantes", meta: { participantes: 0 }, finalStatus: "finalizado" };
     }
     // 2) WO automático por par: só para resultados NÃO "empate"
@@ -421,6 +416,7 @@ async function processEncerrarDisputaJob(job) {
         });
         await gRef.update({ em_disputa: false });
         await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+        await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
         return {
             changed: true,
             reason: "sem_resultados_confirmados",
@@ -468,6 +464,7 @@ async function processEncerrarDisputaJob(job) {
         });
         await gRef.update({ em_disputa: false });
         await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+        await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
         return {
             changed: true,
             reason: "todos_zero_ponto",
@@ -485,6 +482,7 @@ async function processEncerrarDisputaJob(job) {
         });
         await gRef.update({ em_disputa: false });
         await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+        await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
         return {
             changed: true,
             reason: "ginasio_ja_tem_lider",
@@ -530,6 +528,7 @@ async function processEncerrarDisputaJob(job) {
         });
         await gRef.update({ em_disputa: true });
         await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+        await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
         // Agenda automaticamente o início da nova disputa (respeitando tempo_inscricoes)
         await scheduleIniciarDisputaJob(ginasio_id, novaId);
         return {
@@ -580,8 +579,9 @@ async function processEncerrarDisputaJob(job) {
         vencedor_uid: vencedorUid,
         finalizacao_aplicada: true,
     });
-    // Resolve alerta
+    // Resolve alerta e limpa contador de encerramento
     await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
+    await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
     return {
         changed: true,
         reason: "vencedor_definido",

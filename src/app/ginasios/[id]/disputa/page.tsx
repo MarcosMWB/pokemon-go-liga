@@ -20,6 +20,7 @@ import {
   orderBy,
   serverTimestamp,
   Unsubscribe,
+  limit,
 } from "firebase/firestore";
 
 const TIPOS = [
@@ -64,6 +65,7 @@ type Disputa = {
   origem?: "disputa" | "renuncia" | "3_derrotas" | "manual" | "empate";
   createdAtMs?: number | null;
   vencedor_uid?: string | null;
+  iniciadaEmMs?: number | null;
 };
 
 type Participante = {
@@ -176,6 +178,16 @@ export default function DisputaGinasioPage() {
   const [tempoInscricoesHoras, setTempoInscricoesHoras] = useState<number | null>(null);
   const [tempoBatalhasHoras, setTempoBatalhasHoras] = useState<number | null>(null);
   //const [, forceTick] = useState(0);
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      forceTick((x) => (x + 1) % 1e9);
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const [startJobMs, setStartJobMs] = useState<number | null>(null);
+  const [endJobMs, setEndJobMs] = useState<number | null>(null);
   const [winnerName, setWinnerName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -228,6 +240,87 @@ export default function DisputaGinasioPage() {
     return { native, androidIntent };
   }
 
+  useEffect(() => {
+    if (!disputa?.id) { setStartJobMs(null); setEndJobMs(null); return; }
+
+    const now = Date.now();
+
+    const qStart = query(
+      collection(db, "jobs_disputas"),
+      where("disputa_id", "==", disputa.id),
+      where("acao", "==", "iniciar_disputa"),
+      where("status", "==", "pendente"),
+    );
+    const unsubStart = onSnapshot(qStart, (snap) => {
+      let chosen: number | null = null;
+      let chosenCreated = -1;
+      snap.forEach((docu) => {
+        const data: any = docu.data();
+        const v =
+          typeof data.runAtMs === "number" ? data.runAtMs : toMillis(data.runAt);
+        if (typeof v !== "number") return;
+
+        // ignore agendamento muito passado; mantenha só dentro da folga
+        if (v < now - GRACE_MS) return;
+
+        const created =
+          typeof data.createdAtMs === "number"
+            ? data.createdAtMs
+            : toMillis(data.createdAt) ?? 0;
+
+        // preferimos o REAGENDAMENTO mais novo (maior runAt; empate decide por createdAt)
+        if (
+          chosen === null ||
+          v > chosen ||
+          (v === chosen && created > chosenCreated)
+        ) {
+          chosen = v;
+          chosenCreated = created;
+        }
+      });
+      setStartJobMs(chosen); // null se não houver futuro válido
+    });
+
+    const qEnd = query(
+      collection(db, "jobs_disputas"),
+      where("disputa_id", "==", disputa.id),
+      where("acao", "==", "encerrar_disputa"),
+      where("status", "==", "pendente"),
+    );
+    const unsubEnd = onSnapshot(qEnd, (snap) => {
+      let chosen: number | null = null;
+      let chosenCreated = -1;
+      snap.forEach((docu) => {
+        const data: any = docu.data();
+        const v =
+          typeof data.runAtMs === "number" ? data.runAtMs : toMillis(data.runAt);
+        if (typeof v !== "number") return;
+
+        if (v < now - GRACE_MS) return;
+
+        const created =
+          typeof data.createdAtMs === "number"
+            ? data.createdAtMs
+            : toMillis(data.createdAt) ?? 0;
+
+        if (
+          chosen === null ||
+          v > chosen ||
+          (v === chosen && created > chosenCreated)
+        ) {
+          chosen = v;
+          chosenCreated = created;
+        }
+      });
+      setEndJobMs(chosen);
+    }, (err) => {
+      console.error("End job listener error:", err);
+      setEndJobMs(null);
+    });
+
+    return () => { unsubStart(); unsubEnd(); };
+  }, [disputa?.id]);
+
   // 1) auth + superuser
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (current: User | null) => {
@@ -267,7 +360,9 @@ export default function DisputaGinasioPage() {
     const qDisputa = query(
       collection(db, "disputas_ginasio"),
       where("ginasio_id", "==", ginasioId),
-      where("status", "in", ["inscricoes", "batalhando", "finalizado"])
+      where("status", "in", ["inscricoes", "batalhando", "finalizado"]),
+      orderBy("createdAt", "desc"),
+      limit(1)
     );
     const unsubD = onSnapshot(qDisputa, (snap) => {
       if (snap.empty) {
@@ -290,6 +385,7 @@ export default function DisputaGinasioPage() {
         origem: dData.origem as any,
         createdAtMs: toMillis(dData.createdAt),
         vencedor_uid: dData.vencedor_uid ?? null,
+        iniciadaEmMs: toMillis(dData.iniciadaEm),
       });
       setLoading(false);
     });
@@ -353,7 +449,8 @@ export default function DisputaGinasioPage() {
 
     const qRes = query(
       collection(db, "disputas_ginasio_resultados"),
-      where("disputa_id", "==", disputa.id)
+      where("disputa_id", "==", disputa.id),
+      orderBy("createdAt", "asc")
     );
     const unsub = onSnapshot(qRes, (snap) => {
       const list = snap.docs.map((r) => {
@@ -719,6 +816,13 @@ export default function DisputaGinasioPage() {
   }
 
   function closeChat() {
+    // encerra os listeners
+    chatUnsubRef.current?.();
+    chatUnsubRef.current = null;
+    desafioUnsubRef.current?.();
+    desafioUnsubRef.current = null;
+
+    // limpa estado
     setChatOpen(false);
     setChatDesafioId(null);
     setChatMsgs([]);
@@ -726,6 +830,12 @@ export default function DisputaGinasioPage() {
     setChatOther(null);
     setChatInfoOpen(false);
   }
+  useEffect(() => {
+    return () => {
+      chatUnsubRef.current?.();
+      desafioUnsubRef.current?.();
+    };
+  }, []);
 
   async function openDesafioChat(desafioId: string) {
     if (!userUid) return;
@@ -851,14 +961,19 @@ export default function DisputaGinasioPage() {
   const qrLink = fc ? qrUrl(friendLinks!.native) : null;
 
   const battleStartMs =
-    disputa?.createdAtMs != null && tempoInscricoesHoras != null
+    startJobMs // 1) se houver job pendente com horário real, usa ele
+    ?? disputa?.iniciadaEmMs // 2) se já iniciou, esse é o marco real
+    ?? (disputa?.createdAtMs != null && tempoInscricoesHoras != null
       ? disputa.createdAtMs + tempoInscricoesHoras * 3600000
-      : null;
+      : null); // 3) fallback antigo
 
   const disputeEndMs =
-    battleStartMs != null && tempoBatalhasHoras != null
-      ? battleStartMs + tempoBatalhasHoras * 3600000
-      : null;
+    endJobMs // 1) se houver job de encerrar, usa runAtMs real
+    ?? (disputa?.iniciadaEmMs != null && tempoBatalhasHoras != null
+      ? disputa.iniciadaEmMs + tempoBatalhasHoras * 3600000
+      : (battleStartMs != null && tempoBatalhasHoras != null
+        ? battleStartMs + tempoBatalhasHoras * 3600000
+        : null)); // fallback
 
   const showStartCountdown =
     disputa?.status === "inscricoes" && battleStartMs != null;
@@ -1006,16 +1121,14 @@ export default function DisputaGinasioPage() {
 
       {disputa.status !== "finalizado" ? (
         <div className="bg-indigo-50 border border-indigo-200 rounded p-3 text-sm text-indigo-900">
-          {tempoInscricoesHoras == null || tempoBatalhasHoras == null ? (
+          {(tempoInscricoesHoras == null && battleStartMs == null) &&
+            (tempoBatalhasHoras == null && disputeEndMs == null) ? (
             <p>
-              Configure <b>variables/global</b> com números (horas):{" "}
-              <code>tempo_inscricoes</code> e <code>tempo_batalhas</code>.
+              Configure <b>variables/global</b> com números (horas):
+              <code> tempo_inscricoes </code> e <code> tempo_batalhas </code>.
             </p>
-          ) : disputa.createdAtMs == null ? (
-            <p>
-              Sem <code>createdAt</code> na disputa — não dá para calcular os
-              prazos.
-            </p>
+          ) : (battleStartMs == null && disputeEndMs == null) ? (
+            <p>Não dá para calcular os prazos por enquanto.</p>
           ) : (
             <>
               {showStartCountdown && battleStartMs != null && (
@@ -1023,14 +1136,14 @@ export default function DisputaGinasioPage() {
                   {now < battleStartMs ? (
                     <p>
                       Fase de batalhas começa {fmtCountdown(battleStartMs - now)}{" "}
-                      <span className="text-xs text-indigo-700">
-                        (inscrições: {tempoInscricoesHoras} horas de inscrições)
-                      </span>
+                      {tempoInscricoesHoras != null && (
+                        <span className="text-xs text-indigo-700">
+                          (inscrições: {tempoInscricoesHoras} horas de inscrições)
+                        </span>
+                      )}
                     </p>
                   ) : (
-                    <p>
-                      Próxima fase na disputa começará em {fmtMMSS((battleStartMs + GRACE_MS) - now)}.
-                    </p>
+                    <p>Próxima fase na disputa começará em {fmtMMSS((battleStartMs + GRACE_MS) - now)}.</p>
                   )}
                 </>
               )}
@@ -1040,14 +1153,14 @@ export default function DisputaGinasioPage() {
                   {now < disputeEndMs ? (
                     <p>
                       Disputa pelo ginásio termina {fmtCountdown(disputeEndMs - now)}{" "}
-                      <span className="text-xs text-indigo-700">
-                        (batalhas: {tempoBatalhasHoras} horas de batalhas)
-                      </span>
+                      {tempoBatalhasHoras != null && (
+                        <span className="text-xs text-indigo-700">
+                          (batalhas: {tempoBatalhasHoras} horas de batalhas)
+                        </span>
+                      )}
                     </p>
                   ) : (
-                    <p>
-                      Próxima fase na disputa começará em {fmtMMSS((disputeEndMs + GRACE_MS) - now)}.
-                    </p>
+                    <p>Próxima fase na disputa começará em {fmtMMSS((disputeEndMs + GRACE_MS) - now)}.</p>
                   )}
                 </>
               )}
@@ -1062,82 +1175,87 @@ export default function DisputaGinasioPage() {
             líder do ginásio <b>{ginasio.nome}</b>.
           </p>
         </div>
-      )}
+      )
+      }
 
-      {disputa.status !== "finalizado" && (
-        <>
-          {avisoTipoInvalidado && (
-            <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
-              {avisoTipoInvalidado}
-            </div>
-          )}
-
-          {/* SEÇÃO: SEU TIPO NA DISPUTA */}
-          <div
-            ref={inscricaoSectionRef}
-            className={`card p-4 ${inscricaoFlash ? "ring-2 ring-blue-400 animate-pulse" : ""}`}
-          >
-            <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
-            <TipoPicker />
-          </div>
-        </>
-      )}
-
-      {disputa.status === "batalhando" && (
-        <div className="card p-4 space-y-3">
-          <h2 className="font-semibold">Declarar resultado</h2>
-          <p className="text-sm text-gray-500">
-            Só vale 1 confronto por dupla. Empate = 1 ponto pra cada.
-          </p>
-          <div className="flex items-center gap-2">
-            <select
-              value={oponente}
-              onChange={(e) => setOponente(e.target.value)}
-              className="border px-2 py-1 rounded"
-            >
-              <option value="">Selecione o adversário</option>
-              {participantes
-                .filter((p) => p.usuario_uid !== userUid)
-                .map((p) => (
-                  <option key={p.usuario_uid} value={p.usuario_uid}>
-                    {p.nome || p.email || p.usuario_uid}
-                    {p.tipo_escolhido ? ` (${p.tipo_escolhido})` : ""}
-                  </option>
-                ))}
-            </select>
-
-            {!!oponente && (
-              <button
-                onClick={() => handleChamar(oponente)}
-                className="bg-slate-800 text-white px-3 py-1 rounded text-sm"
-              >
-                Abrir chat
-              </button>
+      {
+        disputa.status !== "finalizado" && (
+          <>
+            {avisoTipoInvalidado && (
+              <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
+                {avisoTipoInvalidado}
+              </div>
             )}
-          </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={handleDeclararVitoria}
-              disabled={
-                declarando || !oponente || !meuParticipante?.tipo_escolhido
-              }
-              className="bg-green-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
+            {/* SEÇÃO: SEU TIPO NA DISPUTA */}
+            <div
+              ref={inscricaoSectionRef}
+              className={`card p-4 ${inscricaoFlash ? "ring-2 ring-blue-400 animate-pulse" : ""}`}
             >
-              Eu ganhei
-            </button>
-            <button
-              onClick={handleDeclararEmpate}
-              disabled={
-                declarando || !oponente || !meuParticipante?.tipo_escolhido
-              }
-              className="bg-yellow-500 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
-            >
-              Empatamos
-            </button>
+              <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
+              <TipoPicker />
+            </div>
+          </>
+        )
+      }
+
+      {
+        disputa.status === "batalhando" && (
+          <div className="card p-4 space-y-3">
+            <h2 className="font-semibold">Declarar resultado</h2>
+            <p className="text-sm text-gray-500">
+              Só vale 1 confronto por dupla. Empate = 1 ponto pra cada.
+            </p>
+            <div className="flex items-center gap-2">
+              <select
+                value={oponente}
+                onChange={(e) => setOponente(e.target.value)}
+                className="border px-2 py-1 rounded"
+              >
+                <option value="">Selecione o adversário</option>
+                {participantes
+                  .filter((p) => p.usuario_uid !== userUid)
+                  .map((p) => (
+                    <option key={p.usuario_uid} value={p.usuario_uid}>
+                      {p.nome || p.email || p.usuario_uid}
+                      {p.tipo_escolhido ? ` (${p.tipo_escolhido})` : ""}
+                    </option>
+                  ))}
+              </select>
+
+              {!!oponente && (
+                <button
+                  onClick={() => handleChamar(oponente)}
+                  className="bg-slate-800 text-white px-3 py-1 rounded text-sm"
+                >
+                  Abrir chat
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleDeclararVitoria}
+                disabled={
+                  declarando || !oponente || !meuParticipante?.tipo_escolhido
+                }
+                className="bg-green-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
+              >
+                Eu ganhei
+              </button>
+              <button
+                onClick={handleDeclararEmpate}
+                disabled={
+                  declarando || !oponente || !meuParticipante?.tipo_escolhido
+                }
+                className="bg-yellow-500 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
+              >
+                Empatamos
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       <div className="card p-4">
         <h2 className="font-semibold mb-2">Participantes</h2>
@@ -1196,62 +1314,64 @@ export default function DisputaGinasioPage() {
         )}
       </div>
 
-      {pendentesParaMim.length > 0 && (
-        <div className="card p-4">
-          <h2 className="font-semibold mb-2">Resultados para confirmar</h2>
-          <ul className="space-y-2">
-            {pendentesParaMim.map((r) => {
-              const outroUid =
-                r.tipo === "empate"
-                  ? r.jogador1_uid === userUid
-                    ? r.jogador2_uid
-                    : r.jogador1_uid
-                  : r.vencedor_uid;
-              const outro = participantes.find(
-                (p) => p.usuario_uid === (outroUid || "")
-              );
-              return (
-                <li
-                  key={r.id}
-                  className="flex justify-between items-center gap-2"
-                >
-                  <span className="text-sm">
-                    {r.tipo === "empate" ? (
-                      <>
-                        {outro?.nome || outro?.email || outroUid} disse que
-                        empatou com você.
-                      </>
-                    ) : (
-                      <>
-                        {outro?.nome || outro?.email || outroUid} disse que
-                        ganhou de você.
-                      </>
-                    )}
-                  </span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() =>
-                        handleConfirmarResultado(r, "confirmado")
-                      }
-                      className="bg-blue-600 text-white px-2 py-1 rounded text-xs"
-                    >
-                      Confirmar
-                    </button>
-                    <button
-                      onClick={() =>
-                        handleConfirmarResultado(r, "contestado")
-                      }
-                      className="bg-red-500 text-white px-2 py-1 rounded text-xs"
-                    >
-                      Contestar
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
+      {
+        pendentesParaMim.length > 0 && (
+          <div className="card p-4">
+            <h2 className="font-semibold mb-2">Resultados para confirmar</h2>
+            <ul className="space-y-2">
+              {pendentesParaMim.map((r) => {
+                const outroUid =
+                  r.tipo === "empate"
+                    ? r.jogador1_uid === userUid
+                      ? r.jogador2_uid
+                      : r.jogador1_uid
+                    : r.vencedor_uid;
+                const outro = participantes.find(
+                  (p) => p.usuario_uid === (outroUid || "")
+                );
+                return (
+                  <li
+                    key={r.id}
+                    className="flex justify-between items-center gap-2"
+                  >
+                    <span className="text-sm">
+                      {r.tipo === "empate" ? (
+                        <>
+                          {outro?.nome || outro?.email || outroUid} disse que
+                          empatou com você.
+                        </>
+                      ) : (
+                        <>
+                          {outro?.nome || outro?.email || outroUid} disse que
+                          ganhou de você.
+                        </>
+                      )}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() =>
+                          handleConfirmarResultado(r, "confirmado")
+                        }
+                        className="bg-blue-600 text-white px-2 py-1 rounded text-xs"
+                      >
+                        Confirmar
+                      </button>
+                      <button
+                        onClick={() =>
+                          handleConfirmarResultado(r, "contestado")
+                        }
+                        className="bg-red-500 text-white px-2 py-1 rounded text-xs"
+                      >
+                        Contestar
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )
+      }
 
       <div className="card p-4">
         <h2 className="font-semibold mb-2">Ranking (confirmados)</h2>
@@ -1277,167 +1397,171 @@ export default function DisputaGinasioPage() {
         )}
       </div>
 
-      {chatOpen && chatDesafioId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={closeChat} />
-          <div className="relative bg-white w-full max-w-2xl max-h-[90vh] rounded-xl shadow-xl p-3 md:p-5 flex flex-col">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">
-                  Desafio & Chat
-                </h3>
+      {
+        chatOpen && chatDesafioId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={closeChat} />
+            <div className="relative bg-white w-full max-w-2xl max-h-[90vh] rounded-xl shadow-xl p-3 md:p-5 flex flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    Desafio & Chat
+                  </h3>
+                </div>
+                <button
+                  className="text-slate-500 hover:text-slate-800 text-sm"
+                  onClick={closeChat}
+                >
+                  Fechar
+                </button>
               </div>
-              <button
-                className="text-slate-500 hover:text-slate-800 text-sm"
-                onClick={closeChat}
-              >
-                Fechar
-              </button>
-            </div>
 
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="border rounded-lg p-3">
-                <p className="text-xs text-slate-500">
-                  Adicionar {chatOther?.nome || "Treinador"}:
-                </p>
-                {fc ? (
-                  <>
-                    <p className="text-sm font-semibold mt-1">FC: {fc}</p>
-                    <div className="mt-2 flex flex-col items-start gap-2">
-                      {deepLink && (
-                        <a
-                          href={deepLink}
-                          className="text-blue-600 text-xs hover:underline"
-                        >
-                          Abrir no Pokémon GO
-                        </a>
-                      )}
-                      {qrLink && (
-                        <Image
-                          src={qrLink}
-                          alt="QR para adicionar"
-                          width={140}
-                          height={140}
-                          className="w-36 h-36 border rounded"
-                        />
-                      )}
-
-                      <div className="w-full flex items-center justify-between gap-2">
-                        <button
-                          onClick={() =>
-                            (navigator as any)?.clipboard?.writeText?.(fc)
-                          }
-                          className="text-[11px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                          type="button"
-                        >
-                          Copiar FC
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setChatInfoOpen((v) => !v)}
-                          className="flex items-center gap-1 text-[11px] text-slate-700"
-                        >
-                          <span>Converse com o adversário</span>
-                          <span className="w-4 h-4 flex items-center justify-center rounded-full bg-slate-100 border border-slate-300 text-[10px] font-bold">
-                            i
-                          </span>
-                        </button>
-                      </div>
-
-                      {chatInfoOpen && (
-                        <div className="text-[11px] text-slate-600 mt-1">
-                          <ul className="list-disc pl-4 space-y-1">
-                            <li>
-                              Combine dia, horário e se será presencial ou
-                              remoto.
-                            </li>
-                            <li>
-                              Confirme a liga usada e a quantidade de partidas.
-                            </li>
-                            <li>
-                              Se der problema (no app, conexão, atraso),
-                              registre aqui antes de declarar o resultado.
-                            </li>
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-xs text-amber-600 mt-1">
-                    O oponente não cadastrou FC.
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-slate-500">
+                    Adicionar {chatOther?.nome || "Treinador"}:
                   </p>
+                  {fc ? (
+                    <>
+                      <p className="text-sm font-semibold mt-1">FC: {fc}</p>
+                      <div className="mt-2 flex flex-col items-start gap-2">
+                        {deepLink && (
+                          <a
+                            href={deepLink}
+                            className="text-blue-600 text-xs hover:underline"
+                          >
+                            Abrir no Pokémon GO
+                          </a>
+                        )}
+                        {qrLink && (
+                          <Image
+                            src={qrLink}
+                            alt="QR para adicionar"
+                            width={140}
+                            height={140}
+                            className="w-36 h-36 border rounded"
+                          />
+                        )}
+
+                        <div className="w-full flex items-center justify-between gap-2">
+                          <button
+                            onClick={() =>
+                              (navigator as any)?.clipboard?.writeText?.(fc)
+                            }
+                            className="text-[11px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                            type="button"
+                          >
+                            Copiar FC
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setChatInfoOpen((v) => !v)}
+                            className="flex items-center gap-1 text-[11px] text-slate-700"
+                          >
+                            <span>Converse com o adversário</span>
+                            <span className="w-4 h-4 flex items-center justify-center rounded-full bg-slate-100 border border-slate-300 text-[10px] font-bold">
+                              i
+                            </span>
+                          </button>
+                        </div>
+
+                        {chatInfoOpen && (
+                          <div className="text-[11px] text-slate-600 mt-1">
+                            <ul className="list-disc pl-4 space-y-1">
+                              <li>
+                                Combine dia, horário e se será presencial ou
+                                remoto.
+                              </li>
+                              <li>
+                                Confirme a liga usada e a quantidade de partidas.
+                              </li>
+                              <li>
+                                Se der problema (no app, conexão, atraso),
+                                registre aqui antes de declarar o resultado.
+                              </li>
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-amber-600 mt-1">
+                      O oponente não cadastrou FC.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div
+                ref={chatBoxRef}
+                className="mt-3 border rounded-lg p-2 max-h-52 md:max-h-60 overflow-auto bg-slate-50"
+              >
+                {chatMsgs.length === 0 ? (
+                  <p className="text-xs text-slate-500">Nenhuma mensagem ainda.</p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {chatMsgs.map((m) => {
+                      const mine = m.from === userUid;
+                      return (
+                        <div
+                          key={m.id}
+                          className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
+                            ? "self-end bg-blue-600 text-white"
+                            : "self-start bg-white border"
+                            }`}
+                        >
+                          <p>{m.text}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            </div>
 
-            <div
-              ref={chatBoxRef}
-              className="mt-3 border rounded-lg p-2 max-h-52 md:max-h-60 overflow-auto bg-slate-50"
-            >
-              {chatMsgs.length === 0 ? (
-                <p className="text-xs text-slate-500">Nenhuma mensagem ainda.</p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {chatMsgs.map((m) => {
-                    const mine = m.from === userUid;
-                    return (
-                      <div
-                        key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
-                          ? "self-end bg-blue-600 text-white"
-                          : "self-start bg-white border"
-                          }`}
-                      >
-                        <p>{m.text}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
-                className="flex-1 border rounded px-3 py-2 text-sm"
-                placeholder="Escreva uma mensagem..."
-              />
-              <button
-                onClick={sendChatMessage}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 rounded"
-                type="button"
-              >
-                Enviar
-              </button>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
+                  className="flex-1 border rounded px-3 py-2 text-sm"
+                  placeholder="Escreva uma mensagem..."
+                />
+                <button
+                  onClick={sendChatMessage}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 rounded"
+                  type="button"
+                >
+                  Enviar
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* NOVO: Modal de Inscrição (abre com ?inscricao=1) */}
-      {inscricaoModalOpen && disputa?.status === "inscricoes" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={closeInscricaoModal} />
-          <div className="relative bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-xl p-4 flex flex-col">
-            <div className="flex items-start justify-between gap-3 mb-2">
-              <h3 className="text-lg font-semibold">Inscrição na disputa</h3>
-              <button
-                className="text-slate-500 hover:text-slate-800 text-sm"
-                onClick={closeInscricaoModal}
-              >
-                Fechar
-              </button>
+      {
+        inscricaoModalOpen && disputa?.status === "inscricoes" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={closeInscricaoModal} />
+            <div className="relative bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-xl p-4 flex flex-col">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <h3 className="text-lg font-semibold">Inscrição na disputa</h3>
+                <button
+                  className="text-slate-500 hover:text-slate-800 text-sm"
+                  onClick={closeInscricaoModal}
+                >
+                  Fechar
+                </button>
+              </div>
+              <div className="text-sm text-slate-600 mb-3">
+                Escolha seu tipo para participar desta disputa.
+              </div>
+              <TipoPicker />
             </div>
-            <div className="text-sm text-slate-600 mb-3">
-              Escolha seu tipo para participar desta disputa.
-            </div>
-            <TipoPicker />
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }

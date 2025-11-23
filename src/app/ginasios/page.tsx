@@ -518,12 +518,10 @@ export default function GinasiosPage() {
 
     const combosSet = new Set<string>();
 
-    // sempre minha equipe da liga selecionada
     if (selectedLiga) {
       combosSet.add(`${userUid}::${selectedLiga}`);
     }
 
-    // equipes dos desafiantes (liga gravada no desafio)
     desafios.forEach((d) => {
       if (!d.liga) return;
       combosSet.add(`${d.desafiante_uid}::${d.liga}`);
@@ -537,9 +535,7 @@ export default function GinasiosPage() {
 
       await Promise.all(
         combos.map(async (combo) => {
-          if (equipesUsuariosLiga[combo]) {
-            return;
-          }
+          if (equipesUsuariosLiga[combo]) return;
 
           const [uid, ligaNome] = combo.split('::');
           const ligaId = ligasMap.get(ligaNome);
@@ -582,7 +578,6 @@ export default function GinasiosPage() {
     carregar();
   }, [temporada, ligas, desafios, selectedLiga, userUid, equipesUsuariosLiga]);
 
-  // util para encerrar período de liderança aberto
   async function encerrarLideratoSeAberto(ginasioId: string, liderUid: string) {
     try {
       const qAberto = query(
@@ -819,7 +814,7 @@ export default function GinasiosPage() {
         await addDoc(collection(db, 'bloqueios_ginasio'), {
           ginasio_id: d.ginasio_id,
           desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 15 * 24 * 60 * 60 * 1000,
+          proximo_desafio: Date.now() + 15 * 24 * 60 * 1000,
         });
       }
 
@@ -948,8 +943,10 @@ export default function GinasiosPage() {
             tabIndex={0}
             onClick={(e) => {
               const el = e.target as HTMLElement;
-              // se clicou em elemento interativo, não navega
-              if (el.closest('a,button,input,select,textarea,label,[role="button"]')) return;
+              const interactiveAncestor = el.closest(
+                'a,button,input,select,textarea,label,[role="button"]'
+              );
+              if (interactiveAncestor && interactiveAncestor !== e.currentTarget) return;
               router.push(`/ginasios/${g.id}`);
             }}
             onKeyDown={(e) => {
@@ -1006,10 +1003,7 @@ export default function GinasiosPage() {
               </p>
             </div>
 
-            <div
-              className="flex flex-col gap-2 items-stretch md:items-end w-full md:w-auto"
-              onClick={(e) => e.stopPropagation()} // trocado de onClickCapture para onClick (bolha)
-            >
+            <div className="flex flex-col gap-2 items-stretch md:items-end w-full md:w-auto">
               {disputaDoGinasio ? (
                 <>
                   {jaNaDisputa ? (
