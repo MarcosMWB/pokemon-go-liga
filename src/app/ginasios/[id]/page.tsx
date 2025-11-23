@@ -225,7 +225,6 @@ function PokemonMini({
 /** ----------------- Página ----------------- */
 export default function GinasioOverviewPage() {
   const params = useParams();
-  const router = useRouter();
   const ginasioId = params?.id as string;
 
   const [uid, setUid] = useState<string | null>(null);

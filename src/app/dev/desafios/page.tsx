@@ -9,9 +9,7 @@ import {
   collection,
   onSnapshot,
   query,
-  where,
   orderBy,
-  getDocs,
   doc,
   getDoc,
 } from "firebase/firestore";
@@ -27,8 +25,6 @@ type Desafio = {
   desafiante_uid?: string;
   createdAt?: number;
 };
-
-type Ginasio = { id: string; nome?: string; liga?: string };
 
 function short(v?: string, n = 6) {
   return typeof v === "string" && v.length ? v.slice(0, n) : "—";
