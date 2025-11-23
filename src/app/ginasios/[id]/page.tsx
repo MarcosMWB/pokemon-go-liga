@@ -170,6 +170,28 @@ function spriteMiniById(id: number) {
 function officialArtworkById(id: number) {
   return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
 }
+function PokemonMiniResponsive({
+  displayName,
+  baseId,
+  sizeSm = 44,
+  sizeMd = 80,
+}: {
+  displayName: string;
+  baseId?: number;
+  sizeSm?: number;
+  sizeMd?: number;
+}) {
+  return (
+    <>
+      <span className="inline-block sm:hidden">
+        <PokemonMini displayName={displayName} baseId={baseId} size={sizeSm} />
+      </span>
+      <span className="hidden sm:inline-block">
+        <PokemonMini displayName={displayName} baseId={baseId} size={sizeMd} />
+      </span>
+    </>
+  );
+}
 function PokemonMini({
   displayName,
   baseId,
@@ -517,20 +539,20 @@ export default function GinasioOverviewPage() {
     const un3 =
       disputaAberta?.id
         ? onSnapshot(
-            query(
-              collection(db, "disputas_ginasio_participantes"),
-              where("disputa_id", "==", disputaAberta.id),
-              where("usuario_uid", "==", uid)
-            ),
-            (snap) => {
-              const list = snap.docs.map((d) => {
-                const x = d.data() as any;
-                return { disputa_id: x.disputa_id as string, usuario_uid: x.usuario_uid as string };
-              });
-              setParticipacoesDisputa(list);
-            }
-          )
-        : () => {};
+          query(
+            collection(db, "disputas_ginasio_participantes"),
+            where("disputa_id", "==", disputaAberta.id),
+            where("usuario_uid", "==", uid)
+          ),
+          (snap) => {
+            const list = snap.docs.map((d) => {
+              const x = d.data() as any;
+              return { disputa_id: x.disputa_id as string, usuario_uid: x.usuario_uid as string };
+            });
+            setParticipacoesDisputa(list);
+          }
+        )
+        : () => { };
 
     return () => {
       un1();
@@ -737,8 +759,8 @@ export default function GinasioOverviewPage() {
   const dSel =
     souLiderDesseGinasio
       ? (desafioSelecionadoId
-          ? (pendentesParaMimSeSouLider.find((d) => d.id === desafioSelecionadoId) ?? null)
-          : (pendentesParaMimSeSouLider[0] ?? null))
+        ? (pendentesParaMimSeSouLider.find((d) => d.id === desafioSelecionadoId) ?? null)
+        : (pendentesParaMimSeSouLider[0] ?? null))
       : null;
 
   const equipeDesafianteSelecionado =
@@ -1172,12 +1194,18 @@ export default function GinasioOverviewPage() {
                           <span className="text-xs text-gray-600">
                             Equipe de {nomesUsuarios[dSel.desafiante_uid] || dSel.desafiante_uid}:
                           </span>
-                          <div className="flex -space-x-1">
+                          <div className="flex flex-wrap gap-1 sm:-space-x-1">
                             {equipeDesafianteSelecionado.slice(0, 6).map((nome) => {
                               const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
                               const baseId = nameToId[baseName];
                               return (
-                                <PokemonMini key={nome} displayName={nome} baseId={baseId} size={24} />
+                                <PokemonMiniResponsive
+                                  key={nome}
+                                  displayName={nome}
+                                  baseId={baseId}
+                                  sizeSm={44}
+                                  sizeMd={80}
+                                />
                               );
                             })}
                           </div>
@@ -1213,12 +1241,12 @@ export default function GinasioOverviewPage() {
                   {ginasio.lider_uid === uid
                     ? "Você é o líder"
                     : !ginasio.lider_uid
-                    ? "Sem líder"
-                    : jaTemInsignia
-                    ? "Já ganhou na temporada"
-                    : bloqueado
-                    ? "Aguarde para desafiar"
-                    : "Desafiar este ginásio"}
+                      ? "Sem líder"
+                      : jaTemInsignia
+                        ? "Já ganhou na temporada"
+                        : bloqueado
+                          ? "Aguarde para desafiar"
+                          : "Desafiar este ginásio"}
                 </button>
               )}
             </>
@@ -1251,16 +1279,30 @@ export default function GinasioOverviewPage() {
                   <span className="text-xs text-gray-600">
                     Desafiante: {nomesUsuarios[dSel.desafiante_uid] || dSel.desafiante_uid}
                   </span>
-                  <div className="flex -space-x-1">
+                  <div className="flex flex-wrap gap-1 sm:-space-x-1">
                     {equipeDesafianteSelecionado.slice(0, 6).map((nome) => {
                       const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
                       const baseId = nameToId[baseName];
-                      return <PokemonMini key={nome} displayName={nome} baseId={baseId} size={80} />;
+                      return (
+                        <PokemonMiniResponsive
+                          key={nome}
+                          displayName={nome}
+                          baseId={baseId}
+                          sizeSm={44}
+                          sizeMd={80}
+                        />
+                      );
                     })}
                   </div>
                 </div>
-                <div className="text-sm">
-                  <h1 className="text-6xl font-bold">VS</h1> <span className="ml-2"><TipoBadge tipo={tipo} size={100}/></span>
+                <div className="flex items-center">
+                  <span className="text-3xl sm:text-6xl font-bold leading-none">VS</span>
+                  <span className="ml-2 sm:hidden">
+                    <TipoBadge tipo={tipo} size={56} />
+                  </span>
+                  <span className="ml-2 hidden sm:inline-block">
+                    <TipoBadge tipo={tipo} size={100} />
+                  </span>
                 </div>
               </div>
               {equipeDesafianteSelecionado.length === 0 && (
@@ -1277,16 +1319,30 @@ export default function GinasioOverviewPage() {
                 <span className="text-xs text-gray-600">
                   Sua equipe{ligaParaEquipe ? ` (${ligaParaEquipe})` : ""}:
                 </span>
-                <div className="flex -space-x-1">
+                <div className="flex flex-wrap gap-1 sm:-space-x-1">
                   {minhaEquipeLiga.slice(0, 6).map((nome) => {
                     const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
                     const baseId = nameToId[baseName];
-                    return <PokemonMini key={nome} displayName={nome} baseId={baseId} size={80} />;
+                    return (
+                      <PokemonMiniResponsive
+                        key={nome}
+                        displayName={nome}
+                        baseId={baseId}
+                        sizeSm={44}
+                        sizeMd={80}
+                      />
+                    );
                   })}
                 </div>
               </div>
-              <div className="text-sm">
-                <h1 className="text-6xl font-bold">VS</h1> <span className="ml-2"><TipoBadge tipo={tipo} size={100}/></span>
+              <div className="flex items-center">
+                <span className="text-3xl sm:text-6xl font-bold leading-none">VS</span>
+                <span className="ml-2 sm:hidden">
+                  <TipoBadge tipo={tipo} size={56} />
+                </span>
+                <span className="ml-2 hidden sm:inline-block">
+                  <TipoBadge tipo={tipo} size={100} />
+                </span>
               </div>
             </div>
             {minhaEquipeLiga.length === 0 && (
@@ -1426,9 +1482,8 @@ export default function GinasioOverviewPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${
-                          mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine ? "self-end bg-blue-600 text-white" : "self-start bg-white border"
+                          }`}
                       >
                         <p>{m.text}</p>
                       </div>
