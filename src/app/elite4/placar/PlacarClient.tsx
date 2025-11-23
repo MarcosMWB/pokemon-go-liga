@@ -2,29 +2,39 @@
 
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
-import {
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  where,
-} from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 
 type Elite = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string };
 type HistoricoItem = {
   id: string;
   campeonato_id: string;
   liga: string;
-  appliedAt: number;
+  appliedAt: number; // ms
   top4: Array<{ pos: number; uid: string; nome?: string; pontos?: number }>;
 };
+
+function toMillis(v: any): number {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && "seconds" in v) {
+    const s = v.seconds ?? 0;
+    const ns = v.nanoseconds ?? 0;
+    return s * 1000 + Math.floor(ns / 1e6);
+  }
+  return Number(v) || 0;
+}
 
 export default function PlacarClient({ liga }: { liga: string }) {
   const [elite, setElite] = useState<Elite[]>([]);
   const [historico, setHistorico] = useState<HistoricoItem[]>([]);
 
   useEffect(() => {
-    const qE = query(collection(db, "elite4"), where("liga", "==", liga));
+    // Elite atual (ordenado por pos)
+    const qE = query(
+      collection(db, "elite4"),
+      where("liga", "==", liga),
+      orderBy("pos", "asc")
+    );
     const unsubE = onSnapshot(qE, (snap) => {
       const arr: Elite[] = [];
       snap.forEach((d) => {
@@ -38,10 +48,10 @@ export default function PlacarClient({ liga }: { liga: string }) {
           });
         }
       });
-      arr.sort((a, b) => a.pos - b.pos);
       setElite(arr);
     });
 
+    // Histórico (mais recente primeiro)
     const qH = query(
       collection(db, "campeonatos_elite4_resultados"),
       where("liga", "==", liga),
@@ -54,7 +64,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
           id: d.id,
           campeonato_id: x.campeonato_id,
           liga: x.liga,
-          appliedAt: x.appliedAt,
+          appliedAt: toMillis(x.appliedAt),
           top4: Array.isArray(x.top4) ? x.top4 : [],
         };
       });
@@ -77,7 +87,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
         <h2 className="text-lg font-semibold mb-2">Atual</h2>
         <ol className="space-y-2">
           {[1, 2, 3, 4].map((pos) => {
-            const e = elite.find((x) => x.pos === pos);
+            const e = elite.find((x) => x.pos === (pos as 1 | 2 | 3 | 4));
             return (
               <li
                 key={pos}
@@ -100,7 +110,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
             {historico.map((h) => (
               <li key={h.id} className="bg-gray-50 rounded p-3">
                 <p className="text-xs text-gray-500">
-                  Aplicado: {new Date(h.appliedAt).toLocaleString()}
+                  Aplicado: {h.appliedAt ? new Date(h.appliedAt).toLocaleString() : "—"}
                 </p>
                 <ol className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                   {h.top4.slice(0, 4).map((t) => (
@@ -109,7 +119,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
                       className="flex items-center justify-between bg-white rounded border px-3 py-2"
                     >
                       <span>{t.pos}º</span>
-                      <span className="font-medium">{t.nome || t.uid}</span>
+                      <span className="font-medium">{t.nome || t.uid || "—"}</span>
                       <span className="text-xs text-gray-500">
                         {t.pontos ?? 0} pts
                       </span>

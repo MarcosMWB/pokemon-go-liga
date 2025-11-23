@@ -27,8 +27,20 @@ type Participacao = {
   ginasio_id: string;
   pontos: number;
   createdAt: number;
-  ginasio_nome?: string;
+  ginasio_nome: string;
 };
+
+
+function toMillis(v: any): number {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && "seconds" in v) {
+    const s = v.seconds ?? 0;
+    const ns = v.nanoseconds ?? 0;
+    return s * 1000 + Math.floor(ns / 1e6);
+  }
+  return Number(v) || 0;
+}
 
 export default function Elite4InscricaoPage() {
   const router = useRouter();
@@ -106,7 +118,13 @@ export default function Elite4InscricaoPage() {
         if (!snap.empty) {
           const c = snap.docs[0];
           const d = c.data() as any;
-          out[ln] = { id: c.id, liga: d.liga, status: d.status, createdAt: d.createdAt };
+          out[ln] = {
+            id: c.id,
+            liga: d.liga,
+            status: d.status,
+            createdAt: toMillis(d.createdAt),
+          };
+
         } else {
           out[ln] = null;
         }
@@ -127,31 +145,49 @@ export default function Elite4InscricaoPage() {
       where("usuario_uid", "==", uid)
     );
     const unsub = onSnapshot(qP, async (snap) => {
-      const list: Participacao[] = [];
-      for (const d of snap.docs) {
-        const x = d.data() as any;
-        // checa se o campeonato ainda está aberto
-        const cDoc = await getDoc(doc(db, "campeonatos_elite4", x.campeonato_id));
-        if (!cDoc.exists()) continue;
-        const cData = cDoc.data() as any;
-        if (cData.status !== "aberto") continue;
+      const campeonatosCache = new Map<string, any>();
+      const ginasiosCache = new Map<string, string>();
 
-        // nome do ginásio
-        let ginasio_nome: string | undefined = undefined;
-        const g = await getDoc(doc(db, "ginasios", x.ginasio_id));
-        if (g.exists()) ginasio_nome = (g.data() as any).nome || x.ginasio_id;
+      const items = await Promise.all(
+        snap.docs.map(async (d) => {
+          const x = d.data() as any;
 
-        list.push({
-          id: d.id,
-          campeonato_id: x.campeonato_id,
-          usuario_uid: x.usuario_uid,
-          ginasio_id: x.ginasio_id,
-          pontos: x.pontos ?? 0,
-          createdAt: x.createdAt ?? 0,
-          ginasio_nome,
-        });
-      }
-      setMinhasInscricoes(list);
+          // campeonato (com cache)
+          let cData = campeonatosCache.get(x.campeonato_id);
+          if (!cData) {
+            const cDoc = await getDoc(doc(db, "campeonatos_elite4", x.campeonato_id));
+            if (!cDoc.exists()) return null;
+            cData = cDoc.data();
+            campeonatosCache.set(x.campeonato_id, cData);
+          }
+          if (cData.status !== "aberto") return null;
+
+          // nome do ginásio (com cache)
+          const cached = ginasiosCache.get(x.ginasio_id);
+          let gName: string;
+          if (cached) {
+            gName = cached;
+          } else {
+            const gDoc = await getDoc(doc(db, "ginasios", x.ginasio_id));
+            gName = gDoc.exists()
+              ? ((gDoc.data() as any).nome || x.ginasio_id)
+              : x.ginasio_id;
+            ginasiosCache.set(x.ginasio_id, gName);
+          }
+
+          return {
+            id: d.id,
+            campeonato_id: x.campeonato_id,
+            usuario_uid: x.usuario_uid,
+            ginasio_id: x.ginasio_id,
+            pontos: x.pontos ?? 0,
+            createdAt: x.createdAt ? toMillis(x.createdAt) : 0,
+            ginasio_nome: gName, // agora sempre string
+          } as Participacao;
+        })
+      );
+
+      setMinhasInscricoes(items.filter(Boolean) as Participacao[]);
       setLoading(false);
     });
     return () => unsub();
@@ -261,7 +297,7 @@ export default function Elite4InscricaoPage() {
                 </div>
                 {camp && (
                   <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                    {new Date(camp.createdAt).toLocaleString()}
+                    {camp.createdAt ? new Date(camp.createdAt).toLocaleString() : "—"}
                   </span>
                 )}
               </div>
