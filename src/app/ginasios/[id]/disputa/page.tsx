@@ -120,6 +120,15 @@ function fmtCountdown(msDiff: number): string {
   return `em ${parts.join(" ")}`;
 }
 
+const GRACE_MS = 5 * 60 * 1000;
+
+function fmtMMSS(msDiff: number): string {
+  const total = Math.max(0, Math.floor(msDiff / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 export default function DisputaGinasioPage() {
   const params = useParams();
   const router = useRouter();
@@ -166,7 +175,7 @@ export default function DisputaGinasioPage() {
   // ====== variáveis globais (horas) ======
   const [tempoInscricoesHoras, setTempoInscricoesHoras] = useState<number | null>(null);
   const [tempoBatalhasHoras, setTempoBatalhasHoras] = useState<number | null>(null);
-  const [, forceTick] = useState(0);
+  //const [, forceTick] = useState(0);
   const [winnerName, setWinnerName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -186,8 +195,6 @@ export default function DisputaGinasioPage() {
         setTempoBatalhasHoras(null);
       }
     })();
-    const t = setInterval(() => forceTick((x) => x + 1), 30000);
-    return () => clearInterval(t);
   }, []);
 
   // auto-scroll pro fim do chat quando abre ou chega msg nova
@@ -922,9 +929,8 @@ export default function DisputaGinasioPage() {
             key={t}
             onClick={() => handleEscolherTipo(t)}
             disabled={salvandoTipo || disputaTravada}
-            className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${
-              meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
-            } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
+            className={`flex items-center gap-2 px-3 py-1 rounded text-sm ${meuParticipante?.tipo_escolhido === t ? "bg-blue-600 text-white" : "bg-gray-200"
+              } ${disputaTravada ? "opacity-50 cursor-not-allowed" : ""}`}
           >
             {renderTipoIcon(t, 20)}
             <span className="capitalize">{t}</span>
@@ -1015,7 +1021,9 @@ export default function DisputaGinasioPage() {
                       </span>
                     </p>
                   ) : (
-                    <p>Esperando administrador iniciar a fase de batalhas.</p>
+                    <p>
+                      Próxima fase na disputa começará em {fmtMMSS((battleStartMs + GRACE_MS) - now)}.
+                    </p>
                   )}
                 </>
               )}
@@ -1024,14 +1032,15 @@ export default function DisputaGinasioPage() {
                 <>
                   {now < disputeEndMs ? (
                     <p>
-                      Disputa pelo ginásio termina{" "}
-                      {fmtCountdown(disputeEndMs - now)}{" "}
+                      Disputa pelo ginásio termina {fmtCountdown(disputeEndMs - now)}{" "}
                       <span className="text-xs text-indigo-700">
                         (batalhas: {tempoBatalhasHoras} horas de batalhas)
                       </span>
                     </p>
                   ) : (
-                    <p>Esperando administrador encerrar a disputa.</p>
+                    <p>
+                      Próxima fase na disputa começará em {fmtMMSS((disputeEndMs + GRACE_MS) - now)}.
+                    </p>
                   )}
                 </>
               )}
@@ -1048,20 +1057,24 @@ export default function DisputaGinasioPage() {
         </div>
       )}
 
-      {avisoTipoInvalidado && (
-        <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
-          {avisoTipoInvalidado}
-        </div>
-      )}
+      {disputa.status !== "finalizado" && (
+        <>
+          {avisoTipoInvalidado && (
+            <div className="bg-yellow-100 border border-yellow-300 text-yellow-900 px-3 py-2 rounded">
+              {avisoTipoInvalidado}
+            </div>
+          )}
 
-      {/* SEÇÃO: SEU TIPO NA DISPUTA (ancorada para o deep-link) */}
-      <div
-        ref={inscricaoSectionRef}
-        className={`card p-4 ${inscricaoFlash ? "ring-2 ring-blue-400 animate-pulse" : ""}`}
-      >
-        <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
-        <TipoPicker />
-      </div>
+          {/* SEÇÃO: SEU TIPO NA DISPUTA */}
+          <div
+            ref={inscricaoSectionRef}
+            className={`card p-4 ${inscricaoFlash ? "ring-2 ring-blue-400 animate-pulse" : ""}`}
+          >
+            <h2 className="font-semibold mb-2">Seu tipo na disputa</h2>
+            <TipoPicker />
+          </div>
+        </>
+      )}
 
       {disputa.status === "batalhando" && (
         <div className="card p-4 space-y-3">
@@ -1364,11 +1377,10 @@ export default function DisputaGinasioPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${
-                          mine
-                            ? "self-end bg-blue-600 text-white"
-                            : "self-start bg-white border"
-                        }`}
+                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
+                          ? "self-end bg-blue-600 text-white"
+                          : "self-start bg-white border"
+                          }`}
                       >
                         <p>{m.text}</p>
                       </div>

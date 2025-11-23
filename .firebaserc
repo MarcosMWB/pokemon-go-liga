@@ -1,6 +1,5 @@
 {
   "projects": {
-    "liga-ri": "liga-ro",
     "liga-ro": "liga-ro",
     "default": "liga-ro"
   },
