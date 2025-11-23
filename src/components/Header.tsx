@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { signOut, User } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { doc, getDoc } from "firebase/firestore";
 
 export function Header() {
   const [uid, setUid] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [isSuper, setIsSuper] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
 
@@ -18,9 +20,16 @@ export function Header() {
       if (current) {
         setUid(current.uid);
         setEmail(current.email);
+        try {
+          const sup = await getDoc(doc(db, "superusers", current.uid));
+          setIsSuper(sup.exists());
+        } catch {
+          setIsSuper(false);
+        }
       } else {
         setUid(null);
         setEmail(null);
+        setIsSuper(false);
       }
     });
     return () => unsub();
@@ -32,13 +41,18 @@ export function Header() {
     setMenuOpen(false);
   };
 
+  const logoHref = isSuper ? "/dev" : "/";
+
   return (
     <header className="w-full bg-white border-b mb-4 sticky top-0 z-40">
       <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 px-4 py-3">
-        {/* logo */}
-        <Link href="/" className="flex items-center gap-2 font-bold text-lg">
+        {/* logo (admin -> /dev | demais -> /) */}
+        <Link href={logoHref} className="flex items-center gap-2 font-bold text-lg">
           <Image src="/logo.png" alt="Liga Oceanica" width={32} height={32} />
-          Liga Oceânica <sub><span className="text-xs text-gray-500">(PRE-ALPHA)</span></sub>
+          Liga Oceânica{" "}
+          <sub>
+            <span className="text-xs text-gray-500">(PRE-ALPHA)</span>
+          </sub>
         </Link>
 
         {/* menu desktop */}
