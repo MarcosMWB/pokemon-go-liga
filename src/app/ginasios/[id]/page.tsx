@@ -116,7 +116,7 @@ function formatDate(ms: number | null) {
 function VsTipo({ tipo }: { tipo?: string }) {
   return (
     <div className="justify-self-center flex flex-col items-center">
-      <div className="w-20 h-20 sm:w-32 sm:h-32 rounded-full border-4 border-red-600
+      <div className="w-2 h-2 sm:w-20 sm:h-20 rounded-full border-4 border-red-600
                 text-red-600 flex items-center justify-center font-extrabold
                 text-2xl sm:text-5xl leading-none">
         VS
@@ -317,6 +317,8 @@ export default function GinasioOverviewPage() {
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const BATTLE_BG = "/bg-battle-arena.jpg";
 
   const isAndroid =
     typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
@@ -1287,19 +1289,62 @@ export default function GinasioOverviewPage() {
       </div>
 
       {/* Preparação: Equipe × Tipo do ginásio */}
-      <div className="bg-white rounded shadow p-4">
-        <h2 className="font-semibold mb-3">Preparação (Equipe × Tipo do ginásio)</h2>
+      <div className="relative rounded shadow overflow-hidden min-h-[260px]">
+        {/* BG da arena */}
+        <div
+          className="absolute inset-0 z-0 bg-center bg-cover"
+          style={{ backgroundImage: `url(${BATTLE_BG})` }}
+        />
+        {/* Véu/blur por cima do BG (não intercepta clique) */}
+        <div className="absolute inset-0 z-10 bg-white/70 backdrop-blur-[2px] pointer-events-none" />
 
-        {souLiderDesseGinasio ? (
-          pendentes.length > 0 && dSel ? (
+        {/* Conteúdo por cima de tudo */}
+        <div className="relative z-20 p-4">
+          <h2 className="font-semibold mb-3">Preparação (Equipe × Tipo do ginásio)</h2>
+
+          {souLiderDesseGinasio ? (
+            pendentes.length > 0 && dSel ? (
+              <>
+                <div className="flex flex-col items-center text-center gap-2">
+                  <span className="self-start text-xs text-gray-600">
+                    <b>Desafiante: {nomesUsuarios[dSel.desafiante_uid] || dSel.desafiante_uid}</b>
+                  </span>
+
+                  <div className="flex flex-wrap justify-center gap-1 sm:-space-x-1">
+                    {equipeDesafianteSelecionado.slice(0, 6).map((nome) => {
+                      const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
+                      const baseId = nameToId[baseName];
+                      return (
+                        <PokemonMiniResponsive
+                          key={nome}
+                          displayName={nome}
+                          baseId={baseId}
+                          sizeSm={44}
+                          sizeMd={80}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  <VsTipo tipo={tipo} /> <b>Todos os Pokémon do lider compartilham o tipo de sua especialidade</b>
+                </div>
+
+                {equipeDesafianteSelecionado.length === 0 && (
+                  <p className="text-xs text-gray-500 mt-2">Time do desafiante não informado.</p>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-gray-600">Sem desafiante selecionado.</p>
+            )
+          ) : (
             <>
               <div className="flex flex-col items-center text-center gap-2">
-                <span className="self-start text-xs text-gray-600">
-                  Desafiante: {nomesUsuarios[dSel.desafiante_uid] || dSel.desafiante_uid}
+                <span className="text-xs text-gray-600">
+                  Sua equipe{ligaParaEquipe ? ` (${ligaParaEquipe})` : ""}:
                 </span>
 
                 <div className="flex flex-wrap justify-center gap-1 sm:-space-x-1">
-                  {equipeDesafianteSelecionado.slice(0, 6).map((nome) => {
+                  {minhaEquipeLiga.slice(0, 6).map((nome) => {
                     const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
                     const baseId = nameToId[baseName];
                     return (
@@ -1314,50 +1359,19 @@ export default function GinasioOverviewPage() {
                   })}
                 </div>
 
-                <VsTipo tipo={tipo} /> <b>MonoType</b>
+                <VsTipo tipo={tipo} />
               </div>
 
-              {equipeDesafianteSelecionado.length === 0 && (
-                <p className="text-xs text-gray-500 mt-2">Time do desafiante não informado.</p>
+              {minhaEquipeLiga.length === 0 && (
+                <p className="text-xs text-gray-500 mt-2">
+                  Cadastre sua equipe na liga do ginásio para visualizar aqui.
+                </p>
               )}
             </>
-          ) : (
-            <p className="text-sm text-gray-600">Sem desafiante selecionado.</p>
-          )
-        ) : (
-          <>
-            <div className="flex flex-col items-center text-center gap-2">
-              <span className="text-xs text-gray-600">
-                Sua equipe{ligaParaEquipe ? ` (${ligaParaEquipe})` : ""}:
-              </span>
-
-              <div className="flex flex-wrap justify-center gap-1 sm:-space-x-1">
-                {minhaEquipeLiga.slice(0, 6).map((nome) => {
-                  const baseName = nome.replace(/\s*\(.+\)\s*$/, "");
-                  const baseId = nameToId[baseName];
-                  return (
-                    <PokemonMiniResponsive
-                      key={nome}
-                      displayName={nome}
-                      baseId={baseId}
-                      sizeSm={44}
-                      sizeMd={80}
-                    />
-                  );
-                })}
-              </div>
-
-              <VsTipo tipo={tipo} />
-            </div>
-
-            {minhaEquipeLiga.length === 0 && (
-              <p className="text-xs text-gray-500 mt-2">
-                Cadastre sua equipe na liga do ginásio para visualizar aqui.
-              </p>
-            )}
-          </>
-        )}
+          )}
+        </div>
       </div>
+
 
       {/* Histórico */}
       <div className="bg-white rounded shadow p-4">
