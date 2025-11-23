@@ -1,123 +1,24 @@
-// src/app/privacidade/page.tsx
 import type { Metadata } from "next";
 import Link from "next/link";
+import ManageConsentButtons from "@/components/ManageConsentButtons";
 
 export const metadata: Metadata = {
   title: "Política de Privacidade",
-  description:
-    "Política de privacidade, cookies e consentimento da Liga Pokémon GO - Região Oceânica.",
+  description: "Política de privacidade, cookies e consentimento da Liga Pokémon GO - Região Oceânica.",
   robots: { index: true, follow: true },
 };
 
 const LAST_UPDATED = "23/11/2025";
-const SUPPORT_EMAIL =
-  process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "defina NEXT_PUBLIC_SUPPORT_EMAIL";
+const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "defina NEXT_PUBLIC_SUPPORT_EMAIL";
 
 function H2({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xl font-semibold text-slate-900 mb-2">{children}</h2>;
 }
-
 function P({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-slate-700 mb-3">{children}</p>;
 }
-
 function Ul({ children }: { children: React.ReactNode }) {
   return <ul className="list-disc pl-5 space-y-1 text-sm text-slate-700 mb-3">{children}</ul>;
-}
-
-/** Botões para gerenciar consentimento diretamente nesta página */
-function ManageConsentButtons() {
-  "use client";
-
-  type ConsentState = "granted" | "denied";
-  type Stored = {
-    set: boolean;
-    ad_storage: ConsentState;
-    analytics_storage: ConsentState;
-    ad_user_data: ConsentState;
-    ad_personalization: ConsentState;
-  };
-
-  const KEY = "consent_v2";
-
-  function applyConsent(c: Stored) {
-  (window as any).dataLayer = (window as any).dataLayer || [];
-  const dl = (window as any).dataLayer;
-
-  // aceita qualquer quantidade de argumentos
-  function gtag(...args: any[]) {
-    dl.push(args);
-  }
-
-  gtag("consent", "update", {
-    ad_storage: c.ad_storage,
-    analytics_storage: c.analytics_storage,
-    ad_user_data: c.ad_user_data,
-    ad_personalization: c.ad_personalization,
-    functionality_storage: "granted",
-    security_storage: "granted",
-  });
-}
-
-  function acceptAll() {
-    const choice: Stored = {
-      set: true,
-      ad_storage: "granted",
-      analytics_storage: "granted",
-      ad_user_data: "granted",
-      ad_personalization: "granted",
-    };
-    localStorage.setItem(KEY, JSON.stringify(choice));
-    applyConsent(choice);
-    alert("Preferências salvas: tudo aceito.");
-  }
-
-  function essentialsOnly() {
-    const choice: Stored = {
-      set: true,
-      ad_storage: "denied",
-      analytics_storage: "denied",
-      ad_user_data: "denied",
-      ad_personalization: "denied",
-    };
-    localStorage.setItem(KEY, JSON.stringify(choice));
-    applyConsent(choice);
-    alert("Preferências salvas: apenas essenciais.");
-  }
-
-  function resetChoice() {
-    localStorage.removeItem(KEY);
-    alert("Preferências limpas. O banner voltará a aparecer na próxima navegação.");
-  }
-
-  return (
-    <div className="mt-4 flex flex-wrap gap-2">
-      <button
-        onClick={essentialsOnly}
-        className="px-3 py-1.5 rounded border text-sm"
-      >
-        Manter só essenciais
-      </button>
-      <button
-        onClick={acceptAll}
-        className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm"
-      >
-        Aceitar tudo
-      </button>
-      <button
-        onClick={resetChoice}
-        className="px-3 py-1.5 rounded border text-sm"
-      >
-        Limpar preferência
-      </button>
-      <Link
-        href="/"
-        className="px-3 py-1.5 rounded border text-sm"
-      >
-        Voltar à página inicial
-      </Link>
-    </div>
-  );
 }
 
 export default function PrivacyPage() {
@@ -194,14 +95,18 @@ export default function PrivacyPage() {
 
       <H2>Contato</H2>
       <P>
-        Dúvidas ou solicitações: {emailShown}. Recomendações: defina a variável{" "}
-        <code className="bg-slate-100 px-1 rounded">NEXT_PUBLIC_SUPPORT_EMAIL</code> no Vercel para exibir o e-mail correto aqui.
+        Dúvidas ou solicitações: {emailShown}. Recomendações: defina{" "}
+        <code className="bg-slate-100 px-1 rounded">NEXT_PUBLIC_SUPPORT_EMAIL</code> no Vercel.
       </P>
 
       <H2>Atualizações</H2>
-      <P>
-        Podemos atualizar esta política. A data no topo indica a versão vigente.
-      </P>
+      <P>Podemos atualizar esta política. A data no topo indica a versão vigente.</P>
+
+      <div className="mt-4">
+        <Link href="/" className="px-3 py-1.5 rounded border text-sm inline-block">
+          Voltar à página inicial
+        </Link>
+      </div>
     </div>
   );
 }
