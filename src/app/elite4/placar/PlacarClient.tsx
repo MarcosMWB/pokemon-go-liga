@@ -1,3 +1,4 @@
+// src/app/elite4/placar/PlacarClient.tsx
 "use client";
 
 import { useEffect, useState } from "react";

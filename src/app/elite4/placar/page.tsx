@@ -5,8 +5,15 @@ export const dynamic = "force-dynamic";
 
 type SP = Record<string, string | string[] | undefined>;
 
-export default function Page({ searchParams }: { searchParams?: SP }) {
-  const rawLiga = searchParams?.liga;
-  const liga = Array.isArray(rawLiga) ? rawLiga[0] : rawLiga ?? "Great";
+export default async function Page({
+  searchParams,
+}: {
+  searchParams?: Promise<SP>;
+}) {
+  const sp = (await searchParams) ?? {};
+  const rawLiga = sp.liga;
+  const ligaParam = Array.isArray(rawLiga) ? rawLiga[0] : rawLiga;
+  const liga: string = ligaParam ?? "Great";
+
   return <PlacarClient liga={liga} />;
 }
