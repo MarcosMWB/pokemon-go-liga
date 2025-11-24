@@ -22,95 +22,72 @@ export default function CadastroPage() {
 
   const [mensagemErro, setMensagemErro] = useState("");
   const [mensagemInfo, setMensagemInfo] = useState("");
-  const [loading, setLoading] = useState(false);
 
   const [aceitoDados, setAceitoDados] = useState(false);
   const [declaraFriendCode, setDeclaraFriendCode] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading) return;
-
     setMensagemErro("");
     setMensagemInfo("");
-    setLoading(true);
+
+    if (!friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
+      setMensagemErro("Friend Code inválido (use o formato: 1234 5678 9012)");
+      return;
+    }
+
+    if (!declaraFriendCode || !aceitoDados) {
+      setMensagemErro("Você precisa marcar os dois consentimentos para continuar.");
+      return;
+    }
 
     try {
-      if (!friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
-        setMensagemErro("Friend Code inválido (use o formato: 1234 5678 9012)");
-        setLoading(false);
-        return;
-      }
-      if (!declaraFriendCode || !aceitoDados) {
-        setMensagemErro("Você precisa marcar os dois consentimentos para continuar.");
-        setLoading(false);
-        return;
-      }
-
-      // 1) Cria usuário
       const cred = await createUserWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // 2) Salva usuarios_private
+      // salva no PRIVATE (com e-mail) — público nasce pelo Cloud Functions depois (espelho)
       await setDoc(
         doc(db, "usuarios_private", user.uid),
         {
           nome,
           email,
           friend_code: friendCode.replace(/\s/g, ""),
+          verificado: false,
           createdAt: serverTimestamp(),
           consentimentos: {
             versao: "v1-2025-11-24",
             dadosSensiveisEmail: true,
             declaracaoFriendCodeVerdadeiro: true,
             timestamp: serverTimestamp(),
-            userAgent:
-              typeof navigator !== "undefined" ? navigator.userAgent : null,
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
           },
         },
         { merge: true }
       );
 
-      // 3) Envia verificação
-      //    Tenta com continueUrl -> se Firebase reclamar da URL, refaz sem settings.
-      const BASE_URL =
-        (process.env.NEXT_PUBLIC_APP_URL || "pokemon-go-liga.vercel.app")
-          .replace(/\/+$/, "");
-      const continueUrl = `${BASE_URL}/login?verify=1`;
+      // ENVIA VERIFICAÇÃO — página padrão do Firebase, redireciona depois p/ /login?verified=1
+      const baseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (typeof window !== "undefined" ? window.location.origin : "");
 
-      try {
-        await sendEmailVerification(user, {
-          url: continueUrl,
-          handleCodeInApp: false, // usa a página padrão do Firebase + redireciona
-        });
-      } catch (e: any) {
-        // Se a URL não estiver autorizada ou malformada, faz o fallback sem settings
-        if (
-          e?.code === "auth/unauthorized-continue-uri" ||
-          e?.code === "auth/invalid-continue-uri" ||
-          e?.code === "auth/invalid-dynamic-link-domain"
-        ) {
-          await sendEmailVerification(user); // sem redirect; evita o "Error encountered"
-        } else {
-          throw e;
-        }
-      }
+      await sendEmailVerification(user, {
+        url: `${baseUrl}/verify?continueUrlEmail=${encodeURIComponent(email)}`,
+        handleCodeInApp: true, // usa nossa página /verify
+      });
 
-      // 4) Mensagem + força logout + empurra pro login
       setMensagemInfo(
-        `Enviamos um e-mail de verificação para ${email}. Abra a mensagem e confirme seu cadastro. ` +
-          `Se não achar, verifique também a caixa de Spam. Só é possível fazer login após verificar o e-mail.`
+        `Enviamos um e-mail de verificação para ${email}. Confirme para poder acessar. ` +
+        `Se não achar, verifique também o Spam.`
       );
 
       await signOut(auth);
 
+      // leva o usuário ao login já avisando que precisa verificar
       setTimeout(() => {
         router.replace(`/login?verify=1&email=${encodeURIComponent(email)}`);
       }, 2000);
     } catch (err: any) {
       setMensagemErro(err?.message || "Erro ao cadastrar.");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -125,7 +102,6 @@ export default function CadastroPage() {
         value={friendCode}
         onChange={(e) => setFriendCode(e.target.value)}
         className="w-full border p-2 mb-2"
-        disabled={loading}
       />
 
       <input
@@ -135,7 +111,6 @@ export default function CadastroPage() {
         value={nome}
         onChange={(e) => setNome(e.target.value)}
         className="w-full border p-2 mb-2"
-        disabled={loading}
       />
 
       <input
@@ -145,10 +120,8 @@ export default function CadastroPage() {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         className="w-full border p-2 mb-2"
-        disabled={loading}
       />
 
-      {/* Senha com olho */}
       <div className="relative w-full mb-2">
         <input
           type={mostrarSenha ? "text" : "password"}
@@ -157,20 +130,17 @@ export default function CadastroPage() {
           value={senha}
           onChange={(e) => setSenha(e.target.value)}
           className="w-full border p-2 pr-10"
-          disabled={loading}
         />
         <button
           type="button"
           onClick={() => setMostrarSenha(!mostrarSenha)}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600"
           aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
-          disabled={loading}
         >
           {mostrarSenha ? "🙈" : "👁️"}
         </button>
       </div>
 
-      {/* Consentimentos obrigatórios */}
       <label className="flex items-start gap-2 text-sm mb-2">
         <input
           type="checkbox"
@@ -178,11 +148,10 @@ export default function CadastroPage() {
           onChange={(e) => setDeclaraFriendCode(e.target.checked)}
           className="mt-1"
           required
-          disabled={loading}
         />
         <span>
-          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta
-          pode ser <b>excluída</b> em caso de fraude.
+          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta pode ser <b>excluída</b> em caso de
+          fraude.
         </span>
       </label>
 
@@ -193,24 +162,13 @@ export default function CadastroPage() {
           onChange={(e) => setAceitoDados(e.target.checked)}
           className="mt-1"
           required
-          disabled={loading}
         />
         <span>
-          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para
-          autenticação, comunicação da plataforma e segurança, conforme a
-          Política de Privacidade.
+          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para autenticação, comunicação e segurança.
         </span>
       </label>
 
-      <button
-        type="submit"
-        className={`w-full text-white p-2 ${
-          loading ? "bg-yellow-400" : "bg-yellow-500 hover:bg-yellow-600"
-        }`}
-        disabled={loading}
-      >
-        {loading ? "Enviando..." : "Cadastrar"}
-      </button>
+      <button type="submit" className="w-full bg-yellow-500 text-white p-2">Cadastrar</button>
 
       {mensagemErro && <p className="text-red-600 mt-2">{mensagemErro}</p>}
       {mensagemInfo && <p className="text-green-700 mt-2">{mensagemInfo}</p>}
