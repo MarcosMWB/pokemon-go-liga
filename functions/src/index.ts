@@ -11,12 +11,9 @@ export const adminDeleteUser = onCall(
   { region: "southamerica-east1" },
   async (req) => {
     const callerUid = req.auth?.uid;
-    if (!callerUid) {
-      throw new HttpsError("unauthenticated", "Faça login.");
-    }
+    if (!callerUid) throw new HttpsError("unauthenticated", "Faça login.");
 
-    // checar se quem chama é SUPER
-    const isSuperSnap = await admin.firestore().doc(`superusers/${callerUid}`).get();
+    const isSuperSnap = await db.doc(`superusers/${callerUid}`).get();
     if (!isSuperSnap.exists) {
       throw new HttpsError("permission-denied", "Acesso negado.");
     }
@@ -25,24 +22,24 @@ export const adminDeleteUser = onCall(
     if (!targetUid) {
       throw new HttpsError("invalid-argument", "targetUid obrigatório.");
     }
-
-    // opcional: impedir que o admin apague a si mesmo
     if (targetUid === callerUid) {
       throw new HttpsError("failed-precondition", "Não é permitido excluir a si mesmo.");
     }
 
-    // (1) apaga usuário do Auth
+    // 1) Apaga do Auth (ignora se já não existir)
     await admin.auth().deleteUser(targetUid).catch((e) => {
       if (e?.code !== "auth/user-not-found") throw e;
     });
 
-    // (2) apaga docs no Firestore (público e privado)
-    await Promise.all([
-      db.doc(`usuarios/${targetUid}`).delete().catch(() => { }),
-      db.doc(`usuarios_private/${targetUid}`).delete().catch(() => { }),
-    ]);
+    // 2) Apaga Firestore: usuarios + usuarios_private (e opcionalmente superusers)
+    const batch = db.batch();
+    batch.delete(db.doc(`usuarios/${targetUid}`));
+    batch.delete(db.doc(`usuarios_private/${targetUid}`));
+    // opcional: limpar também eventual marcação de superuser do alvo
+    // batch.delete(db.doc(`superusers/${targetUid}`));
+    await batch.commit().catch(() => {});
 
-    // TODO: se quiser, limpe coleções relacionadas (insignias, participações, etc.)
+    // TODO (se houver): limpar subcoleções relacionadas ao usuário, se existirem
 
     return { ok: true };
   }

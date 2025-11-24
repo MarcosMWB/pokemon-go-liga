@@ -44,11 +44,9 @@ const db = admin.firestore();
 exports.adminDeleteUser = (0, https_1.onCall)({ region: "southamerica-east1" }, async (req) => {
     var _a, _b;
     const callerUid = (_a = req.auth) === null || _a === void 0 ? void 0 : _a.uid;
-    if (!callerUid) {
+    if (!callerUid)
         throw new https_1.HttpsError("unauthenticated", "Faça login.");
-    }
-    // checar se quem chama é SUPER
-    const isSuperSnap = await admin.firestore().doc(`superusers/${callerUid}`).get();
+    const isSuperSnap = await db.doc(`superusers/${callerUid}`).get();
     if (!isSuperSnap.exists) {
         throw new https_1.HttpsError("permission-denied", "Acesso negado.");
     }
@@ -56,19 +54,22 @@ exports.adminDeleteUser = (0, https_1.onCall)({ region: "southamerica-east1" }, 
     if (!targetUid) {
         throw new https_1.HttpsError("invalid-argument", "targetUid obrigatório.");
     }
-    // opcional: impedir que o admin apague a si mesmo
     if (targetUid === callerUid) {
         throw new https_1.HttpsError("failed-precondition", "Não é permitido excluir a si mesmo.");
     }
-    // (1) apaga usuário do Auth
+    // 1) Apaga do Auth (ignora se já não existir)
     await admin.auth().deleteUser(targetUid).catch((e) => {
-        // se já não existir no Auth, continua
         if ((e === null || e === void 0 ? void 0 : e.code) !== "auth/user-not-found")
             throw e;
     });
-    // (2) apaga doc principal do Firestore
-    await admin.firestore().doc(`usuarios/${targetUid}`).delete().catch(() => { });
-    // (opcional) TODO: limpezas relacionadas (insignias, desafios etc.)
+    // 2) Apaga Firestore: usuarios + usuarios_private (e opcionalmente superusers)
+    const batch = db.batch();
+    batch.delete(db.doc(`usuarios/${targetUid}`));
+    batch.delete(db.doc(`usuarios_private/${targetUid}`));
+    // opcional: limpar também eventual marcação de superuser do alvo
+    // batch.delete(db.doc(`superusers/${targetUid}`));
+    await batch.commit().catch(() => { });
+    // TODO (se houver): limpar subcoleções relacionadas ao usuário, se existirem
     return { ok: true };
 });
 /**
@@ -91,18 +92,25 @@ exports.onResultadoWrite = (0, firestore_1.onDocumentWritten)({
         return;
     // Se a disputa já não está em andamento, resolva/oculte alerta e saia
     const disputaSnap = await db.doc(`disputas_ginasio/${disputaId}`).get();
-    if (!disputaSnap.exists)
-        return;
-    const disputa = disputaSnap.data();
-    if (!["batalhando", "inscricoes"].includes((disputa.status || "").toString().trim().toLowerCase())) {
-        await db
-            .doc(`admin_alertas/disputa_${disputaId}_ready`)
-            .set({
-            status: "resolvido",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+    if (!disputaSnap.exists) {
+        await db.doc(`admin_alertas/disputa_${disputaId}_ready`).set({ status: "resolvido", updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         return;
     }
+    /*const disputaSnap = await db.doc(`disputas_ginasio/${disputaId}`).get();
+    if (!disputaSnap.exists) return;
+    const disputa = disputaSnap.data() as any;
+    if (!["batalhando", "inscricoes"].includes((disputa.status || "").toString().trim().toLowerCase())) {
+      await db
+        .doc(`admin_alertas/disputa_${disputaId}_ready`)
+        .set(
+          {
+            status: "resolvido",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      return;
+    }*/
     // Ainda existe algum resultado pendente nesta disputa?
     const pendenteSnap = await db
         .collection("disputas_ginasio_resultados")
@@ -627,31 +635,26 @@ async function processEncerrarDisputaJob(job) {
  * FUNÇÃO AGENDADA – V2
  * Roda a cada 5 minutos e processa jobs em /jobs_disputas
  */
-exports.processDisputeJobs = (0, scheduler_1.onSchedule)({
-    schedule: "every 5 minutes",
-    timeZone: "America/Sao_Paulo",
-    region: "southamerica-east1",
-    maxInstances: 1, //atenção aqui
-}, async () => {
+exports.processDisputeJobs = (0, scheduler_1.onSchedule)({ schedule: "every 5 minutes", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 }, async () => {
     var _a;
     const now = Date.now();
     const jobsSnap = await db
         .collection("jobs_disputas")
         .where("status", "==", "pendente")
+        .where("runAtMs", "<=", now) // traz só vencidos
         .limit(50)
         .get();
-    const dueJobs = jobsSnap.docs.filter((doc) => {
-        const data = doc.data();
-        const runAtMs = typeof data.runAtMs === "number" ? data.runAtMs : 0;
-        return runAtMs <= now;
-    });
-    if (dueJobs.length === 0) {
+    if (jobsSnap.empty) {
         console.log("Nenhum job pendente no horário.");
         return;
     }
-    console.log(`Processando ${dueJobs.length} job(s) vencidos.`);
-    for (const jobDoc of dueJobs) {
+    for (const jobDoc of jobsSnap.docs) {
         const job = jobDoc.data();
+        // marca executando para minimizar reprocesso concorrente/retentativas
+        await jobDoc.ref.update({
+            status: "executando",
+            startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
         try {
             if (job.acao === "criar_disputa") {
                 await processCriarDisputaJob(job);
@@ -668,7 +671,7 @@ exports.processDisputeJobs = (0, scheduler_1.onSchedule)({
                 });
             }
             else if (job.acao === "encerrar_disputa") {
-                const result = await processEncerrarDisputaJob(job); // objeto
+                const result = await processEncerrarDisputaJob(job);
                 await jobDoc.ref.update({
                     status: "executado",
                     executedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -695,3 +698,75 @@ exports.processDisputeJobs = (0, scheduler_1.onSchedule)({
         }
     }
 });
+/*export const processDisputeJobs = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    timeZone: "America/Sao_Paulo",
+    region: "southamerica-east1",
+    maxInstances: 1,//atenção aqui
+  },
+  async () => {
+    const now = Date.now();
+
+    const jobsSnap = await db
+      .collection("jobs_disputas")
+      .where("status", "==", "pendente")
+      .limit(50)
+      .get();
+
+    const dueJobs = jobsSnap.docs.filter((doc) => {
+      const data = doc.data() as any;
+      const runAtMs = typeof data.runAtMs === "number" ? data.runAtMs : 0;
+      return runAtMs <= now;
+    });
+
+    if (dueJobs.length === 0) {
+      console.log("Nenhum job pendente no horário.");
+      return;
+    }
+
+    console.log(`Processando ${dueJobs.length} job(s) vencidos.`);
+
+    for (const jobDoc of dueJobs) {
+      const job = jobDoc.data() as any;
+      try {
+        if (job.acao === "criar_disputa") {
+          await processCriarDisputaJob(job);
+          await jobDoc.ref.update({
+            status: "executado",
+            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } else if (job.acao === "iniciar_disputa") {
+          await processIniciarDisputaJob(job);
+          await jobDoc.ref.update({
+            status: "executado",
+            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } else if (job.acao === "encerrar_disputa") {
+          const result = await processEncerrarDisputaJob(job); // objeto
+          await jobDoc.ref.update({
+            status: "executado",
+            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+            noOp: !result.changed,
+            resultReason: result.reason,
+            debug: result.meta,
+            finalStatus: result.finalStatus ?? admin.firestore.FieldValue.delete(),
+          });
+        } else {
+          await jobDoc.ref.update({
+            status: "erro",
+            errorMessage: `acao_desconhecida: ${job.acao}`,
+            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      } catch (e: any) {
+        await jobDoc.ref.update({
+          status: "erro",
+          errorMessage: (e?.message || String(e)).slice(0, 500),
+          executedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    }
+  }
+);
+*/ 
