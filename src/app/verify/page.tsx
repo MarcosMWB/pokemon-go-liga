@@ -1,31 +1,46 @@
 "use client";
+
 import { useEffect, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { auth } from "@/lib/firebase";
 import { applyActionCode } from "firebase/auth";
 
 export default function VerifyPage() {
-  const sp = useSearchParams();
   const router = useRouter();
-  const [msg, setMsg] = useState("Verificando seu e-mail...");
+  const q = useSearchParams();
+  const [status, setStatus] = useState<"loading"|"ok"|"error">("loading");
+  const [msg, setMsg] = useState("Validando verificação de e-mail...");
 
   useEffect(() => {
-    const code = sp.get("oobCode");
-    if (!code) {
-      setMsg("Código inválido.");
+    const mode = q.get("mode");      // "verifyEmail"
+    const oob = q.get("oobCode");    // código da ação
+    const email = q.get("continueUrlEmail") || ""; // opcional pra pré-preencher o login
+
+    if (mode !== "verifyEmail" || !oob) {
+      setStatus("error");
+      setMsg("Link inválido ou expirado.");
       return;
     }
+
     (async () => {
       try {
-        await applyActionCode(auth, code);
-        setMsg("✅ E-mail verificado com sucesso! Você já pode fazer login.");
-        // opcional: redirecionar depois de alguns segundos
-        // setTimeout(() => router.replace("/login?verified=1"), 1500);
+        await applyActionCode(auth, oob);
+        setStatus("ok");
+        setMsg("E-mail verificado. Redirecionando para o login...");
+        setTimeout(() => {
+          router.replace(`/login?verified=1${email ? `&email=${encodeURIComponent(email)}` : ""}`);
+        }, 1200);
       } catch (e) {
-        setMsg("Não foi possível verificar o e-mail (link inválido ou expirado).");
+        setStatus("error");
+        setMsg("Falha ao verificar seu e-mail. Solicite um novo link.");
       }
     })();
-  }, [sp, router]);
+  }, [q, router]);
 
-  return <div className="p-8 max-w-md mx-auto">{msg}</div>;
+  return (
+    <div className="max-w-md mx-auto p-8">
+      <h1 className="text-xl font-bold mb-3">Verificação de e-mail</h1>
+      <p className={status === "error" ? "text-red-600" : "text-gray-800"}>{msg}</p>
+    </div>
+  );
 }

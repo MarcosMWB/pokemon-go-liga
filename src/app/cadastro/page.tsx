@@ -35,7 +35,6 @@ export default function CadastroPage() {
       setMensagemErro("Friend Code inválido (use o formato: 1234 5678 9012)");
       return;
     }
-
     if (!declaraFriendCode || !aceitoDados) {
       setMensagemErro("Você precisa marcar os dois consentimentos para continuar.");
       return;
@@ -45,7 +44,6 @@ export default function CadastroPage() {
       const cred = await createUserWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      // salva no PRIVATE (com e-mail) — público nasce pelo Cloud Functions depois (espelho)
       await setDoc(
         doc(db, "usuarios_private", user.uid),
         {
@@ -65,25 +63,24 @@ export default function CadastroPage() {
         { merge: true }
       );
 
-      // ENVIA VERIFICAÇÃO — página padrão do Firebase, redireciona depois p/ /login?verified=1
       const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ?? (typeof window !== "undefined" ? window.location.origin : "");
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (typeof window !== "undefined" ? window.location.origin : "");
+
       await sendEmailVerification(user, {
-        url: `${baseUrl}/login?verified=1`,
-        handleCodeInApp: false,
+        url: `${baseUrl}/verify?continueUrlEmail=${encodeURIComponent(email)}`,
+        handleCodeInApp: true, // usa sua rota /verify
       });
 
       setMensagemInfo(
-        `Enviamos um e-mail de verificação para ${email}. Confirme para poder acessar. ` +
-          `Se não achar, verifique também o Spam.`
+        `Enviamos um e-mail de verificação para ${email}. Abra a mensagem e confirme seu cadastro. ` +
+        `Se não achar, verifique também a caixa de Spam. Só é possível fazer login após verificar o e-mail.`
       );
 
       await signOut(auth);
-
-      // leva o usuário ao login já avisando que precisa verificar
       setTimeout(() => {
         router.replace(`/login?verify=1&email=${encodeURIComponent(email)}`);
-      }, 2000);
+      }, 2500);
     } catch (err: any) {
       setMensagemErro(err?.message || "Erro ao cadastrar.");
     }
@@ -148,8 +145,8 @@ export default function CadastroPage() {
           required
         />
         <span>
-          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta pode ser <b>excluída</b> em caso de
-          fraude.
+          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta
+          pode ser <b>excluída</b> em caso de fraude.
         </span>
       </label>
 
@@ -162,11 +159,15 @@ export default function CadastroPage() {
           required
         />
         <span>
-          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para autenticação, comunicação e segurança.
+          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para
+          autenticação, comunicação da plataforma e segurança, conforme a
+          Política de Privacidade.
         </span>
       </label>
 
-      <button type="submit" className="w-full bg-yellow-500 text-white p-2">Cadastrar</button>
+      <button type="submit" className="w-full bg-yellow-500 text-white p-2">
+        Cadastrar
+      </button>
 
       {mensagemErro && <p className="text-red-600 mt-2">{mensagemErro}</p>}
       {mensagemInfo && <p className="text-green-700 mt-2">{mensagemInfo}</p>}

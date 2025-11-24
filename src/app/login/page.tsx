@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword,
@@ -9,7 +9,7 @@ import {
   sendEmailVerification,
   signOut,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import type { FirebaseError } from "firebase/app";
 
 function mapAuthError(err: unknown): string {
@@ -40,27 +40,24 @@ function mapAuthError(err: unknown): string {
   }
 }
 
+// mapeia PRIVATE -> PUBLIC (sem e-mail)
+function pickPublicUser(src: any) {
+  return {
+    nome: typeof src?.nome === "string" ? src.nome : "",
+    friend_code: typeof src?.friend_code === "string" ? src.friend_code : "",
+    verificado: true,
+    createdAt: src?.createdAt ?? Date.now(),
+  };
+}
+
 export default function LoginPage() {
   const router = useRouter();
-  const search = useSearchParams();
-
-  const [email, setEmail] = useState(() => search.get("email") ?? "");
+  const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [msg, setMsg] = useState<string>("");
   const [kind, setKind] = useState<"info" | "error" | "success">("info");
   const [loading, setLoading] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
-
-  // mensagens de querystring
-  useEffect(() => {
-    if (search.get("verified") === "1") {
-      setKind("success");
-      setMsg("E-mail verificado. Faça login para continuar.");
-    } else if (search.get("verify") === "1") {
-      setKind("info");
-      setMsg("Enviamos um link de verificação para o seu e-mail. Confirme para acessar.");
-    }
-  }, [search]);
 
   const msgClasses = useMemo(() => {
     if (!msg) return "hidden";
@@ -91,7 +88,7 @@ export default function LoginPage() {
           setKind("info");
           setMsg(
             `Seu e-mail ainda não foi confirmado. Reenviamos o link para ${emailTrim}. ` +
-              "Confira também SPAM/Promoções e valide para acessar."
+            "Confira também sua caixa de SPAM/Lixo/Pastas de Promoções e valide para poder acessar."
           );
         } catch (error: any) {
           setUnverifiedEmail(emailTrim);
@@ -106,16 +103,33 @@ export default function LoginPage() {
         return;
       }
 
-      // marcou verificado no PRIVATE (usado pelo espelho público na Cloud Functions)
-      await setDoc(
-        doc(db, "usuarios_private", user.uid),
-        {
-          verificado: true,
-          email: user.email ?? "",
-          updatedAtMs: Date.now(),
-        },
-        { merge: true }
-      );
+      // 1) marca PRIVATE como verificado
+      try {
+        await setDoc(
+          doc(db, "usuarios_private", user.uid),
+          {
+            verificado: true,
+            email: user.email ?? "",
+            updatedAtMs: Date.now(),
+          },
+          { merge: true }
+        );
+      } catch {
+        console.warn("Falha ao marcar verificado no PRIVATE (prossegue).");
+      }
+
+      // 2) cria PUBLIC se não existir ainda (sem e-mail)
+      try {
+        const privRef = doc(db, "usuarios_private", user.uid);
+        const pubRef  = doc(db, "usuarios", user.uid);
+
+        const [privSnap, pubSnap] = await Promise.all([getDoc(privRef), getDoc(pubRef)]);
+        if (!pubSnap.exists()) {
+          await setDoc(pubRef, pickPublicUser(privSnap.data()), { merge: false });
+        }
+      } catch (e) {
+        console.warn("Falha ao espelhar PUBLIC (prossegue).", e);
+      }
 
       setKind("success");
       setMsg("Login realizado com sucesso.");
@@ -214,7 +228,8 @@ export default function LoginPage() {
           <p className="font-medium">E-mail não verificado</p>
           <p className="mt-1">
             Enviamos um link de verificação para <strong>{unverifiedEmail}</strong>. Procure nas
-            pastas <strong>SPAM</strong>, <strong>Promoções</strong> e <strong>Lixo Eletrônico</strong>. Após confirmar, faça login novamente.
+            pastas <strong>SPAM</strong>, <strong>Promoções</strong> e{" "}
+            <strong>Lixo Eletrônico</strong>. Após confirmar, faça login novamente.
           </p>
         </div>
       )}
