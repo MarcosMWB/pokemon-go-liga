@@ -2,9 +2,84 @@
 import * as admin from "firebase-admin";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 
 admin.initializeApp();
 const db = admin.firestore();
+
+// Campos que podem ir para o público (SEM email)
+function pickPublicUser(src: any) {
+  return {
+    nome: typeof src.nome === "string" ? src.nome : "",
+    friend_code: typeof src.friend_code === "string" ? src.friend_code : "",
+    verificado: true,
+    createdAt: typeof src.createdAt === "number" ? src.createdAt : Date.now(),
+    // adicione aqui outros campos "seguros" que queira expor publicamente
+  };
+}
+
+export const onPrivateUserWrite = onDocumentWritten(
+  { document: "usuarios_private/{uid}", region: "southamerica-east1" },
+  async (event) => {
+    const uid = event.params.uid as string;
+    const after = event.data?.after?.data() as any | undefined;
+
+    // Se o doc privado foi EXCLUÍDO por um admin → removemos o público
+    if (!after) {
+      await db.doc(`usuarios/${uid}`).delete().catch(() => {});
+      return;
+    }
+
+    // Se NÃO está verificado → não cria nem atualiza o público (fica em silêncio)
+    if (after.verificado !== true) {
+      return;
+    }
+
+    // Verificado === true → publica/atualiza o espelho sem email
+    await db.doc(`usuarios/${uid}`).set(pickPublicUser(after), { merge: true });
+  }
+);
+
+export const adminRemovePublicUser = onCall(
+  { region: "southamerica-east1" },
+  async (req) => {
+    const callerUid = req.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Faça login.");
+    const isSuper = await db.doc(`superusers/${callerUid}`).get();
+    if (!isSuper.exists) throw new HttpsError("permission-denied", "Acesso negado.");
+
+    const uid = String(req.data?.uid || "");
+    if (!uid) throw new HttpsError("invalid-argument", "uid obrigatório.");
+
+    await db.doc(`usuarios/${uid}`).delete().catch(() => {});
+    return { ok: true };
+  }
+);
+
+/** Ajuste no seu adminDeleteUser: apagar nas duas coleções */
+export const adminDeleteUser = onCall(
+  { region: "southamerica-east1" },
+  async (req) => {
+    const callerUid = req.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Faça login.");
+
+    const isSuperSnap = await admin.firestore().doc(`superusers/${callerUid}`).get();
+    if (!isSuperSnap.exists) throw new HttpsError("permission-denied", "Acesso negado.");
+
+    const targetUid = req.data?.targetUid as string | undefined;
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid obrigatório.");
+    if (targetUid === callerUid) throw new HttpsError("failed-precondition", "Não pode excluir a si mesmo.");
+
+    await admin.auth().deleteUser(targetUid).catch((e) => {
+      if (e?.code !== "auth/user-not-found") throw e;
+    });
+
+    await db.doc(`usuarios_private/${targetUid}`).delete().catch(() => { });
+    await db.doc(`usuarios/${targetUid}`).delete().catch(() => { }); // público
+
+    return { ok: true };
+  }
+);
 
 /**
  * TRIGGER DE FIRESTORE:
@@ -608,14 +683,17 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
     .where("fim", "==", null)
     .get();
 
+  // 1 só relógio para todos os writes
+  const nowMs = Date.now();
+
   const batch = db.batch();
   for (const l of abertas.docs) {
-    batch.update(l.ref, { fim: admin.firestore.FieldValue.serverTimestamp() });
+    batch.update(l.ref, { fim: nowMs });
   }
   batch.set(db.collection("ginasios_liderancas").doc(), {
     ginasio_id,
     lider_uid: vencedorUid,
-    inicio: admin.firestore.FieldValue.serverTimestamp(),
+    inicio: nowMs,
     fim: null,
     origem: "disputa",
     disputa_id,
@@ -627,7 +705,7 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
   await batch.commit();
 
   // Aplica no ginásio
-    await gRef.update({
+  await gRef.update({
     lider_uid: vencedorUid,
     tipo: tipoDoVencedor,
     em_disputa: false,
@@ -664,6 +742,7 @@ export const processDisputeJobs = onSchedule(
     schedule: "every 5 minutes",
     timeZone: "America/Sao_Paulo",
     region: "southamerica-east1",
+    maxInstances: 1,//atenção aqui
   },
   async () => {
     const now = Date.now();

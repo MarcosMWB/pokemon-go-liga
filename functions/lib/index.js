@@ -33,13 +33,44 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.adminDeleteUser = void 0;
 // functions/src/index.ts
 const admin = __importStar(require("firebase-admin"));
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
+const https_1 = require("firebase-functions/v2/https");
 admin.initializeApp();
 const db = admin.firestore();
+exports.adminDeleteUser = (0, https_1.onCall)({ region: "southamerica-east1" }, async (req) => {
+    var _a, _b;
+    const callerUid = (_a = req.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!callerUid) {
+        throw new https_1.HttpsError("unauthenticated", "Faça login.");
+    }
+    // checar se quem chama é SUPER
+    const isSuperSnap = await admin.firestore().doc(`superusers/${callerUid}`).get();
+    if (!isSuperSnap.exists) {
+        throw new https_1.HttpsError("permission-denied", "Acesso negado.");
+    }
+    const targetUid = (_b = req.data) === null || _b === void 0 ? void 0 : _b.targetUid;
+    if (!targetUid) {
+        throw new https_1.HttpsError("invalid-argument", "targetUid obrigatório.");
+    }
+    // opcional: impedir que o admin apague a si mesmo
+    if (targetUid === callerUid) {
+        throw new https_1.HttpsError("failed-precondition", "Não é permitido excluir a si mesmo.");
+    }
+    // (1) apaga usuário do Auth
+    await admin.auth().deleteUser(targetUid).catch((e) => {
+        // se já não existir no Auth, continua
+        if ((e === null || e === void 0 ? void 0 : e.code) !== "auth/user-not-found")
+            throw e;
+    });
+    // (2) apaga doc principal do Firestore
+    await admin.firestore().doc(`usuarios/${targetUid}`).delete().catch(() => { });
+    // (opcional) TODO: limpezas relacionadas (insignias, desafios etc.)
+    return { ok: true };
+});
 /**
  * TRIGGER DE FIRESTORE:
  * dispara em qualquer write em disputas_ginasio_resultados/{resultadoId}
@@ -548,14 +579,16 @@ async function processEncerrarDisputaJob(job) {
         .where("ginasio_id", "==", ginasio_id)
         .where("fim", "==", null)
         .get();
+    // 1 só relógio para todos os writes
+    const nowMs = Date.now();
     const batch = db.batch();
     for (const l of abertas.docs) {
-        batch.update(l.ref, { fim: admin.firestore.FieldValue.serverTimestamp() });
+        batch.update(l.ref, { fim: nowMs });
     }
     batch.set(db.collection("ginasios_liderancas").doc(), {
         ginasio_id,
         lider_uid: vencedorUid,
-        inicio: admin.firestore.FieldValue.serverTimestamp(),
+        inicio: nowMs,
         fim: null,
         origem: "disputa",
         disputa_id,
@@ -598,6 +631,7 @@ exports.processDisputeJobs = (0, scheduler_1.onSchedule)({
     schedule: "every 5 minutes",
     timeZone: "America/Sao_Paulo",
     region: "southamerica-east1",
+    maxInstances: 1, //atenção aqui
 }, async () => {
     var _a;
     const now = Date.now();

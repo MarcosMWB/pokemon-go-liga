@@ -42,6 +42,7 @@ export function Header() {
   };
 
   const logoHref = isSuper ? "/dev" : "/";
+  const ginLink = uid ? "/ginasios" : "/ginasios/visitante";
 
   return (
     <header className="w-full bg-white border-b mb-4 sticky top-0 z-40">
@@ -58,7 +59,7 @@ export function Header() {
         {/* menu desktop */}
         <nav className="hidden md:flex gap-2 flex-wrap">
           <Link
-            href="/ginasios"
+            href={ginLink}
             className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm"
           >
             Ginásios
@@ -147,7 +148,7 @@ export function Header() {
         <div className="md:hidden bg-white border-t">
           <nav className="flex flex-col gap-1 px-4 py-3">
             <Link
-              href="/ginasios"
+              href={ginLink}
               onClick={() => setMenuOpen(false)}
               className="px-3 py-2 rounded bg-slate-100 text-sm"
             >

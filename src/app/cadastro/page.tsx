@@ -8,23 +8,36 @@ import {
   sendEmailVerification,
   signOut,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 export default function CadastroPage() {
   const router = useRouter();
+
   const [friendCode, setFriendCode] = useState("");
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
-  const [mensagem, setMensagem] = useState("");
+
   const [mostrarSenha, setMostrarSenha] = useState(false);
+
+  const [mensagemErro, setMensagemErro] = useState("");
+  const [mensagemInfo, setMensagemInfo] = useState("");
+
+  const [aceitoDados, setAceitoDados] = useState(false);
+  const [declaraFriendCode, setDeclaraFriendCode] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMensagem("");
+    setMensagemErro("");
+    setMensagemInfo("");
 
     if (!friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
-      setMensagem("Friend Code inválido (use o formato: 1234 5678 9012)");
+      setMensagemErro("Friend Code inválido (use o formato: 1234 5678 9012)");
+      return;
+    }
+
+    if (!declaraFriendCode || !aceitoDados) {
+      setMensagemErro("Você precisa marcar os dois consentimentos para continuar.");
       return;
     }
 
@@ -32,26 +45,47 @@ export default function CadastroPage() {
       const cred = await createUserWithEmailAndPassword(auth, email, senha);
       const user = cred.user;
 
-      await setDoc(doc(db, "usuarios", user.uid), {
-        nome,
-        email,
-        friend_code: friendCode.replace(/\s/g, ""),
-        verificado: false,
-        createdAt: Date.now(),
+      // salva no PRIVATE (com e-mail) — público nasce pelo Cloud Functions depois (espelho)
+      await setDoc(
+        doc(db, "usuarios_private", user.uid),
+        {
+          nome,
+          email,
+          friend_code: friendCode.replace(/\s/g, ""),
+          verificado: false,
+          createdAt: serverTimestamp(),
+          consentimentos: {
+            versao: "v1-2025-11-24",
+            dadosSensiveisEmail: true,
+            declaracaoFriendCodeVerdadeiro: true,
+            timestamp: serverTimestamp(),
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+          },
+        },
+        { merge: true }
+      );
+
+      // ENVIA VERIFICAÇÃO — página padrão do Firebase, redireciona depois p/ /login?verified=1
+      const baseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ?? (typeof window !== "undefined" ? window.location.origin : "");
+      await sendEmailVerification(user, {
+        url: `${baseUrl}/login?verified=1`,
+        handleCodeInApp: false,
       });
 
-      await sendEmailVerification(user);
+      setMensagemInfo(
+        `Enviamos um e-mail de verificação para ${email}. Confirme para poder acessar. ` +
+          `Se não achar, verifique também o Spam.`
+      );
+
       await signOut(auth);
 
-      router.replace("/login?verify=1");
-
-      if (typeof window !== "undefined") {
-        setTimeout(() => {
-          window.location.href = "/login?verify=1";
-        }, 200);
-      }
+      // leva o usuário ao login já avisando que precisa verificar
+      setTimeout(() => {
+        router.replace(`/login?verify=1&email=${encodeURIComponent(email)}`);
+      }, 2000);
     } catch (err: any) {
-      setMensagem(err.message || "Erro ao cadastrar.");
+      setMensagemErro(err?.message || "Erro ao cadastrar.");
     }
   };
 
@@ -86,8 +120,7 @@ export default function CadastroPage() {
         className="w-full border p-2 mb-2"
       />
 
-      {/* Campo de senha com olho */}
-      <div className="relative w-full mb-4">
+      <div className="relative w-full mb-2">
         <input
           type={mostrarSenha ? "text" : "password"}
           placeholder="Senha"
@@ -96,26 +129,50 @@ export default function CadastroPage() {
           onChange={(e) => setSenha(e.target.value)}
           className="w-full border p-2 pr-10"
         />
-
         <button
           type="button"
           onClick={() => setMostrarSenha(!mostrarSenha)}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600"
+          aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
         >
           {mostrarSenha ? "🙈" : "👁️"}
         </button>
       </div>
 
-      <button type="submit" className="w-full bg-yellow-500 text-white p-2">
-        Cadastrar
-      </button>
+      <label className="flex items-start gap-2 text-sm mb-2">
+        <input
+          type="checkbox"
+          checked={declaraFriendCode}
+          onChange={(e) => setDeclaraFriendCode(e.target.checked)}
+          className="mt-1"
+          required
+        />
+        <span>
+          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta pode ser <b>excluída</b> em caso de
+          fraude.
+        </span>
+      </label>
 
-      {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
+      <label className="flex items-start gap-2 text-sm mb-4">
+        <input
+          type="checkbox"
+          checked={aceitoDados}
+          onChange={(e) => setAceitoDados(e.target.checked)}
+          className="mt-1"
+          required
+        />
+        <span>
+          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para autenticação, comunicação e segurança.
+        </span>
+      </label>
 
-      {mensagem && <p className="text-red-600 mt-2">{mensagem}</p>}
+      <button type="submit" className="w-full bg-yellow-500 text-white p-2">Cadastrar</button>
 
-      <p className="text-red-600 mt-4 text-sm font-semibold">
-        Caso não encontre o email de verificação, confira também sua caixa de Spam.
+      {mensagemErro && <p className="text-red-600 mt-2">{mensagemErro}</p>}
+      {mensagemInfo && <p className="text-green-700 mt-2">{mensagemInfo}</p>}
+
+      <p className="text-gray-600 mt-4 text-sm">
+        Não recebeu o e-mail? Verifique também a caixa de <b>Spam</b>.
       </p>
     </form>
   );
