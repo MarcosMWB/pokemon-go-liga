@@ -74,7 +74,7 @@ export default function CadastroPage() {
       // 3) Envia verificação
       //    Tenta com continueUrl -> se Firebase reclamar da URL, refaz sem settings.
       const BASE_URL =
-        (process.env.NEXT_PUBLIC_APP_URL || "https://pokemon-go-liga.vercel.app")
+        (process.env.NEXT_PUBLIC_APP_URL || "liga-ro.firebaseapp.com")
           .replace(/\/+$/, "");
       const continueUrl = `${BASE_URL}/login?verify=1`;
 
