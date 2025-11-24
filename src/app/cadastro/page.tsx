@@ -62,29 +62,27 @@ export default function CadastroPage() {
         { merge: true }
       );
 
-      // depois de criar o user...
+      // base estável (não depende do window nem do subdomínio de preview)
       const BASE_URL =
-        process.env.NEXT_PUBLIC_APP_URL ||
-        (typeof window !== "undefined" ? window.location.origin : "https://pokemon-go-liga.vercel.app");
+        process.env.NEXT_PUBLIC_APP_URL || "https://pokemon-go-liga.vercel.app";
 
       try {
+        // usa o handler hospedado do Firebase e redireciona para seu /login
         await sendEmailVerification(user, {
-          url: `${BASE_URL}/verify`,   // sua rota client-side
-          handleCodeInApp: true,       // usa a sua página /verify
+          url: `${BASE_URL}/login?verify=1`,
+          handleCodeInApp: false,
         });
       } catch (e: any) {
-        // fallback esperto + mensagem clara
-        const code = e?.code || "";
-        if (code === "auth/invalid-continue-uri" || code === "auth/invalid-dynamic-link-domain") {
-          // volta pra página padrão do Firebase, só pra não travar o usuário
-          await sendEmailVerification(user, {
-            url: `${BASE_URL}/login?verified=1`,
-            handleCodeInApp: false,
-          });
-        } else {
-          throw e;
-        }
+        console.error("sendEmailVerification falhou:", e?.code, e?.message);
+        setMensagemErro(
+          e?.code === "auth/unauthorized-continue-uri"
+            ? "Domínio da URL de retorno não está autorizado no Firebase Auth."
+            : e?.message || "Falha ao enviar e-mail de verificação."
+        );
+        // opcional: não faça signOut/router.replace se falhou aqui
+        return;
       }
+
 
       setMensagemInfo(
         `Enviamos um e-mail de verificação para ${email}. Abra a mensagem e confirme seu cadastro. ` +
