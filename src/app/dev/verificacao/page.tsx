@@ -20,27 +20,25 @@ type RowPriv = {
   nome?: string;
   email?: string;
   friend_code?: string;
-  autenticadoPorAdm?: boolean;
   createdAtMs?: number | null;
+};
+
+type PubInfo = {
+  verificado?: boolean;
+  nome?: string;
 };
 
 function since(ms?: number | null): string {
   if (!ms) return "—";
-  const diff = Date.now() - ms;
+  const diff = Date.now() - (ms || 0);
   if (diff < 0) return "agora";
   const m = Math.floor(diff / 60000);
   if (m < 1) return "agora";
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);
-  if (h < 24) {
-    const mm = m % 60;
-    return mm ? `${h} h ${mm} min` : `${h} h`;
-  }
+  if (h < 24) return `${h} h ${m % 60 ? (m % 60) + " min" : ""}`.trim();
   const d = Math.floor(h / 24);
-  if (d < 30) {
-    const hh = h % 24;
-    return hh ? `${d} d ${hh} h` : `${d} d`;
-  }
+  if (d < 30) return `${d} d ${h % 24 ? (h % 24) + " h" : ""}`.trim();
   const mo = Math.floor(d / 30);
   return mo ? `${mo} m` : `${d} d`;
 }
@@ -50,15 +48,18 @@ export default function VerificacaoUsuariosPage() {
   const [isSuper, setIsSuper] = useState(false);
 
   const [privRows, setPrivRows] = useState<RowPriv[]>([]);
-  const [usuariosIds, setUsuariosIds] = useState<Set<string>>(new Set());
+  const [pubMap, setPubMap] = useState<Record<string, PubInfo>>({});
 
   const [editing, setEditing] = useState<Record<string, string>>({});
+  const [markVerified, setMarkVerified] = useState<Record<string, boolean>>({});
   const [busca, setBusca] = useState("");
+
+  // feedback “copiado”
+  const [copiedFC, setCopiedFC] = useState<string | null>(null);
 
   const functions = getFunctions(undefined, "southamerica-east1");
   const fnDelete = httpsCallable(functions, "adminDeleteUser");
 
-  // Auth + flag de super
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (u: User | null) => {
       setUid(u?.uid ?? null);
@@ -72,41 +73,44 @@ export default function VerificacaoUsuariosPage() {
     return () => unsub();
   }, []);
 
-  // Snapshots: usuarios_private e usuarios
   useEffect(() => {
     if (!isSuper) return;
 
     const unsubPriv = onSnapshot(collection(db, "usuarios_private"), (snap) => {
       const list: RowPriv[] = snap.docs.map((d) => {
         const x = d.data() as any;
-        // tenta pegar createdAt seja como Timestamp, seja como número auxiliar
         let createdAtMs: number | null = null;
-        const ca = x.createdAt;
-        if (ca instanceof Timestamp) createdAtMs = ca.toMillis();
+        if (x.createdAt instanceof Timestamp) createdAtMs = x.createdAt.toMillis();
         else if (typeof x.createdAtMs === "number") createdAtMs = x.createdAtMs;
         return {
           id: d.id,
           nome: x.nome || "",
           email: x.email || "",
           friend_code: x.friend_code || "",
-          autenticadoPorAdm: !!(x.autenticadoPorAdm || x.autenticado_por_adm),
           createdAtMs,
         };
       });
       setPrivRows(list);
     });
 
-    const unsubUsuarios = onSnapshot(collection(db, "usuarios"), (snap) => {
-      setUsuariosIds(new Set(snap.docs.map((d) => d.id)));
+    const unsubPub = onSnapshot(collection(db, "usuarios"), (snap) => {
+      const map: Record<string, PubInfo> = {};
+      snap.docs.forEach((d) => {
+        const x = d.data() as any;
+        map[d.id] = {
+          verificado: !!x.verificado,
+          nome: x.nome || "",
+        };
+      });
+      setPubMap(map);
     });
 
     return () => {
       unsubPriv();
-      unsubUsuarios();
+      unsubPub();
     };
   }, [isSuper]);
 
-  // Filtro de busca
   const filtrarBusca = useCallback(
     (r: RowPriv) => {
       const q = busca.trim().toLowerCase();
@@ -120,22 +124,23 @@ export default function VerificacaoUsuariosPage() {
     [busca]
   );
 
-  // Listas derivadas
+  const hasPub = useCallback((id: string) => pubMap[id] !== undefined, [pubMap]);
+  const isVerified = useCallback((id: string) => !!pubMap[id]?.verificado, [pubMap]);
+
   const naoAutenticados = useMemo(
-    () => privRows.filter((r) => !usuariosIds.has(r.id)).filter(filtrarBusca),
-    [privRows, usuariosIds, filtrarBusca]
+    () => privRows.filter((r) => !hasPub(r.id)).filter(filtrarBusca),
+    [privRows, hasPub, filtrarBusca]
   );
 
-  const autenticados = useMemo(
-    () => privRows.filter((r) => usuariosIds.has(r.id)).filter(filtrarBusca),
-    [privRows, usuariosIds, filtrarBusca]
+  const autenticadosNaoVerificados = useMemo(
+    () => privRows.filter((r) => hasPub(r.id) && !isVerified(r.id)).filter(filtrarBusca),
+    [privRows, hasPub, isVerified, filtrarBusca]
   );
 
   if (!uid) return <div className="p-6">Faça login.</div>;
   if (!isSuper) return <div className="p-6">Acesso negado.</div>;
 
-  // Ações
-  async function salvarNome(r: RowPriv) {
+  async function salvarNomePrivEPub(r: RowPriv) {
     const novoNome = (editing[r.id] ?? r.nome ?? "").trim();
     if (!novoNome) return;
 
@@ -145,30 +150,36 @@ export default function VerificacaoUsuariosPage() {
       nomeAtualizadoEm: serverTimestamp(),
     });
 
-    // Mantém consistência se já existir o público
-    if (usuariosIds.has(r.id)) {
+    if (hasPub(r.id)) {
       try {
         await updateDoc(doc(db, "usuarios", r.id), {
           nome: novoNome,
           nomeAtualizadoPor: uid,
           nomeAtualizadoEm: serverTimestamp(),
         });
-      } catch {
-        // se não existir por algum motivo, ignoramos
-      }
+      } catch {}
+    }
+  }
+
+  async function salvarAutenticado(r: RowPriv) {
+    await salvarNomePrivEPub(r);
+    if (markVerified[r.id]) {
+      await updateDoc(doc(db, "usuarios", r.id), {
+        verificado: true,
+        verificadoPor: uid,
+        verificadoEm: serverTimestamp(),
+      });
     }
   }
 
   async function excluirUsuario(r: RowPriv, motivo?: "fc_falso" | "nao_verificado") {
     const confirmMsg =
       motivo === "nao_verificado"
-        ? `Confirma excluir o usuário NÃO VERIFICADO?\n\n${r.email || "(sem e-mail)"}`
+        ? `Confirma excluir o usuário NÃO AUTENTICADO?\n\n${r.email || "(sem e-mail)"}`
         : `Digite o e-mail para confirmar a exclusão (motivo: FC falso):\n${r.email || "(sem e-mail)"}`;
 
-    let ok = true;
     if (motivo === "nao_verificado") {
-      ok = window.confirm(confirmMsg);
-      if (!ok) return;
+      if (!window.confirm(confirmMsg)) return;
     } else {
       const conf = window.prompt(confirmMsg);
       if ((r.email || "").toLowerCase() !== (conf || "").trim().toLowerCase()) {
@@ -178,7 +189,7 @@ export default function VerificacaoUsuariosPage() {
     }
 
     try {
-      await fnDelete({ targetUid: r.id }); // CF deve apagar Auth + usuarios + usuarios_private
+      await fnDelete({ targetUid: r.id }); // Auth + /usuarios + /usuarios_private
       alert("Usuário excluído.");
     } catch (e: any) {
       console.error(e);
@@ -186,8 +197,20 @@ export default function VerificacaoUsuariosPage() {
     }
   }
 
-  // Linhas
-  function LinhaAutenticado(r: RowPriv) {
+  async function copyFC(r: RowPriv) {
+    const fc = (r.friend_code || "").trim();
+    if (!fc) return;
+    try {
+      await navigator.clipboard.writeText(fc);
+      setCopiedFC(r.id);
+      setTimeout(() => setCopiedFC(null), 1500);
+    } catch {
+      alert("Não foi possível copiar o Friend Code.");
+    }
+  }
+
+  function LinhaAutenticadoNaoVerificado(r: RowPriv) {
+    const hasFC = !!(r.friend_code && r.friend_code.trim());
     return (
       <li
         key={r.id}
@@ -196,8 +219,27 @@ export default function VerificacaoUsuariosPage() {
         <div className="min-w-0">
           <p className="text-sm font-medium break-all">{r.email || "(sem e-mail)"}</p>
           <p className="text-xs text-gray-600 break-all">UID: {r.id}</p>
-          <p className="text-xs text-gray-600 break-all">Friend code: {r.friend_code || "—"}</p>
-          <div className="mt-2 flex items-center gap-2">
+
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs text-gray-600 break-all">
+              Friend code: {r.friend_code || "—"}
+            </p>
+            <button
+              type="button"
+              disabled={!hasFC}
+              onClick={() => copyFC(r)}
+              className={`text-[11px] px-2 py-0.5 rounded border ${
+                hasFC
+                  ? "border-gray-300 hover:bg-gray-100"
+                  : "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
+              }`}
+              title={hasFC ? "Copiar FC" : "Sem FC"}
+            >
+              {copiedFC === r.id ? "✅ Copiado" : "📋 Copiar"}
+            </button>
+          </div>
+
+          <div className="mt-2 flex items-center gap-3">
             <label className="text-xs text-gray-500">Nome</label>
             <input
               className="border rounded px-2 py-1 text-sm"
@@ -205,11 +247,22 @@ export default function VerificacaoUsuariosPage() {
               onChange={(e) => setEditing((s) => ({ ...s, [r.id]: e.target.value }))}
               placeholder="Nome do jogador"
             />
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={!!markVerified[r.id]}
+                onChange={(e) =>
+                  setMarkVerified((s) => ({ ...s, [r.id]: e.target.checked }))
+                }
+              />
+              Verificado
+            </label>
           </div>
         </div>
+
         <div className="flex items-center gap-2">
           <button
-            onClick={() => salvarNome(r)}
+            onClick={() => salvarAutenticado(r)}
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-2 rounded"
           >
             Salvar
@@ -226,6 +279,7 @@ export default function VerificacaoUsuariosPage() {
   }
 
   function LinhaNaoAutenticado(r: RowPriv) {
+    const hasFC = !!(r.friend_code && r.friend_code.trim());
     return (
       <li
         key={r.id}
@@ -234,10 +288,30 @@ export default function VerificacaoUsuariosPage() {
         <div className="min-w-0">
           <p className="text-sm font-medium break-all">{r.email || "(sem e-mail)"}</p>
           <p className="text-xs text-gray-600 break-all">UID: {r.id}</p>
-          <p className="text-xs text-gray-600 break-all">Friend code: {r.friend_code || "—"}</p>
+
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs text-gray-600 break-all">
+              Friend code: {r.friend_code || "—"}
+            </p>
+            <button
+              type="button"
+              disabled={!hasFC}
+              onClick={() => copyFC(r)}
+              className={`text-[11px] px-2 py-0.5 rounded border ${
+                hasFC
+                  ? "border-gray-300 hover:bg-gray-100"
+                  : "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
+              }`}
+              title={hasFC ? "Copiar FC" : "Sem FC"}
+            >
+              {copiedFC === r.id ? "✅ Copiado" : "📋 Copiar"}
+            </button>
+          </div>
+
           <p className="text-xs text-amber-700 mt-1">
             Perfil não autenticado {r.createdAtMs ? `– criado há ${since(r.createdAtMs)}` : ""}
           </p>
+
           <div className="mt-2 flex items-center gap-2">
             <label className="text-xs text-gray-500">Nome</label>
             <input
@@ -248,9 +322,10 @@ export default function VerificacaoUsuariosPage() {
             />
           </div>
         </div>
+
         <div className="flex items-center gap-2">
           <button
-            onClick={() => salvarNome(r)}
+            onClick={() => salvarNomePrivEPub(r)}
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-2 rounded"
           >
             Salvar
@@ -259,7 +334,7 @@ export default function VerificacaoUsuariosPage() {
             onClick={() => excluirUsuario(r, "nao_verificado")}
             className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
           >
-            Excluir não verificado
+            Excluir não autenticado
           </button>
         </div>
       </li>
@@ -289,11 +364,13 @@ export default function VerificacaoUsuariosPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Autenticados ({autenticados.length})</h2>
-        {autenticados.length === 0 ? (
-          <p className="text-sm text-gray-500">Nenhum autenticado.</p>
+        <h2 className="text-lg font-semibold">
+          Autenticados (aguardando verificação) ({autenticadosNaoVerificados.length})
+        </h2>
+        {autenticadosNaoVerificados.length === 0 ? (
+          <p className="text-sm text-gray-500">Nenhum.</p>
         ) : (
-          <ul className="space-y-2">{autenticados.map(LinhaAutenticado)}</ul>
+          <ul className="space-y-2">{autenticadosNaoVerificados.map(LinhaAutenticadoNaoVerificado)}</ul>
         )}
       </section>
     </div>

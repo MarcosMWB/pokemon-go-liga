@@ -1111,36 +1111,25 @@ export default function PerfilPage() {
           <div className="min-w-0">
             <h1 className="text-2xl font-bold truncate flex items-center gap-2">
               <span className="truncate">{displayName}</span>
+              {usuario?.verificado && (
+                <span
+                  title="Usuário autenticado pela administração"
+                  className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[11px]"
+                >
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="currentColor">
+                    <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Zm0 17.3c-3-1-5.5-4.3-5.5-7.7V6.7L12 5l5.5 1.7v4c0 3.4-2.5 6.7-5.5 7.6ZM11 14.6l-2.1-2.1.9-.9 1.2 1.2 3.3-3.3.9.9L11 14.6Z" />
+                  </svg>
+                  Verificado
+                </span>
+              )}
               {typeof usuario?.ppDisponiveis === 'number' && (
                 <span className="text-xs sm:text-sm font-normal text-purple-700 whitespace-nowrap">
                   <b>PP:</b> {usuario.ppDisponiveis}
                 </span>
               )}
             </h1>
-            <p className="text-sm text-gray-500 break-all">UID: {perfilUid}</p>{usuario?.verificado && (
-              <span
-                title="E-mail verificado"
-                className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 text-[11px]"
-              >
-                <svg viewBox="0 0 20 20" className="w-3.5 h-3.5" fill="currentColor">
-                  <path d="M10 .75a9.25 9.25 0 1 0 0 18.5A9.25 9.25 0 0 0 10 .75Zm-1.06 13.03-3.47-3.47 1.06-1.06 2.41 2.41 4.97-4.97 1.06 1.06-6.03 6.03Z" />
-                </svg>
-                E-mail
-              </span>
-            )}
             {usuario?.friend_code && (
               <p className="text-sm mt-1 break-all">Friend code: {usuario.friend_code}</p>
-            )}
-            {usuario?.autenticadoPorAdm && (
-              <span
-                title="Usuário autenticado pela administração"
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[11px]"
-              >
-                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="currentColor">
-                  <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Zm0 17.3c-3-1-5.5-4.3-5.5-7.7V6.7L12 5l5.5 1.7v4c0 3.4-2.5 6.7-5.5 7.6ZM11 14.6l-2.1-2.1.9-.9 1.2 1.2 3.3-3.3.9.9L11 14.6Z" />
-                </svg>
-                Verificado
-              </span>
             )}
             <p className="text-xs text-gray-500 mt-1">
               Total de PP: {usuario?.pontosPresencaTotal ?? 0} · Consumidos:{' '}
