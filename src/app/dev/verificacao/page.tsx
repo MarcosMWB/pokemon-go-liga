@@ -20,8 +20,8 @@ type Row = {
   nome?: string;
   email?: string;
   friend_code?: string;
-  verificado?: boolean;           // true = confirmou e-mail
-  autenticadoPorAdm?: boolean;    // true = selo admin
+  verificado?: boolean;
+  autenticadoPorAdm?: boolean;
 };
 
 export default function VerificacaoUsuariosPage() {
@@ -49,7 +49,6 @@ export default function VerificacaoUsuariosPage() {
   useEffect(() => {
     if (!isSuper) return;
 
-    // Pegamos TODOS (verificados e não verificados)
     const qUsers = collection(db, "usuarios");
     const unsub: Unsubscribe = onSnapshot(qUsers, (snap) => {
       const list: Row[] = snap.docs.map((d) => {
@@ -68,6 +67,7 @@ export default function VerificacaoUsuariosPage() {
     return () => unsub();
   }, [isSuper]);
 
+  // ✅ memoiza e usa nas deps dos useMemo
   const filtrarBusca = useCallback(
     (r: Row) => {
       const b = busca.trim().toLowerCase();
@@ -81,23 +81,19 @@ export default function VerificacaoUsuariosPage() {
     [busca]
   );
 
-
-  // verificado == true && NÃO autenticado
   const pendentes = useMemo(
-    () => rows.filter(r => !!r.verificado && !r.autenticadoPorAdm).filter(filtrarBusca),
-    [rows, busca]
+    () => rows.filter((r) => !!r.verificado && !r.autenticadoPorAdm).filter(filtrarBusca),
+    [rows, filtrarBusca]
   );
 
-  // verificado == true && autenticado == true
   const autenticados = useMemo(
-    () => rows.filter(r => !!r.verificado && !!r.autenticadoPorAdm).filter(filtrarBusca),
-    [rows, busca]
+    () => rows.filter((r) => !!r.verificado && !!r.autenticadoPorAdm).filter(filtrarBusca),
+    [rows, filtrarBusca]
   );
 
-  // verificado == false (não confirmou e-mail)
   const naoVerificados = useMemo(
-    () => rows.filter(r => !r.verificado).filter(filtrarBusca),
-    [rows, busca]
+    () => rows.filter((r) => !r.verificado).filter(filtrarBusca),
+    [rows, filtrarBusca]
   );
 
   if (!uid) return <div className="p-6">Faça login.</div>;
@@ -115,7 +111,6 @@ export default function VerificacaoUsuariosPage() {
   }
 
   async function excluirUsuario(r: Row) {
-    // Confirmação forte: digitar o e-mail
     const conf = window.prompt(
       `Digite o e-mail do usuário para confirmar a exclusão definitiva:\n${r.email || "(sem e-mail)"}`
     );
@@ -126,7 +121,6 @@ export default function VerificacaoUsuariosPage() {
 
     try {
       await fnDelete({ targetUid: r.id });
-      // onSnapshot já vai refletir a remoção
       alert("Usuário excluído.");
     } catch (e: any) {
       console.error(e);
@@ -227,9 +221,7 @@ export default function VerificacaoUsuariosPage() {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">
-          Pendentes de autenticação ({pendentes.length})
-        </h2>
+        <h2 className="text-lg font-semibold">Pendentes de autenticação ({pendentes.length})</h2>
         {pendentes.length === 0 ? (
           <p className="text-sm text-gray-500">Nenhum pendente.</p>
         ) : (
@@ -238,9 +230,7 @@ export default function VerificacaoUsuariosPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">
-          Já autenticados ({autenticados.length})
-        </h2>
+        <h2 className="text-lg font-semibold">Já autenticados ({autenticados.length})</h2>
         {autenticados.length === 0 ? (
           <p className="text-sm text-gray-500">Nenhum autenticado.</p>
         ) : (
@@ -249,9 +239,7 @@ export default function VerificacaoUsuariosPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">
-          Não verificados ({naoVerificados.length})
-        </h2>
+        <h2 className="text-lg font-semibold">Não verificados ({naoVerificados.length})</h2>
         {naoVerificados.length === 0 ? (
           <p className="text-sm text-gray-500">Todos confirmaram e-mail.</p>
         ) : (

@@ -1,46 +1,68 @@
+// app/verify/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { auth } from "@/lib/firebase";
 import { applyActionCode } from "firebase/auth";
 
-export default function VerifyPage() {
+export const dynamic = "force-dynamic"; // evita pré-render estático da rota
+
+function VerifyInner() {
   const router = useRouter();
-  const q = useSearchParams();
-  const [status, setStatus] = useState<"loading"|"ok"|"error">("loading");
-  const [msg, setMsg] = useState("Validando verificação de e-mail...");
+  const sp = useSearchParams();
+
+  const [status, setStatus] = useState<"idle" | "ok" | "invalid" | "error">("idle");
+  const [msg, setMsg] = useState<string>("Verificando seu e-mail...");
 
   useEffect(() => {
-    const mode = q.get("mode");      // "verifyEmail"
-    const oob = q.get("oobCode");    // código da ação
-    const email = q.get("continueUrlEmail") || ""; // opcional pra pré-preencher o login
+    const mode = sp.get("mode");
+    const oob = sp.get("oobCode");
 
     if (mode !== "verifyEmail" || !oob) {
-      setStatus("error");
-      setMsg("Link inválido ou expirado.");
+      setStatus("invalid");
+      setMsg("Link inválido ou incompleto.");
       return;
     }
 
     (async () => {
       try {
         await applyActionCode(auth, oob);
+        try {
+          await auth.currentUser?.reload();
+        } catch {}
         setStatus("ok");
         setMsg("E-mail verificado. Redirecionando para o login...");
-        setTimeout(() => {
-          router.replace(`/login?verified=1${email ? `&email=${encodeURIComponent(email)}` : ""}`);
-        }, 1200);
+        setTimeout(() => router.replace("/login?verified=1"), 1200);
       } catch {
         setStatus("error");
-        setMsg("Falha ao verificar seu e-mail. Solicite um novo link.");
+        setMsg("Código inválido ou expirado.");
       }
     })();
-  }, [q, router]);
+  }, [sp, router]);
 
   return (
-    <div className="max-w-md mx-auto p-8">
-      <h1 className="text-xl font-bold mb-3">Verificação de e-mail</h1>
-      <p className={status === "error" ? "text-red-600" : "text-gray-800"}>{msg}</p>
+    <div className="p-6 max-w-md mx-auto">
+      <h1 className="text-xl font-bold mb-2">Verificação de e-mail</h1>
+      <p className={status === "error" || status === "invalid" ? "text-red-600" : "text-gray-800"}>
+        {msg}
+      </p>
+      {(status === "error" || status === "invalid") && (
+        <button
+          onClick={() => router.replace("/login")}
+          className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+        >
+          Ir para o login
+        </button>
+      )}
     </div>
+  );
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Carregando…</div>}>
+      <VerifyInner />
+    </Suspense>
   );
 }
