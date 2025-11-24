@@ -2,7 +2,7 @@
 "use client";
 
 import type { User } from "firebase/auth";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { auth, db } from "@/lib/firebase";
 import {
   collection,
@@ -68,12 +68,19 @@ export default function VerificacaoUsuariosPage() {
     return () => unsub();
   }, [isSuper]);
 
-  const filtrarBusca = (r: Row) =>
-    busca.trim()
-      ? (r.nome || "").toLowerCase().includes(busca.toLowerCase()) ||
-        (r.email || "").toLowerCase().includes(busca.toLowerCase()) ||
-        (r.friend_code || "").toLowerCase().includes(busca.toLowerCase())
-      : true;
+  const filtrarBusca = useCallback(
+    (r: Row) => {
+      const b = busca.trim().toLowerCase();
+      if (!b) return true;
+      return (
+        (r.nome || "").toLowerCase().includes(b) ||
+        (r.email || "").toLowerCase().includes(b) ||
+        (r.friend_code || "").toLowerCase().includes(b)
+      );
+    },
+    [busca]
+  );
+
 
   // verificado == true && NÃO autenticado
   const pendentes = useMemo(

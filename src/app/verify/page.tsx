@@ -30,7 +30,7 @@ export default function VerifyPage() {
         setTimeout(() => {
           router.replace(`/login?verified=1${email ? `&email=${encodeURIComponent(email)}` : ""}`);
         }, 1200);
-      } catch (e) {
+      } catch {
         setStatus("error");
         setMsg("Falha ao verificar seu e-mail. Solicite um novo link.");
       }
