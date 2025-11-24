@@ -9,6 +9,31 @@ import {
   signOut,
 } from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import type { FirebaseError } from "firebase/app";
+
+function mapSignupError(err: unknown): string {
+  const code =
+    (err as FirebaseError)?.code ||
+    (typeof err === "object" && err && (err as any).code) ||
+    "";
+
+  switch (code) {
+    case "auth/email-already-in-use":
+      return "Este e-mail já está em uso.";
+    case "auth/invalid-email":
+      return "E-mail inválido.";
+    case "auth/weak-password":
+      return "Senha fraca. Use pelo menos 6 caracteres.";
+    case "auth/operation-not-allowed":
+      return "Cadastro com e-mail/senha está desabilitado no Firebase.";
+    case "auth/too-many-requests":
+      return "Muitas tentativas. Aguarde alguns minutos e tente novamente.";
+    case "auth/network-request-failed":
+      return "Falha de rede. Verifique sua conexão.";
+    default:
+      return "Erro ao cadastrar. Tente novamente.";
+  }
+}
 
 export default function CadastroPage() {
   const router = useRouter();
@@ -22,72 +47,124 @@ export default function CadastroPage() {
 
   const [mensagemErro, setMensagemErro] = useState("");
   const [mensagemInfo, setMensagemInfo] = useState("");
+  const [loading, setLoading] = useState(false);
 
+  // consentimentos obrigatórios
   const [aceitoDados, setAceitoDados] = useState(false);
   const [declaraFriendCode, setDeclaraFriendCode] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+
     setMensagemErro("");
     setMensagemInfo("");
 
+    // validações simples
     if (!friendCode.match(/^\d{4}\s?\d{4}\s?\d{4}$/)) {
-      setMensagemErro("Friend Code inválido (use o formato: 1234 5678 9012)");
+      setMensagemErro("Friend Code inválido (use o formato: 1234 5678 9012).");
       return;
     }
-
     if (!declaraFriendCode || !aceitoDados) {
-      setMensagemErro("Você precisa marcar os dois consentimentos para continuar.");
+      setMensagemErro("Marque os dois consentimentos para continuar.");
       return;
     }
 
+    setLoading(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, senha);
+      // 1) cria usuário no Auth
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), senha);
       const user = cred.user;
 
-      // salva no PRIVATE (com e-mail) — público nasce pelo Cloud Functions depois (espelho)
-      await setDoc(
-        doc(db, "usuarios_private", user.uid),
-        {
-          nome,
-          email,
-          friend_code: friendCode.replace(/\s/g, ""),
-          verificado: false,
-          createdAt: serverTimestamp(),
-          consentimentos: {
-            versao: "v1-2025-11-24",
-            dadosSensiveisEmail: true,
-            declaracaoFriendCodeVerdadeiro: true,
-            timestamp: serverTimestamp(),
-            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+      // 2) grava registro privado
+      try {
+        await setDoc(
+          doc(db, "usuarios_private", user.uid),
+          {
+            nome: nome.trim(),
+            email: email.trim(),
+            friend_code: friendCode.replace(/\s/g, ""),
+            createdAt: serverTimestamp(),
+            createdAtMs: Date.now(), // ajuda no admin "há quanto tempo"
+            consentimentos: {
+              versao: "v1-2025-11-24",
+              dadosSensiveisEmail: true,
+              declaracaoFriendCodeVerdadeiro: true,
+              timestamp: serverTimestamp(),
+              userAgent:
+                typeof navigator !== "undefined" ? navigator.userAgent : null,
+            },
           },
-        },
-        { merge: true }
-      );
+          { merge: true }
+        );
+      } catch (w) {
+        // não bloqueia o fluxo, mas avisa
+        console.warn("Falha ao gravar usuarios_private:", w);
+      }
 
-      // ENVIA VERIFICAÇÃO — página padrão do Firebase, redireciona depois p/ /login?verified=1
-      const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ??
-        (typeof window !== "undefined" ? window.location.origin : "");
+      // 3) envia e-mail de verificação
+      const BASE_URL =
+        process.env.NEXT_PUBLIC_APP_URL || "https://pokemon-go-liga.vercel.app";
 
-      await sendEmailVerification(user, {
-        url: `${baseUrl}/verify?continueUrlEmail=${encodeURIComponent(email)}`,
-        handleCodeInApp: true, // usa nossa página /verify
-      });
+      try {
+        // caminho principal: usa página padrão do Firebase e volta para /login
+        await sendEmailVerification(user, {
+          url: `${BASE_URL}/login?verify=1`,
+          handleCodeInApp: false,
+        });
+      } catch (e: any) {
+        // fallback quando domínio de retorno não está autorizado ou similar
+        const code = e?.code || "";
+        if (
+          code === "auth/unauthorized-continue-uri" ||
+          code === "auth/invalid-continue-uri" ||
+          code === "auth/invalid-dynamic-link-domain"
+        ) {
+          try {
+            await sendEmailVerification(user, {
+              url: `${BASE_URL}/verify`,
+              handleCodeInApp: true, // usa sua rota /verify
+            });
+          } catch (e2: any) {
+            console.error("Falha no fallback de verificação:", e2?.code, e2?.message);
+            setMensagemErro(
+              "Não consegui enviar o e-mail de verificação (verifique Domínios Autorizados no Firebase Auth)."
+            );
+            // encerra aqui sem sair do auth para não travar o usuário num estado estranho
+            setLoading(false);
+            return;
+          }
+        } else if (code === "auth/too-many-requests") {
+          setMensagemErro("Muitas tentativas de verificação. Tente novamente mais tarde.");
+          setLoading(false);
+          return;
+        } else if (code === "auth/network-request-failed") {
+          setMensagemErro("Falha de rede ao enviar o e-mail. Verifique sua conexão.");
+          setLoading(false);
+          return;
+        } else {
+          console.error("sendEmailVerification erro:", e?.code, e?.message);
+          setMensagemErro("Falha ao enviar o e-mail de verificação.");
+          setLoading(false);
+          return;
+        }
+      }
 
+      // 4) mensagem + força logout + redireciona para login com aviso
       setMensagemInfo(
         `Enviamos um e-mail de verificação para ${email}. Confirme para poder acessar. ` +
-        `Se não achar, verifique também o Spam.`
+          `Confira também a caixa de SPAM.`
       );
 
       await signOut(auth);
-
-      // leva o usuário ao login já avisando que precisa verificar
       setTimeout(() => {
-        router.replace(`/login?verify=1&email=${encodeURIComponent(email)}`);
-      }, 2000);
-    } catch (err: any) {
-      setMensagemErro(err?.message || "Erro ao cadastrar.");
+        router.replace(`/login?verify=1&email=${encodeURIComponent(email.trim())}`);
+      }, 2200);
+    } catch (err) {
+      setMensagemErro(mapSignupError(err));
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -102,6 +179,8 @@ export default function CadastroPage() {
         value={friendCode}
         onChange={(e) => setFriendCode(e.target.value)}
         className="w-full border p-2 mb-2"
+        autoComplete="off"
+        inputMode="numeric"
       />
 
       <input
@@ -111,15 +190,18 @@ export default function CadastroPage() {
         value={nome}
         onChange={(e) => setNome(e.target.value)}
         className="w-full border p-2 mb-2"
+        autoComplete="name"
       />
 
       <input
         type="email"
-        placeholder="Email"
+        placeholder="E-mail"
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         className="w-full border p-2 mb-2"
+        autoComplete="email"
+        inputMode="email"
       />
 
       <div className="relative w-full mb-2">
@@ -130,17 +212,20 @@ export default function CadastroPage() {
           value={senha}
           onChange={(e) => setSenha(e.target.value)}
           className="w-full border p-2 pr-10"
+          autoComplete="new-password"
         />
         <button
           type="button"
           onClick={() => setMostrarSenha(!mostrarSenha)}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600"
           aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+          tabIndex={-1}
         >
           {mostrarSenha ? "🙈" : "👁️"}
         </button>
       </div>
 
+      {/* Consentimentos */}
       <label className="flex items-start gap-2 text-sm mb-2">
         <input
           type="checkbox"
@@ -150,8 +235,8 @@ export default function CadastroPage() {
           required
         />
         <span>
-          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta pode ser <b>excluída</b> em caso de
-          fraude.
+          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta pode ser{" "}
+          <b>excluída</b> em caso de fraude.
         </span>
       </label>
 
@@ -164,17 +249,32 @@ export default function CadastroPage() {
           required
         />
         <span>
-          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para autenticação, comunicação e segurança.
+          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para autenticação, comunicação da
+          plataforma e segurança, conforme a Política de Privacidade.
         </span>
       </label>
 
-      <button type="submit" className="w-full bg-yellow-500 text-white p-2">Cadastrar</button>
+      <button
+        type="submit"
+        disabled={loading}
+        className={`w-full text-white p-2 rounded ${loading ? "bg-yellow-400" : "bg-yellow-500 hover:bg-yellow-600"}`}
+      >
+        {loading ? "Enviando..." : "Cadastrar"}
+      </button>
 
-      {mensagemErro && <p className="text-red-600 mt-2">{mensagemErro}</p>}
-      {mensagemInfo && <p className="text-green-700 mt-2">{mensagemInfo}</p>}
+      {mensagemErro && (
+        <p className="text-red-600 mt-2" aria-live="assertive">
+          {mensagemErro}
+        </p>
+      )}
+      {mensagemInfo && (
+        <p className="text-green-700 mt-2" aria-live="polite">
+          {mensagemInfo}
+        </p>
+      )}
 
       <p className="text-gray-600 mt-4 text-sm">
-        Não recebeu o e-mail? Verifique também a caixa de <b>Spam</b>.
+        Não recebeu o e-mail? Verifique também a pasta <b>Spam</b>.
       </p>
     </form>
   );
