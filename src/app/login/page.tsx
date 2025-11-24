@@ -45,7 +45,6 @@ function pickPublicUser(src: any) {
   return {
     nome: typeof src?.nome === "string" ? src.nome : "",
     friend_code: typeof src?.friend_code === "string" ? src.friend_code : "",
-    verificado: true,
     createdAt: src?.createdAt ?? Date.now(),
   };
 }
@@ -108,7 +107,6 @@ export default function LoginPage() {
         await setDoc(
           doc(db, "usuarios_private", user.uid),
           {
-            verificado: true,
             email: user.email ?? "",
             updatedAtMs: Date.now(),
           },

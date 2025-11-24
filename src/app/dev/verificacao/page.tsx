@@ -7,32 +7,58 @@ import { auth, db } from "@/lib/firebase";
 import {
   collection,
   doc,
-  onSnapshot,
-  updateDoc,
-  serverTimestamp,
   getDoc,
+  onSnapshot,
+  serverTimestamp,
+  updateDoc,
+  Timestamp,
 } from "firebase/firestore";
-import type { Unsubscribe } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
-type Row = {
+type RowPriv = {
   id: string;
   nome?: string;
   email?: string;
   friend_code?: string;
-  verificado?: boolean;
   autenticadoPorAdm?: boolean;
+  createdAtMs?: number | null;
 };
+
+function since(ms?: number | null): string {
+  if (!ms) return "—";
+  const diff = Date.now() - ms;
+  if (diff < 0) return "agora";
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "agora";
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) {
+    const mm = m % 60;
+    return mm ? `${h} h ${mm} min` : `${h} h`;
+  }
+  const d = Math.floor(h / 24);
+  if (d < 30) {
+    const hh = h % 24;
+    return hh ? `${d} d ${hh} h` : `${d} d`;
+  }
+  const mo = Math.floor(d / 30);
+  return mo ? `${mo} m` : `${d} d`;
+}
 
 export default function VerificacaoUsuariosPage() {
   const [uid, setUid] = useState<string | null>(null);
-  const [isSuper, setIsSuper] = useState<boolean>(false);
-  const [rows, setRows] = useState<Row[]>([]);
+  const [isSuper, setIsSuper] = useState(false);
+
+  const [privRows, setPrivRows] = useState<RowPriv[]>([]);
+  const [usuariosIds, setUsuariosIds] = useState<Set<string>>(new Set());
+
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [busca, setBusca] = useState("");
+
   const functions = getFunctions(undefined, "southamerica-east1");
   const fnDelete = httpsCallable(functions, "adminDeleteUser");
 
+  // Auth + flag de super
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (u: User | null) => {
       setUid(u?.uid ?? null);
@@ -46,81 +72,113 @@ export default function VerificacaoUsuariosPage() {
     return () => unsub();
   }, []);
 
+  // Snapshots: usuarios_private e usuarios
   useEffect(() => {
     if (!isSuper) return;
 
-    const qUsers = collection(db, "usuarios");
-    const unsub: Unsubscribe = onSnapshot(qUsers, (snap) => {
-      const list: Row[] = snap.docs.map((d) => {
+    const unsubPriv = onSnapshot(collection(db, "usuarios_private"), (snap) => {
+      const list: RowPriv[] = snap.docs.map((d) => {
         const x = d.data() as any;
+        // tenta pegar createdAt seja como Timestamp, seja como número auxiliar
+        let createdAtMs: number | null = null;
+        const ca = x.createdAt;
+        if (ca instanceof Timestamp) createdAtMs = ca.toMillis();
+        else if (typeof x.createdAtMs === "number") createdAtMs = x.createdAtMs;
         return {
           id: d.id,
           nome: x.nome || "",
           email: x.email || "",
           friend_code: x.friend_code || "",
-          verificado: !!x.verificado,
           autenticadoPorAdm: !!(x.autenticadoPorAdm || x.autenticado_por_adm),
+          createdAtMs,
         };
       });
-      setRows(list);
+      setPrivRows(list);
     });
-    return () => unsub();
+
+    const unsubUsuarios = onSnapshot(collection(db, "usuarios"), (snap) => {
+      setUsuariosIds(new Set(snap.docs.map((d) => d.id)));
+    });
+
+    return () => {
+      unsubPriv();
+      unsubUsuarios();
+    };
   }, [isSuper]);
 
-  // ✅ memoiza e usa nas deps dos useMemo
+  // Filtro de busca
   const filtrarBusca = useCallback(
-    (r: Row) => {
-      const b = busca.trim().toLowerCase();
-      if (!b) return true;
+    (r: RowPriv) => {
+      const q = busca.trim().toLowerCase();
+      if (!q) return true;
       return (
-        (r.nome || "").toLowerCase().includes(b) ||
-        (r.email || "").toLowerCase().includes(b) ||
-        (r.friend_code || "").toLowerCase().includes(b)
+        (r.nome || "").toLowerCase().includes(q) ||
+        (r.email || "").toLowerCase().includes(q) ||
+        (r.friend_code || "").toLowerCase().includes(q)
       );
     },
     [busca]
   );
 
-  const pendentes = useMemo(
-    () => rows.filter((r) => !!r.verificado && !r.autenticadoPorAdm).filter(filtrarBusca),
-    [rows, filtrarBusca]
+  // Listas derivadas
+  const naoAutenticados = useMemo(
+    () => privRows.filter((r) => !usuariosIds.has(r.id)).filter(filtrarBusca),
+    [privRows, usuariosIds, filtrarBusca]
   );
 
   const autenticados = useMemo(
-    () => rows.filter((r) => !!r.verificado && !!r.autenticadoPorAdm).filter(filtrarBusca),
-    [rows, filtrarBusca]
-  );
-
-  const naoVerificados = useMemo(
-    () => rows.filter((r) => !r.verificado).filter(filtrarBusca),
-    [rows, filtrarBusca]
+    () => privRows.filter((r) => usuariosIds.has(r.id)).filter(filtrarBusca),
+    [privRows, usuariosIds, filtrarBusca]
   );
 
   if (!uid) return <div className="p-6">Faça login.</div>;
   if (!isSuper) return <div className="p-6">Acesso negado.</div>;
 
-  async function salvarEAUTENTICAR(r: Row) {
+  // Ações
+  async function salvarNome(r: RowPriv) {
     const novoNome = (editing[r.id] ?? r.nome ?? "").trim();
-    const ref = doc(db, "usuarios", r.id);
-    await updateDoc(ref, {
-      ...(novoNome ? { nome: novoNome } : {}),
-      autenticadoPorAdm: true,
-      autenticadoPorAdmPor: uid,
-      autenticadoPorAdmEm: serverTimestamp(),
+    if (!novoNome) return;
+
+    await updateDoc(doc(db, "usuarios_private", r.id), {
+      nome: novoNome,
+      nomeAtualizadoPor: uid,
+      nomeAtualizadoEm: serverTimestamp(),
     });
+
+    // Mantém consistência se já existir o público
+    if (usuariosIds.has(r.id)) {
+      try {
+        await updateDoc(doc(db, "usuarios", r.id), {
+          nome: novoNome,
+          nomeAtualizadoPor: uid,
+          nomeAtualizadoEm: serverTimestamp(),
+        });
+      } catch {
+        // se não existir por algum motivo, ignoramos
+      }
+    }
   }
 
-  async function excluirUsuario(r: Row) {
-    const conf = window.prompt(
-      `Digite o e-mail do usuário para confirmar a exclusão definitiva:\n${r.email || "(sem e-mail)"}`
-    );
-    if ((r.email || "").toLowerCase() !== (conf || "").trim().toLowerCase()) {
-      alert("Confirmação cancelada.");
-      return;
+  async function excluirUsuario(r: RowPriv, motivo?: "fc_falso" | "nao_verificado") {
+    const confirmMsg =
+      motivo === "nao_verificado"
+        ? `Confirma excluir o usuário NÃO VERIFICADO?\n\n${r.email || "(sem e-mail)"}`
+        : `Digite o e-mail para confirmar a exclusão (motivo: FC falso):\n${r.email || "(sem e-mail)"}`;
+
+    let ok = true;
+    if (motivo === "nao_verificado") {
+      ok = window.confirm(confirmMsg);
+      if (!ok) return;
+    } else {
+      const conf = window.prompt(confirmMsg);
+      if ((r.email || "").toLowerCase() !== (conf || "").trim().toLowerCase()) {
+        alert("Confirmação cancelada.");
+        return;
+      }
     }
 
     try {
-      await fnDelete({ targetUid: r.id });
+      await fnDelete({ targetUid: r.id }); // CF deve apagar Auth + usuarios + usuarios_private
       alert("Usuário excluído.");
     } catch (e: any) {
       console.error(e);
@@ -128,79 +186,80 @@ export default function VerificacaoUsuariosPage() {
     }
   }
 
-  function LinhaPendente(r: Row) {
+  // Linhas
+  function LinhaAutenticado(r: RowPriv) {
     return (
-      <li key={r.id} className="bg-white border rounded p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <li
+        key={r.id}
+        className="bg-white border rounded p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+      >
         <div className="min-w-0">
           <p className="text-sm font-medium break-all">{r.email || "(sem e-mail)"}</p>
           <p className="text-xs text-gray-600 break-all">UID: {r.id}</p>
           <p className="text-xs text-gray-600 break-all">Friend code: {r.friend_code || "—"}</p>
           <div className="mt-2 flex items-center gap-2">
-            <label className="text-xs text-gray-500">Nome real</label>
+            <label className="text-xs text-gray-500">Nome</label>
             <input
               className="border rounded px-2 py-1 text-sm"
               value={editing[r.id] ?? r.nome ?? ""}
               onChange={(e) => setEditing((s) => ({ ...s, [r.id]: e.target.value }))}
-              placeholder="Nome do usuário"
+              placeholder="Nome do jogador"
             />
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => salvarEAUTENTICAR(r)}
+            onClick={() => salvarNome(r)}
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-2 rounded"
           >
-            Salvar e autenticar
+            Salvar
           </button>
           <button
-            onClick={() => excluirUsuario(r)}
+            onClick={() => excluirUsuario(r, "fc_falso")}
             className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
           >
-            Excluir
+            Excluir (FC falso)
           </button>
         </div>
       </li>
     );
   }
 
-  function LinhaAutenticado(r: Row) {
+  function LinhaNaoAutenticado(r: RowPriv) {
     return (
-      <li key={r.id} className="bg-white border rounded p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium break-all">{r.nome || "(sem nome)"}</p>
-          <p className="text-xs text-gray-600 break-all">{r.email || "—"}</p>
-          <p className="text-xs text-gray-600 break-all">Friend code: {r.friend_code || "—"}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[11px]">
-            Autenticado
-          </span>
-          <button
-            onClick={() => excluirUsuario(r)}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
-          >
-            Excluir
-          </button>
-        </div>
-      </li>
-    );
-  }
-
-  function LinhaNaoVerificado(r: Row) {
-    return (
-      <li key={r.id} className="bg-white border rounded p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <li
+        key={r.id}
+        className="bg-white border rounded p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+      >
         <div className="min-w-0">
           <p className="text-sm font-medium break-all">{r.email || "(sem e-mail)"}</p>
           <p className="text-xs text-gray-600 break-all">UID: {r.id}</p>
           <p className="text-xs text-gray-600 break-all">Friend code: {r.friend_code || "—"}</p>
-          <p className="text-xs text-amber-700 mt-1">Não confirmou o e-mail</p>
+          <p className="text-xs text-amber-700 mt-1">
+            Perfil não autenticado {r.createdAtMs ? `– criado há ${since(r.createdAtMs)}` : ""}
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <label className="text-xs text-gray-500">Nome</label>
+            <input
+              className="border rounded px-2 py-1 text-sm"
+              value={editing[r.id] ?? r.nome ?? ""}
+              onChange={(e) => setEditing((s) => ({ ...s, [r.id]: e.target.value }))}
+              placeholder="Nome do jogador"
+            />
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => excluirUsuario(r)}
+            onClick={() => salvarNome(r)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-2 rounded"
+          >
+            Salvar
+          </button>
+          <button
+            onClick={() => excluirUsuario(r, "nao_verificado")}
             className="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
           >
-            Excluir
+            Excluir não verificado
           </button>
         </div>
       </li>
@@ -209,7 +268,7 @@ export default function VerificacaoUsuariosPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Verificação de usuários</h1>
+      <h1 className="text-2xl font-bold">Admin · Verificação de usuários</h1>
 
       <div className="flex items-center gap-2">
         <input
@@ -221,29 +280,20 @@ export default function VerificacaoUsuariosPage() {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Pendentes de autenticação ({pendentes.length})</h2>
-        {pendentes.length === 0 ? (
-          <p className="text-sm text-gray-500">Nenhum pendente.</p>
+        <h2 className="text-lg font-semibold">Não autenticados ({naoAutenticados.length})</h2>
+        {naoAutenticados.length === 0 ? (
+          <p className="text-sm text-gray-500">Nenhum.</p>
         ) : (
-          <ul className="space-y-2">{pendentes.map(LinhaPendente)}</ul>
+          <ul className="space-y-2">{naoAutenticados.map(LinhaNaoAutenticado)}</ul>
         )}
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Já autenticados ({autenticados.length})</h2>
+        <h2 className="text-lg font-semibold">Autenticados ({autenticados.length})</h2>
         {autenticados.length === 0 ? (
           <p className="text-sm text-gray-500">Nenhum autenticado.</p>
         ) : (
           <ul className="space-y-2">{autenticados.map(LinhaAutenticado)}</ul>
-        )}
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Não verificados ({naoVerificados.length})</h2>
-        {naoVerificados.length === 0 ? (
-          <p className="text-sm text-gray-500">Todos confirmaram e-mail.</p>
-        ) : (
-          <ul className="space-y-2">{naoVerificados.map(LinhaNaoVerificado)}</ul>
         )}
       </section>
     </div>

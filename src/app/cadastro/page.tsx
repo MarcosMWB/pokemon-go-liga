@@ -50,7 +50,6 @@ export default function CadastroPage() {
           nome,
           email,
           friend_code: friendCode.replace(/\s/g, ""),
-          verificado: false,
           createdAt: serverTimestamp(),
           consentimentos: {
             versao: "v1-2025-11-24",
@@ -63,14 +62,29 @@ export default function CadastroPage() {
         { merge: true }
       );
 
-      const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ??
-        (typeof window !== "undefined" ? window.location.origin : "");
+      // depois de criar o user...
+      const BASE_URL =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        (typeof window !== "undefined" ? window.location.origin : "https://pokemon-go-liga.vercel.app");
 
-      await sendEmailVerification(user, {
-        url: `${baseUrl}/verify?continueUrlEmail=${encodeURIComponent(email)}`,
-        handleCodeInApp: true, // usa sua rota /verify
-      });
+      try {
+        await sendEmailVerification(user, {
+          url: `${BASE_URL}/verify`,   // sua rota client-side
+          handleCodeInApp: true,       // usa a sua página /verify
+        });
+      } catch (e: any) {
+        // fallback esperto + mensagem clara
+        const code = e?.code || "";
+        if (code === "auth/invalid-continue-uri" || code === "auth/invalid-dynamic-link-domain") {
+          // volta pra página padrão do Firebase, só pra não travar o usuário
+          await sendEmailVerification(user, {
+            url: `${BASE_URL}/login?verified=1`,
+            handleCodeInApp: false,
+          });
+        } else {
+          throw e;
+        }
+      }
 
       setMensagemInfo(
         `Enviamos um e-mail de verificação para ${email}. Abra a mensagem e confirme seu cadastro. ` +
