@@ -72,8 +72,12 @@ export default function CadastroPage() {
 
     setLoading(true);
     try {
-      // 1) cria usuário no Auth
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), senha);
+      // 1) cria usuário no Auth (o Firebase vai autenticar automaticamente aqui)
+      const cred = await createUserWithEmailAndPassword(
+        auth,
+        email.trim(),
+        senha
+      );
       const user = cred.user;
 
       // 2) grava registro privado
@@ -85,7 +89,7 @@ export default function CadastroPage() {
             email: email.trim(),
             friend_code: friendCode.replace(/\s/g, ""),
             createdAt: serverTimestamp(),
-            createdAtMs: Date.now(), // ajuda no admin "há quanto tempo"
+            createdAtMs: Date.now(),
             consentimentos: {
               versao: "v1-2025-11-24",
               dadosSensiveisEmail: true,
@@ -98,68 +102,45 @@ export default function CadastroPage() {
           { merge: true }
         );
       } catch (w) {
-        // não bloqueia o fluxo, mas avisa
         console.warn("Falha ao gravar usuarios_private:", w);
       }
 
-      // 3) envia e-mail de verificação
-      const BASE_URL =
-        process.env.NEXT_PUBLIC_APP_URL || "https://pokemon-go-liga.vercel.app";
-
+      // 3) envia e-mail de verificação (sem redirecionamento customizado)
       try {
-        // caminho principal: usa página padrão do Firebase e volta para /login
-        await sendEmailVerification(user, {
-          url: `${BASE_URL}/login?verify=1`,
-          handleCodeInApp: false,
-        });
+        await sendEmailVerification(user);
       } catch (e: any) {
-        // fallback quando domínio de retorno não está autorizado ou similar
         const code = e?.code || "";
-        if (
-          code === "auth/unauthorized-continue-uri" ||
-          code === "auth/invalid-continue-uri" ||
-          code === "auth/invalid-dynamic-link-domain"
-        ) {
-          try {
-            await sendEmailVerification(user, {
-              url: `${BASE_URL}/verify`,
-              handleCodeInApp: true, // usa sua rota /verify
-            });
-          } catch (e2: any) {
-            console.error("Falha no fallback de verificação:", e2?.code, e2?.message);
-            setMensagemErro(
-              "Não consegui enviar o e-mail de verificação (verifique Domínios Autorizados no Firebase Auth)."
-            );
-            // encerra aqui sem sair do auth para não travar o usuário num estado estranho
-            setLoading(false);
-            return;
-          }
-        } else if (code === "auth/too-many-requests") {
-          setMensagemErro("Muitas tentativas de verificação. Tente novamente mais tarde.");
-          setLoading(false);
-          return;
+        if (code === "auth/too-many-requests") {
+          setMensagemErro(
+            "Muitas tentativas de verificação. Tente novamente mais tarde."
+          );
         } else if (code === "auth/network-request-failed") {
-          setMensagemErro("Falha de rede ao enviar o e-mail. Verifique sua conexão.");
-          setLoading(false);
-          return;
+          setMensagemErro(
+            "Falha de rede ao enviar o e-mail. Verifique sua conexão."
+          );
         } else {
-          console.error("sendEmailVerification erro:", e?.code, e?.message);
-          setMensagemErro("Falha ao enviar o e-mail de verificação.");
-          setLoading(false);
-          return;
+          console.error("sendEmailVerification erro:", code, e?.message);
+          setMensagemErro(
+            "Falha ao enviar o e-mail de verificação. Tente novamente."
+          );
         }
+        setLoading(false);
+        return;
       }
 
-      // 4) mensagem + força logout + redireciona para login com aviso
+      // 4) mensagem e FORÇA logout antes de qualquer navegação
       setMensagemInfo(
         `Enviamos um e-mail de verificação para ${email}. Confirme para poder acessar. ` +
           `Confira também a caixa de SPAM.`
       );
 
+      // aqui garantimos que ele NÃO fica logado na app
       await signOut(auth);
-      setTimeout(() => {
-        router.replace(`/login?verify=1&email=${encodeURIComponent(email.trim())}`);
-      }, 2200);
+
+      // manda para a tela de login com um flagzinho pra você mostrar aviso lá
+      router.replace(
+        `/login?verify=1&email=${encodeURIComponent(email.trim())}`
+      );
     } catch (err) {
       setMensagemErro(mapSignupError(err));
       console.error(err);
@@ -235,8 +216,8 @@ export default function CadastroPage() {
           required
         />
         <span>
-          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a conta pode ser{" "}
-          <b>excluída</b> em caso de fraude.
+          Declaro que meu <b>Friend Code</b> é verdadeiro e compreendo que a
+          conta pode ser <b>excluída</b> em caso de fraude.
         </span>
       </label>
 
@@ -249,15 +230,18 @@ export default function CadastroPage() {
           required
         />
         <span>
-          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para autenticação, comunicação da
-          plataforma e segurança, conforme a Política de Privacidade.
+          Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para
+          autenticação, comunicação da plataforma e segurança, conforme a
+          Política de Privacidade.
         </span>
       </label>
 
       <button
         type="submit"
         disabled={loading}
-        className={`w-full text-white p-2 rounded ${loading ? "bg-yellow-400" : "bg-yellow-500 hover:bg-yellow-600"}`}
+        className={`w-full text-white p-2 rounded ${
+          loading ? "bg-yellow-400" : "bg-yellow-500 hover:bg-yellow-600"
+        }`}
       >
         {loading ? "Enviando..." : "Cadastrar"}
       </button>
