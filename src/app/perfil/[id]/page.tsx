@@ -815,9 +815,13 @@ export default function PerfilPage() {
   }
 
   async function declareResultadoVenci() {
+    const ok = window.confirm("Você confirma que venceu esta batalha?");
+    if (!ok) return;
     await declareResultado(souLiderNoChat ? 'lider' : 'desafiante');
   }
   async function declareResultadoFuiDerrotado() {
+    const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
+    if (!ok) return;
     await declareResultado(souLiderNoChat ? 'desafiante' : 'lider');
   }
 
@@ -1311,6 +1315,71 @@ export default function PerfilPage() {
         </div>
       )}
 
+      {/* INSÍGNIAS */}
+      <div className="bg-white p-4 rounded shadow">
+        <h2 className="text-lg font-semibold mb-3">Insígnias</h2>
+
+        {temporadaSelecionada ? (
+          insigniasFiltradasTemporada.length === 0 ? (
+            <p className="text-sm text-gray-500">Nenhuma insígnia nesta temporada.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {insigniasFiltradasTemporada
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+                .map((ins) => (
+                  <InsigniaCard
+                    key={ins.id}
+                    ins={ins}
+                    TYPE_ICONS={TYPE_ICONS}
+                    liderNomes={liderNomes}
+                    temporadasMap={temporadasMap}
+                    formatDate={formatDate}
+                  />
+                ))}
+            </div>
+          )
+        ) : (
+          <>
+            {gruposPorTemporada.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                Nenhuma insígnia conquistada ainda.
+              </p>
+            ) : (
+              <div className="space-y-5">
+                {gruposPorTemporada.map(([tempId, arr]) => {
+                  const titulo =
+                    tempId === '__sem_temporada__'
+                      ? 'Sem temporada'
+                      : temporadasMap[tempId]?.nome ||
+                      arr[0]?.temporada_nome ||
+                      tempId;
+
+                  return (
+                    <div key={tempId}>
+                      <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                        {titulo}
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {arr.map((ins) => (
+                          <InsigniaCard
+                            key={ins.id}
+                            ins={ins}
+                            TYPE_ICONS={TYPE_ICONS}
+                            liderNomes={liderNomes}
+                            temporadasMap={temporadasMap}
+                            formatDate={formatDate}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* Disputas que participa */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">Disputas que participa</h2>
@@ -1396,71 +1465,6 @@ export default function PerfilPage() {
               </li>
             ))}
           </ul>
-        )}
-      </div>
-
-      {/* INSÍGNIAS */}
-      <div className="bg-white p-4 rounded shadow">
-        <h2 className="text-lg font-semibold mb-3">Insígnias</h2>
-
-        {temporadaSelecionada ? (
-          insigniasFiltradasTemporada.length === 0 ? (
-            <p className="text-sm text-gray-500">Nenhuma insígnia nesta temporada.</p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {insigniasFiltradasTemporada
-                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-                .map((ins) => (
-                  <InsigniaCard
-                    key={ins.id}
-                    ins={ins}
-                    TYPE_ICONS={TYPE_ICONS}
-                    liderNomes={liderNomes}
-                    temporadasMap={temporadasMap}
-                    formatDate={formatDate}
-                  />
-                ))}
-            </div>
-          )
-        ) : (
-          <>
-            {gruposPorTemporada.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                Nenhuma insígnia conquistada ainda.
-              </p>
-            ) : (
-              <div className="space-y-5">
-                {gruposPorTemporada.map(([tempId, arr]) => {
-                  const titulo =
-                    tempId === '__sem_temporada__'
-                      ? 'Sem temporada'
-                      : temporadasMap[tempId]?.nome ||
-                      arr[0]?.temporada_nome ||
-                      tempId;
-
-                  return (
-                    <div key={tempId}>
-                      <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                        {titulo}
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {arr.map((ins) => (
-                          <InsigniaCard
-                            key={ins.id}
-                            ins={ins}
-                            TYPE_ICONS={TYPE_ICONS}
-                            liderNomes={liderNomes}
-                            temporadasMap={temporadasMap}
-                            formatDate={formatDate}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
         )}
       </div>
 

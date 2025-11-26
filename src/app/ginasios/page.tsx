@@ -729,10 +729,17 @@ export default function GinasiosPage() {
   }
 
   async function declareResultadoVenci() {
-    await declareResultado(souLiderNoChat ? 'lider' : 'desafiante');
+    const ok = window.confirm("Você confirma que venceu esta batalha?");
+    if (!ok) return;
+
+    await declareResultado(souLiderNoChat ? "lider" : "desafiante");
   }
+
   async function declareResultadoFuiDerrotado() {
-    await declareResultado(souLiderNoChat ? 'desafiante' : 'lider');
+    const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
+    if (!ok) return;
+
+    await declareResultado(souLiderNoChat ? "desafiante" : "lider");
   }
 
   async function declareResultado(vencedor: 'lider' | 'desafiante') {
@@ -932,8 +939,8 @@ export default function GinasiosPage() {
         const equipeDesafianteSelecionado =
           desafioSelecionado && desafioSelecionado.liga
             ? equipesUsuariosLiga[
-                `${desafioSelecionado.desafiante_uid}::${desafioSelecionado.liga}`
-              ] || []
+            `${desafioSelecionado.desafiante_uid}::${desafioSelecionado.liga}`
+            ] || []
             : [];
 
         return (
@@ -1268,11 +1275,10 @@ export default function GinasiosPage() {
                     return (
                       <div
                         key={m.id}
-                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${
-                          mine
+                        className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
                             ? 'self-end bg-blue-600 text-white'
                             : 'self-start bg-white border'
-                        }`}
+                          }`}
                       >
                         <p>{m.text}</p>
                       </div>

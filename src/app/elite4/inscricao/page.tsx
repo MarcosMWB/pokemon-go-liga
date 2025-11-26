@@ -18,8 +18,22 @@ import {
 } from "firebase/firestore";
 
 type Liga = { id: string; nome: string };
-type Ginasio = { id: string; nome: string; liga?: string; lider_uid?: string };
-type Campeonato = { id: string; liga: string; status: "aberto" | "fechado"; createdAt: number };
+
+type Ginasio = {
+  id: string;
+  nome: string;
+  liga?: string;
+  lider_uid?: string;
+  tipo?: string; // tipo do ginásio (Fogo, Água, etc.)
+};
+
+type Campeonato = {
+  id: string;
+  liga: string;
+  status: "aberto" | "fechado";
+  createdAt: number;
+};
+
 type Participacao = {
   id: string;
   campeonato_id: string;
@@ -27,9 +41,8 @@ type Participacao = {
   ginasio_id: string;
   pontos: number;
   createdAt: number;
-  ginasio_nome: string;
+  ginasio_nome: string; // "Nome - Tipo"
 };
-
 
 function toMillis(v: any): number {
   if (!v) return 0;
@@ -48,7 +61,9 @@ export default function Elite4InscricaoPage() {
   const [uid, setUid] = useState<string | null>(null);
   const [, setLigas] = useState<Liga[]>([]);
   const [meusGinasios, setMeusGinasios] = useState<Ginasio[]>([]);
-  const [abertosPorLiga, setAbertosPorLiga] = useState<Record<string, Campeonato | null>>({});
+  const [abertosPorLiga, setAbertosPorLiga] = useState<
+    Record<string, Campeonato | null>
+  >({});
   const [minhasInscricoes, setMinhasInscricoes] = useState<Participacao[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
@@ -89,6 +104,7 @@ export default function Elite4InscricaoPage() {
           nome: data.nome || d.id,
           liga: data.liga || "",
           lider_uid: data.lider_uid || "",
+          tipo: data.tipo || "",
         };
       });
       setMeusGinasios(list);
@@ -104,7 +120,9 @@ export default function Elite4InscricaoPage() {
     }
     let cancel = false;
     (async () => {
-      const ligasSet = Array.from(new Set(meusGinasios.map((g) => g.liga || "").filter(Boolean)));
+      const ligasSet = Array.from(
+        new Set(meusGinasios.map((g) => g.liga || "").filter(Boolean))
+      );
       const out: Record<string, Campeonato | null> = {};
       // busca 1 por liga (o mais recente aberto)
       for (const ln of ligasSet) {
@@ -124,7 +142,6 @@ export default function Elite4InscricaoPage() {
             status: d.status,
             createdAt: toMillis(d.createdAt),
           };
-
         } else {
           out[ln] = null;
         }
@@ -136,10 +153,9 @@ export default function Elite4InscricaoPage() {
     };
   }, [meusGinasios]);
 
-  // Minhas inscrições ativas (em qq campeonato aberto)
+  // Minhas inscrições ativas (em campeonatos abertos)
   useEffect(() => {
     if (!uid) return;
-    // ouvimos todas as participações do usuário; filtramos por campeonatos abertos depois
     const qP = query(
       collection(db, "campeonatos_elite4_participantes"),
       where("usuario_uid", "==", uid)
@@ -155,23 +171,30 @@ export default function Elite4InscricaoPage() {
           // campeonato (com cache)
           let cData = campeonatosCache.get(x.campeonato_id);
           if (!cData) {
-            const cDoc = await getDoc(doc(db, "campeonatos_elite4", x.campeonato_id));
+            const cDoc = await getDoc(
+              doc(db, "campeonatos_elite4", x.campeonato_id)
+            );
             if (!cDoc.exists()) return null;
             cData = cDoc.data();
             campeonatosCache.set(x.campeonato_id, cData);
           }
           if (cData.status !== "aberto") return null;
 
-          // nome do ginásio (com cache)
+          // nome + tipo do ginásio (com cache)
           const cached = ginasiosCache.get(x.ginasio_id);
           let gName: string;
           if (cached) {
             gName = cached;
           } else {
             const gDoc = await getDoc(doc(db, "ginasios", x.ginasio_id));
-            gName = gDoc.exists()
-              ? ((gDoc.data() as any).nome || x.ginasio_id)
-              : x.ginasio_id;
+            if (gDoc.exists()) {
+              const gd = gDoc.data() as any;
+              const nome = gd.nome || x.ginasio_id;
+              const tipo = gd.tipo as string | undefined;
+              gName = tipo ? `${nome} - ${tipo}` : nome;
+            } else {
+              gName = x.ginasio_id;
+            }
             ginasiosCache.set(x.ginasio_id, gName);
           }
 
@@ -182,7 +205,7 @@ export default function Elite4InscricaoPage() {
             ginasio_id: x.ginasio_id,
             pontos: x.pontos ?? 0,
             createdAt: x.createdAt ? toMillis(x.createdAt) : 0,
-            ginasio_nome: gName, // agora sempre string
+            ginasio_nome: gName,
           } as Participacao;
         })
       );
@@ -193,13 +216,13 @@ export default function Elite4InscricaoPage() {
     return () => unsub();
   }, [uid]);
 
-  // Mapas auxiliares
+  // Mapas auxiliares – inscrição por liga
   const inscricaoPorLiga = useMemo(() => {
-    // Precisamos saber se já tenho inscrição na liga X (via campeonato aberto da liga X)
     const map: Record<string, Participacao | undefined> = {};
     for (const p of minhasInscricoes) {
-      // buscamos a liga do campeonato via abertosPorLiga (reverso)
-      const ligaMatch = Object.entries(abertosPorLiga).find(([, c]) => c?.id === p.campeonato_id);
+      const ligaMatch = Object.entries(abertosPorLiga).find(
+        ([, c]) => c?.id === p.campeonato_id
+      );
       if (ligaMatch) map[ligaMatch[0]] = p;
     }
     return map;
@@ -235,7 +258,11 @@ export default function Elite4InscricaoPage() {
       createdAt: Date.now(),
     });
 
-    setMsg(`Inscrição feita na liga ${liga} usando o ginásio "${g.nome}".`);
+    setMsg(
+      `Inscrição feita na liga ${liga} usando o ginásio "${g.nome}${
+        g.tipo ? ` - ${g.tipo}` : ""
+      }".`
+    );
   }
 
   async function trocarGinasio(ligaNome: string, novo: Ginasio) {
@@ -243,11 +270,31 @@ export default function Elite4InscricaoPage() {
     const atual = inscricaoPorLiga[ligaNome];
     if (!atual) return;
     if (atual.ginasio_id === novo.id) return;
+
+    const nomeAtual = atual.ginasio_nome || atual.ginasio_id;
+    const nomeNovo = `${novo.nome}${novo.tipo ? ` - ${novo.tipo}` : ""}`;
+
+    const ok = window.confirm(
+      `Confirmar troca do ginásio representado na liga ${ligaNome}?\n\n` +
+        `Atual: ${nomeAtual}\n` +
+        `Novo: ${nomeNovo}\n\n` +
+        `Se confirmar, seus pontos neste campeonato serão zerados.`
+    );
+    if (!ok) return;
+
     setMsg("");
-    await updateDoc(doc(db, "campeonatos_elite4_participantes", atual.id), {
-      ginasio_id: novo.id,
-    });
-    setMsg(`Atualizado: agora você representa o ginásio "${novo.nome}" na liga ${ligaNome}.`);
+
+    await updateDoc(
+      doc(db, "campeonatos_elite4_participantes", atual.id),
+      {
+        ginasio_id: novo.id,
+        pontos: 0, // reseta os pontos ao trocar de ginásio
+      }
+    );
+
+    setMsg(
+      `Atualizado: agora você representa o ginásio "${nomeNovo}" na liga ${ligaNome}. Pontos deste campeonato foram zerados.`
+    );
   }
 
   if (!uid || loading) return <p className="p-6">Carregando…</p>;
@@ -262,19 +309,22 @@ export default function Elite4InscricaoPage() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify_between">
         <div>
-          <h1 className="text-2xl font-bold">Campeonato Elite 4 — Inscrição do Líder</h1>
+          <h1 className="text-2xl font-bold">
+            Campeonato Elite 4 — Inscrição do Líder
+          </h1>
           <p className="text-sm text-gray-500">
-            Inscreva-se no campeonato **aberto** da sua liga. 1 inscrição por liga.
+            Inscreva-se no campeonato aberto da sua liga. 1 inscrição por liga.
           </p>
         </div>
-        <button onClick={() => router.push("/")} className="text-sm text-blue-600 underline">
-          Voltar
-        </button>
       </div>
 
-      {msg && <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm">{msg}</div>}
+      {msg && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm">
+          {msg}
+        </div>
+      )}
 
       {Object.keys(gByLiga).length === 0 ? (
         <div className="p-4 bg-white rounded shadow">
@@ -287,7 +337,10 @@ export default function Elite4InscricaoPage() {
           const camp = abertosPorLiga[ligaNome];
           const inscricao = inscricaoPorLiga[ligaNome];
           return (
-            <div key={ligaNome} className="bg-white p-4 rounded shadow space-y-3">
+            <div
+              key={ligaNome}
+              className="bg-white p-4 rounded shadow space-y-3"
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold">{ligaNome}</h2>
@@ -297,7 +350,9 @@ export default function Elite4InscricaoPage() {
                 </div>
                 {camp && (
                   <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                    {camp.createdAt ? new Date(camp.createdAt).toLocaleString() : "—"}
+                    {camp.createdAt
+                      ? new Date(camp.createdAt).toLocaleString()
+                      : "—"}
                   </span>
                 )}
               </div>
@@ -312,12 +367,17 @@ export default function Elite4InscricaoPage() {
                       className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border rounded px-3 py-2"
                     >
                       <div>
-                        <p className="text-sm font-medium">{g.nome}</p>
+                        <p className="text-sm font-medium">
+                          {g.nome}
+                          {g.tipo ? ` - ${g.tipo}` : ""}
+                        </p>
                         <p className="text-xs text-gray-500">ID: {g.id}</p>
                       </div>
 
                       {!camp ? (
-                        <span className="text-xs text-gray-500">Aguardando abertura do campeonato…</span>
+                        <span className="text-xs text-gray-500">
+                          Aguardando abertura do campeonato…
+                        </span>
                       ) : jaInscritoNesteCamp ? (
                         <div className="flex flex-wrap items-center gap-2">
                           {representandoEste ? (
@@ -334,7 +394,9 @@ export default function Elite4InscricaoPage() {
                           )}
                           <a
                             className="text-xs text-blue-600 underline"
-                            href={`/elite4/placar?liga=${encodeURIComponent(ligaNome)}`}
+                            href={`/elite4/placar?liga=${encodeURIComponent(
+                              ligaNome
+                            )}`}
                           >
                             Ver placar
                           </a>
@@ -358,12 +420,17 @@ export default function Elite4InscricaoPage() {
 
       {minhasInscricoes.length > 0 && (
         <div className="bg-white p-4 rounded shadow">
-          <h3 className="text-lg font-semibold mb-2">Minhas inscrições ativas</h3>
+          <h3 className="text-lg font-semibold mb-2">
+            Minhas inscrições ativas
+          </h3>
           <ul className="space-y-2">
             {minhasInscricoes.map((p) => (
-              <li key={p.id} className="text-sm bg-gray-50 border rounded px-3 py-2">
-                Campeonato: {p.campeonato_id} · Ginásio: {p.ginasio_nome || p.ginasio_id} · Pontos:{" "}
-                {p.pontos ?? 0}
+              <li
+                key={p.id}
+                className="text-sm bg-gray-50 border rounded px-3 py-2"
+              >
+                Campeonato: {p.campeonato_id} · Ginásio: {p.ginasio_nome} ·
+                Pontos: {p.pontos ?? 0}
               </li>
             ))}
           </ul>
