@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { db, auth } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { collection, getDocs, orderBy, query } from "firebase/firestore";
 import { FiltroUsuarios } from "./FiltroUsuarios";
-import { User } from "firebase/auth";
 
 type UsuarioLista = {
   id: string;
@@ -16,13 +15,8 @@ export default function JogadoresPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
-      if (!current) {
-        setUsuarios([]);
-        setLoading(false);
-        return;
-      }
-
+    const carregar = async () => {
+      setLoading(true);
       try {
         const q = query(collection(db, "usuarios"), orderBy("nome", "asc"));
         const snap = await getDocs(q);
@@ -32,7 +26,6 @@ export default function JogadoresPage() {
           const data = docu.data() as any;
           list.push({
             id: docu.id,
-            // aqui eu GARANTO que é string
             nome: typeof data.nome === "string" ? data.nome : "(sem nome)",
           });
         });
@@ -44,9 +37,9 @@ export default function JogadoresPage() {
       } finally {
         setLoading(false);
       }
-    });
+    };
 
-    return () => unsub();
+    carregar();
   }, []);
 
   return (
