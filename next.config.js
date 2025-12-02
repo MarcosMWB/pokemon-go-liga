@@ -2,14 +2,13 @@
 const nextConfig = {
   images: {
     remotePatterns: [
-      // Ícones/imagens servidas direto do GitHub (raw)
-      // loja
+      // GitHub raw (loja)
       {
         protocol: 'https',
         hostname: 'raw.githubusercontent.com',
         pathname: '/MarcosMWB/StoreImage/main/**',
       },
-      // sprites da PokeAPI
+      // PokeAPI sprites
       {
         protocol: 'https',
         hostname: 'raw.githubusercontent.com',
@@ -19,13 +18,17 @@ const nextConfig = {
       {
         protocol: 'https',
         hostname: 'api.qrserver.com',
+        pathname: '/**',
       },
-      // (opcional) outro gerador que você usar no futuro
-      // {
-      //   protocol: 'https',
-      //   hostname: 'quickchart.io',
-      // },
+      // Firebase Storage (insígnias, etc.)
+      {
+        protocol: 'https',
+        hostname: 'firebasestorage.googleapis.com',
+        pathname: '/v0/b/**',
+      },
     ],
+    // se algum ícone for SVG remoto e você usar <Image /> para SVG:
+    // dangerouslyAllowSVG: true,
   },
 };
 

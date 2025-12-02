@@ -20,10 +20,14 @@ import {
   orderBy,
   query,
   serverTimestamp,
-  updateDoc,
   where,
   Unsubscribe,
 } from "firebase/firestore";
+import {
+  setResultadoEFecharSePossivel,
+  type Role,
+  type Vencedor,
+} from "@/lib/desafiosService";
 
 /** ----------------- Tipos ----------------- */
 type Ginasio = {
@@ -839,27 +843,6 @@ export default function GinasioOverviewPage() {
     return base;
   }, [ginasio, disputaAberta?.status]);
 
-  /** --------- Ações --------- */
-  async function encerrarLideratoSeAberto(ginasioId: string, liderUid: string) {
-    try {
-      const qAberto = query(
-        collection(db, "ginasios_liderancas"),
-        where("ginasio_id", "==", ginasioId),
-        where("lider_uid", "==", liderUid)
-      );
-      const snap = await getDocs(qAberto);
-      const pendentes = snap.docs.filter((d) => {
-        const x = d.data() as any;
-        return x.fim === null || x.fim === undefined;
-      });
-      await Promise.all(
-        pendentes.map((d) => updateDoc(doc(db, "ginasios_liderancas", d.id), { fim: Date.now() }))
-      );
-    } catch (e) {
-      console.warn("Falha ao encerrar líderato aberto", e);
-    }
-  }
-
   async function handleDesafiar() {
     if (!uid || !ginasio || !ginasio.lider_uid) return;
 
@@ -981,23 +964,54 @@ export default function GinasioOverviewPage() {
   }
 
   async function declareResultadoVenci() {
-    await declareResultado(souLiderNoChat ? "lider" : "desafiante");
-  }
-  async function declareResultadoFuiDerrotado() {
-    await declareResultado(souLiderNoChat ? "desafiante" : "lider");
-  }
-
-  async function declareResultado(vencedor: "lider" | "desafiante") {
     if (!uid || !chatDesafioId) return;
-    const ref = doc(db, "desafios_ginasio", chatDesafioId);
-    const dSnap = await getDoc(ref);
-    if (!dSnap.exists()) return;
-    const d = dSnap.data() as any;
+    const ok = window.confirm("Você confirma que venceu esta batalha?");
+    if (!ok) return;
 
-    const souLider = d.lider_uid === uid;
-    const campo = souLider ? "resultado_lider" : "resultado_desafiante";
-    await updateDoc(ref, { [campo]: vencedor });
-    await tentarFinalizarDesafio(ref);
+    const role: Role = souLiderNoChat ? "lider" : "desafiante";
+    const vencedor: Vencedor = souLiderNoChat ? "lider" : "desafiante";
+
+    try {
+      const res = await setResultadoEFecharSePossivel({
+        db,
+        desafioId: chatDesafioId,
+        role,
+        vencedor,
+        temporadaAtiva: temporada,
+      });
+      // O onSnapshot já fecha/limpa o chat quando status muda.
+      if (res.closed && res.status === "conflito") {
+        alert("Conflito declarado. A moderação foi notificada.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Falha ao declarar o resultado. Tente novamente.");
+    }
+  }
+
+  async function declareResultadoFuiDerrotado() {
+    if (!uid || !chatDesafioId) return;
+    const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
+    if (!ok) return;
+
+    const role: Role = souLiderNoChat ? "lider" : "desafiante";
+    const vencedor: Vencedor = souLiderNoChat ? "desafiante" : "lider";
+
+    try {
+      const res = await setResultadoEFecharSePossivel({
+        db,
+        desafioId: chatDesafioId,
+        role,
+        vencedor,
+        temporadaAtiva: temporada,
+      });
+      if (res.closed && res.status === "conflito") {
+        alert("Conflito declarado. A moderação foi notificada.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Falha ao declarar o resultado. Tente novamente.");
+    }
   }
 
   async function clearDesafioChat(desafioId: string) {
@@ -1005,93 +1019,6 @@ export default function GinasioOverviewPage() {
     await Promise.all(
       snap.docs.map((m) => deleteDoc(doc(db, "desafios_ginasio", desafioId, "mensagens", m.id)))
     );
-  }
-
-  async function tentarFinalizarDesafio(ref: any) {
-    const dSnap = await getDoc(ref);
-    const d = dSnap.data() as any;
-    const rl = d.resultado_lider;
-    const rd = d.resultado_desafiante;
-    if (!rl || !rd) return;
-
-    const gRef = doc(db, "ginasios", d.ginasio_id);
-    const gSnap = await getDoc(gRef);
-    const gData = gSnap.exists() ? (gSnap.data() as any) : null;
-
-    if (rl === rd) {
-      if (rl === "desafiante") {
-        await addDoc(collection(db, "insignias"), {
-          usuario_uid: d.desafiante_uid,
-          ginasio_id: d.ginasio_id,
-          ginasio_nome: gData?.nome || "",
-          ginasio_tipo: gData?.tipo || "",
-          lider_derrotado_uid: d.lider_uid,
-          insignia_icon: gData?.insignia_icon || "",
-          temporada_id: temporada?.id || "",
-          temporada_nome: temporada?.nome || "",
-          liga: gData?.liga || d.liga || "",
-          createdAt: Date.now(),
-        });
-
-        await addDoc(collection(db, "bloqueios_ginasio"), {
-          ginasio_id: d.ginasio_id,
-          desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
-        });
-
-        if (gSnap.exists()) {
-          let derrotas = gData?.derrotas_seguidas ?? 0;
-          derrotas += 1;
-          if (derrotas >= 3) {
-            await addDoc(collection(db, "disputas_ginasio"), {
-              ginasio_id: d.ginasio_id,
-              status: "inscricoes",
-              liga: gData?.liga || d.liga || "",
-              tipo_original: gData?.tipo || "",
-              lider_anterior_uid: gData?.lider_uid || "",
-              temporada_id: temporada?.id || "",
-              temporada_nome: temporada?.nome || "",
-              origem: "3_derrotas",
-              createdAt: Date.now(),
-            });
-
-            if (gData?.lider_uid) {
-              await encerrarLideratoSeAberto(d.ginasio_id, gData.lider_uid);
-            }
-
-            await updateDoc(gRef, {
-              lider_uid: "",
-              em_disputa: true,
-              derrotas_seguidas: 0,
-            });
-          } else {
-            await updateDoc(gRef, { derrotas_seguidas: derrotas });
-          }
-        }
-      } else {
-        await updateDoc(gRef, { derrotas_seguidas: 0 });
-        await addDoc(collection(db, "bloqueios_ginasio"), {
-          ginasio_id: d.ginasio_id,
-          desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 15 * 24 * 60 * 60 * 1000,
-        });
-      }
-
-      await updateDoc(ref, { status: "concluido" });
-      await clearDesafioChat(ref.id);
-      closeDesafioChat();
-    } else {
-      await updateDoc(ref, { status: "conflito" });
-      await addDoc(collection(db, "alertas_conflito"), {
-        desafio_id: ref.id,
-        ginasio_id: d.ginasio_id,
-        lider_uid: d.lider_uid,
-        desafiante_uid: d.desafiante_uid,
-        createdAt: Date.now(),
-      });
-      await clearDesafioChat(ref.id);
-      closeDesafioChat();
-    }
   }
 
   if (loading) return <p className="p-6">Carregando ginásio…</p>;

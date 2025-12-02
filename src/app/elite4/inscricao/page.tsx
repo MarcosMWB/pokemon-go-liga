@@ -5,8 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import {
-  addDoc,
+  setDoc,
   collection,
+  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -156,10 +157,7 @@ export default function Elite4InscricaoPage() {
   // Minhas inscrições ativas (em campeonatos abertos)
   useEffect(() => {
     if (!uid) return;
-    const qP = query(
-      collection(db, "campeonatos_elite4_participantes"),
-      where("usuario_uid", "==", uid)
-    );
+    const qP = query(collectionGroup(db, "participantes"), where("usuario_uid", "==", uid));
     const unsub = onSnapshot(qP, async (snap) => {
       const campeonatosCache = new Map<string, any>();
       const ginasiosCache = new Map<string, string>();
@@ -168,44 +166,50 @@ export default function Elite4InscricaoPage() {
         snap.docs.map(async (d) => {
           const x = d.data() as any;
 
-          // campeonato (com cache)
-          let cData = campeonatosCache.get(x.campeonato_id);
+          // campId do campo ou do pai
+          const campId: string | undefined = x.campeonato_id || d.ref.parent.parent?.id;
+          if (!campId) return null;
+
+          // campeonato em cache
+          let cData = campeonatosCache.get(campId);
           if (!cData) {
-            const cDoc = await getDoc(
-              doc(db, "campeonatos_elite4", x.campeonato_id)
-            );
+            const cDoc = await getDoc(doc(db, "campeonatos_elite4", campId));
             if (!cDoc.exists()) return null;
             cData = cDoc.data();
-            campeonatosCache.set(x.campeonato_id, cData);
+            campeonatosCache.set(campId, cData);
           }
           if (cData.status !== "aberto") return null;
 
-          // nome + tipo do ginásio (com cache)
-          const cached = ginasiosCache.get(x.ginasio_id);
+          // ginasio_id válido
+          const gId = String(x.ginasio_id || "");
+          if (!gId) return null;
+
+          // resolver nome do ginásio garantindo string
+          const cached = ginasiosCache.get(gId);
           let gName: string;
           if (cached) {
             gName = cached;
           } else {
-            const gDoc = await getDoc(doc(db, "ginasios", x.ginasio_id));
+            const gDoc = await getDoc(doc(db, "ginasios", gId));
             if (gDoc.exists()) {
               const gd = gDoc.data() as any;
-              const nome = gd.nome || x.ginasio_id;
+              const nome = gd.nome || gId;
               const tipo = gd.tipo as string | undefined;
               gName = tipo ? `${nome} - ${tipo}` : nome;
             } else {
-              gName = x.ginasio_id;
+              gName = gId;
             }
-            ginasiosCache.set(x.ginasio_id, gName);
+            ginasiosCache.set(gId, gName);
           }
 
           return {
-            id: d.id,
-            campeonato_id: x.campeonato_id,
+            id: d.id, // aqui será = uid
+            campeonato_id: campId,
             usuario_uid: x.usuario_uid,
-            ginasio_id: x.ginasio_id,
+            ginasio_id: gId,
             pontos: x.pontos ?? 0,
             createdAt: x.createdAt ? toMillis(x.createdAt) : 0,
-            ginasio_nome: gName,
+            ginasio_nome: gName, // agora é sempre string
           } as Participacao;
         })
       );
@@ -238,30 +242,25 @@ export default function Elite4InscricaoPage() {
       return;
     }
 
-    // impede duplicidade do mesmo usuário no mesmo campeonato
-    const qDup = query(
-      collection(db, "campeonatos_elite4_participantes"),
-      where("campeonato_id", "==", camp.id),
-      where("usuario_uid", "==", uid)
-    );
-    const dupSnap = await getDocs(qDup);
-    if (!dupSnap.empty) {
+    // doc único por usuário: campeonatos_elite4/{campId}/participantes/{uid}
+    const partRef = doc(db, "campeonatos_elite4", camp.id, "participantes", uid);
+    const partSnap = await getDoc(partRef);
+    if (partSnap.exists()) {
       setMsg("Você já está inscrito neste campeonato.");
       return;
     }
 
-    await addDoc(collection(db, "campeonatos_elite4_participantes"), {
-      campeonato_id: camp.id,
+    await setDoc(partRef, {
+      campeonato_id: camp.id,        // mantém campo para buscas
       usuario_uid: uid,
       ginasio_id: g.id,
+      liga,                          // grave a liga para passar nas regras de update
       pontos: 0,
       createdAt: Date.now(),
     });
 
     setMsg(
-      `Inscrição feita na liga ${liga} usando o ginásio "${g.nome}${
-        g.tipo ? ` - ${g.tipo}` : ""
-      }".`
+      `Inscrição feita na liga ${liga} usando o ginásio "${g.nome}${g.tipo ? ` - ${g.tipo}` : ""}".`
     );
   }
 
@@ -276,21 +275,19 @@ export default function Elite4InscricaoPage() {
 
     const ok = window.confirm(
       `Confirmar troca do ginásio representado na liga ${ligaNome}?\n\n` +
-        `Atual: ${nomeAtual}\n` +
-        `Novo: ${nomeNovo}\n\n` +
-        `Se confirmar, seus pontos neste campeonato serão zerados.`
+      `Atual: ${nomeAtual}\n` +
+      `Novo: ${nomeNovo}\n\n` +
+      `Se confirmar, seus pontos neste campeonato serão zerados.`
     );
     if (!ok) return;
 
     setMsg("");
 
-    await updateDoc(
-      doc(db, "campeonatos_elite4_participantes", atual.id),
-      {
-        ginasio_id: novo.id,
-        pontos: 0, // reseta os pontos ao trocar de ginásio
-      }
-    );
+    const ref = doc(db, "campeonatos_elite4", atual.campeonato_id, "participantes", uid);
+    await updateDoc(ref, {
+      ginasio_id: novo.id,
+      pontos: 0,
+    });
 
     setMsg(
       `Atualizado: agora você representa o ginásio "${nomeNovo}" na liga ${ligaNome}. Pontos deste campeonato foram zerados.`
@@ -309,7 +306,7 @@ export default function Elite4InscricaoPage() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify_between">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">
             Campeonato Elite 4 — Inscrição do Líder

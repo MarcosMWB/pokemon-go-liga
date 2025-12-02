@@ -1,18 +1,20 @@
 "use client";
 
-import type { User } from 'firebase/auth';
+import type { User } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   onSnapshot,
   orderBy,
   query,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -22,7 +24,7 @@ import {
 type Liga = { id: string; nome: string };
 type Campeonato = { id: string; liga: string; status: "aberto" | "fechado"; createdAt: number };
 type Participante = {
-  id: string;                // id do doc em campeonatos_elite4_participantes
+  id: string;                // id do doc em /campeonatos_elite4/{campId}/participantes/{id}  -> aqui é o UID do líder
   campeonato_id: string;
   usuario_uid: string;
   ginasio_id: string;
@@ -32,7 +34,7 @@ type Participante = {
   ginasio_tipo?: string;
 };
 type Elite4 = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string };
-type Ginasio = { id: string; nome: string; liga?: string; lider_uid?: string; tipo?: string; };
+type Ginasio = { id: string; nome: string; liga?: string; lider_uid?: string; tipo?: string };
 
 /** Página */
 export default function DevCampeonatoElite4() {
@@ -66,7 +68,6 @@ export default function DevCampeonatoElite4() {
       const snap = await getDocs(collection(db, "ligas"));
       const ls: Liga[] = snap.docs.map((d) => ({ id: d.id, nome: (d.data() as any).nome || d.id }));
       setLigas(ls);
-      // evita depender de ligaSel
       setLigaSel((prev) => prev || ls[0]?.nome || "");
     })();
   }, [isAdmin]);
@@ -102,20 +103,17 @@ export default function DevCampeonatoElite4() {
     return () => { unsubCamp(); unsubElite(); };
   }, [isAdmin, ligaSel]);
 
-  /** Participantes do campeonato aberto */
+  /** Participantes do campeonato aberto (SUBCOLEÇÃO) */
   useEffect(() => {
     if (!campeonato) return;
-    const qPart = query(
-      collection(db, "campeonatos_elite4_participantes"),
-      where("campeonato_id", "==", campeonato.id)
-    );
+    const qPart = collection(db, "campeonatos_elite4", campeonato.id, "participantes");
     const unsub = onSnapshot(qPart, async (snap) => {
       const base: Participante[] = [];
       for (const d of snap.docs) {
         const x = d.data() as any;
         const p: Participante = {
-          id: d.id,
-          campeonato_id: x.campeonato_id,
+          id: d.id, // aqui é normalmente o uid do líder
+          campeonato_id: campeonato.id,
           usuario_uid: x.usuario_uid,
           ginasio_id: x.ginasio_id,
           pontos: x.pontos ?? 0,
@@ -125,10 +123,17 @@ export default function DevCampeonatoElite4() {
         if (u.exists()) p.nome = (u.data() as any).nome || (u.data() as any).email || p.usuario_uid;
         // Nome do ginásio
         const g = await getDoc(doc(db, "ginasios", p.ginasio_id));
-        if (g.exists()) p.ginasio_nome = (g.data() as any).nome || p.ginasio_id; p.ginasio_tipo = (g.data() as any).tipo || "";
+        if (g.exists()) {
+          const gd = g.data() as any;
+          p.ginasio_nome = gd?.nome || p.ginasio_id;
+          p.ginasio_tipo = gd?.tipo || "";
+        } else {
+          p.ginasio_nome = p.ginasio_id;
+          p.ginasio_tipo = "";
+        }
         base.push(p);
       }
-      // compacta por líder (se por acaso liderar >1 ginásio, mantém a maior pontuação)
+      // compacta por líder (se alguém lidera >1 ginásio por engano, mantém maior pontuação)
       const byUid = new Map<string, Participante>();
       base.forEach((p) => {
         const old = byUid.get(p.usuario_uid);
@@ -139,7 +144,7 @@ export default function DevCampeonatoElite4() {
     return () => unsub();
   }, [campeonato]);
 
-  /** Funções */
+  /** Criar campeonato e carregar participantes a partir dos líderes atuais da liga */
   const criarCampeonato = async () => {
     if (!ligaSel) { setMsg("Selecione uma liga."); return; }
     setMsg(""); setSalvando(true);
@@ -152,20 +157,27 @@ export default function DevCampeonatoElite4() {
       });
 
       // coleta líderes atuais da liga (um por líder)
-      const gs = await getDocs(query(collection(db, "ginasios"), where("liga", "==", ligaSel), where("lider_uid", "!=", "")));
+      const gs = await getDocs(query(collection(db, "ginasios"), where("liga", "==", ligaSel), where("lider_uid", "not-in", ["", null])));
       const seen = new Set<string>();
       for (const g of gs.docs) {
         const d = g.data() as any;
         const uid = d.lider_uid as string;
         if (!uid || seen.has(uid)) continue; // 1 por líder
         seen.add(uid);
-        await addDoc(collection(db, "campeonatos_elite4_participantes"), {
-          campeonato_id: campRef.id,
-          usuario_uid: uid,
-          ginasio_id: g.id,
-          pontos: 0,
-          createdAt: Date.now(),
-        });
+
+        // Novo layout: subcoleção /participantes/{uid}
+        await setDoc(
+          doc(db, "campeonatos_elite4", campRef.id, "participantes", uid),
+          {
+            campeonato_id: campRef.id,
+            usuario_uid: uid,
+            ginasio_id: g.id,
+            liga: ligaSel,
+            pontos: 0,
+            createdAt: Date.now(),
+          },
+          { merge: true }
+        );
       }
       setMsg("Campeonato criado e participantes carregados.");
     } catch (e: any) {
@@ -175,16 +187,18 @@ export default function DevCampeonatoElite4() {
     }
   };
 
+  /** Editar pontuação manualmente */
   const atualizarPontos = async (p: Participante, novo: number) => {
     setMsg("");
-    await updateDoc(doc(db, "campeonatos_elite4_participantes", p.id), { pontos: novo });
+    if (!campeonato) return;
+    await updateDoc(doc(db, "campeonatos_elite4", campeonato.id, "participantes", p.id), { pontos: novo });
   };
 
+  /** Finalizar e promover top-4 para ELITE4 */
   const finalizarEPromover = async () => {
     if (!campeonato) { setMsg("Nenhum campeonato aberto."); return; }
     if (participantes.length < 4) { setMsg("Precisa de pelo menos 4 participantes."); return; }
 
-    // ordena por pontos (desc) e pega top-4
     const ordenados = [...participantes].sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0));
     const top4 = ordenados.slice(0, 4);
 
@@ -226,10 +240,10 @@ export default function DevCampeonatoElite4() {
           derrotas_seguidas: 0,
         });
 
-        // 3) Se havia antigo E4 nessa posição, REBAIXA para o ginásio que ficou vago
+        // 3) Se havia antigo E4 nessa posição, rebaixa para o ginásio do promovido
         if (demoted?.uid) {
           batch.update(doc(db, "ginasios", promoted.ginasio_id), {
-            lider_uid: demoted.uid,      // assume o ginásio do promovido
+            lider_uid: demoted.uid,
             em_disputa: false,
             derrotas_seguidas: 0,
           });
@@ -243,7 +257,14 @@ export default function DevCampeonatoElite4() {
       await addDoc(collection(db, "campeonatos_elite4_resultados"), {
         campeonato_id: campeonato.id,
         liga: ligaSel,
-        top4: top4.map((p, i) => ({ pos: i + 1, uid: p.usuario_uid, nome: p.nome || p.usuario_uid, ginasio_id: p.ginasio_id, ginasio_nome: p.ginasio_nome || p.ginasio_id, pontos: p.pontos })),
+        top4: top4.map((p, i) => ({
+          pos: i + 1,
+          uid: p.usuario_uid,
+          nome: p.nome || p.usuario_uid,
+          ginasio_id: p.ginasio_id,
+          ginasio_nome: p.ginasio_nome || p.ginasio_id,
+          pontos: p.pontos,
+        })),
         appliedAt: Date.now(),
       });
 
@@ -251,6 +272,52 @@ export default function DevCampeonatoElite4() {
       setMsg("Promoções aplicadas com sucesso.");
     } catch (e: any) {
       setMsg("Erro ao aplicar promoções: " + e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  /** MIGRAÇÃO opcional: copia docs da coleção antiga para a subcoleção nova */
+  const migrarParticipantesAntigos = async () => {
+    if (!confirm("Migrar TODOS os documentos de 'campeonatos_elite4_participantes' para subcoleções?")) return;
+    setSalvando(true); setMsg("");
+    try {
+      const oldCol = collection(db, "campeonatos_elite4_participantes");
+      const snap = await getDocs(oldCol);
+      let copiados = 0;
+
+      for (const d of snap.docs) {
+        const x = d.data() as any;
+        const campId = x.campeonato_id;
+        const uid = x.usuario_uid;
+        if (!campId || !uid) continue;
+
+        await setDoc(
+          doc(db, "campeonatos_elite4", campId, "participantes", uid),
+          {
+            campeonato_id: campId,
+            usuario_uid: uid,
+            ginasio_id: x.ginasio_id || "",
+            liga: x.liga || "",
+            pontos: x.pontos ?? 0,
+            createdAt: x.createdAt ?? Date.now(),
+            migratedFromFlat: true,
+          },
+          { merge: true }
+        );
+
+        copiados++;
+      }
+
+      if (confirm(`Copiados ${copiados}. Deseja APAGAR os documentos antigos agora?`)) {
+        for (const d of snap.docs) {
+          await deleteDoc(d.ref);
+        }
+      }
+
+      setMsg(`Migração concluída. Copiados: ${copiados}.`);
+    } catch (e: any) {
+      setMsg("Erro na migração: " + e.message);
     } finally {
       setSalvando(false);
     }
@@ -271,8 +338,7 @@ export default function DevCampeonatoElite4() {
         <div>
           <h1 className="text-2xl font-bold">Campeonato dos Líderes → ELITE 4</h1>
           <p className="text-sm text-gray-500">
-            Periodicamente, promova os 4 melhores líderes da liga selecionada para a ELITE 4.
-            Os antigos E4 (mesmas posições) assumem os ginásios dos promovidos.
+            Top-4 da liga selecionada sobe para a ELITE 4; antigos E4 assumem os ginásios dos promovidos.
           </p>
         </div>
         <button onClick={() => router.push("/dev")} className="text-sm text-blue-600 underline">Voltar ao painel</button>
@@ -295,13 +361,23 @@ export default function DevCampeonatoElite4() {
 
         <div className="ml-auto flex items-center gap-2">
           {!emAberto ? (
-            <button
-              onClick={criarCampeonato}
-              disabled={!ligaSel || salvando}
-              className="px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
-            >
-              Criar campeonato (carregar líderes)
-            </button>
+            <>
+              <button
+                onClick={criarCampeonato}
+                disabled={!ligaSel || salvando}
+                className="px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
+              >
+                Criar campeonato (carregar líderes)
+              </button>
+              <button
+                onClick={migrarParticipantesAntigos}
+                disabled={salvando}
+                className="px-3 py-2 rounded bg-amber-600 text-white text-sm disabled:opacity-50"
+                title="Copia da coleção antiga para a nova subcoleção; pode apagar os antigos ao final."
+              >
+                Migrar participantes (1 clique)
+              </button>
+            </>
           ) : (
             <>
               <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded">Campeonato ABERTO</span>
@@ -356,9 +432,7 @@ export default function DevCampeonatoElite4() {
                       <tr key={p.id} className="border-b">
                         <td className="py-2 pr-3">{p.nome || p.usuario_uid}</td>
                         <td className="py-2 pr-3">{p.ginasio_nome || p.ginasio_id}</td>
-                        <td className="py-2 pr-3">
-                          {p.ginasio_tipo || "—"}
-                        </td>
+                        <td className="py-2 pr-3">{p.ginasio_tipo || "—"}</td>
                         <td className="py-2 pr-3">
                           <input
                             type="number"

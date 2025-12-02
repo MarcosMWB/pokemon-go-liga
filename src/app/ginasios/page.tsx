@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { setResultadoEFecharSePossivel } from '@/lib/desafiosService';
 import { useRouter } from 'next/navigation';
 import { auth, db } from '@/lib/firebase';
 import {
@@ -731,114 +732,54 @@ export default function GinasiosPage() {
   async function declareResultadoVenci() {
     const ok = window.confirm("Você confirma que venceu esta batalha?");
     if (!ok) return;
-
     await declareResultado(souLiderNoChat ? "lider" : "desafiante");
   }
 
   async function declareResultadoFuiDerrotado() {
     const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
     if (!ok) return;
-
     await declareResultado(souLiderNoChat ? "desafiante" : "lider");
   }
 
-  async function declareResultado(vencedor: 'lider' | 'desafiante') {
+  async function declareResultado(vencedor: "lider" | "desafiante") {
     if (!userUid || !chatDesafioId) return;
-    const ref = doc(db, 'desafios_ginasio', chatDesafioId);
-    const dSnap = await getDoc(ref);
-    if (!dSnap.exists()) return;
-    const d = dSnap.data() as any;
 
-    const souLider = d.lider_uid === userUid;
-    const campo = souLider ? 'resultado_lider' : 'resultado_desafiante';
-    await updateDoc(ref, { [campo]: vencedor });
-    await tentarFinalizarDesafio(ref);
-  }
+    const res = await setResultadoEFecharSePossivel({
+      db,
+      desafioId: chatDesafioId,
+      role: souLiderNoChat ? "lider" : "desafiante",
+      vencedor,
+      temporada, // pode ser null; o service trata
+    });
 
-  async function tentarFinalizarDesafio(ref: any) {
-    const dSnap = await getDoc(ref);
-    const d = dSnap.data() as any;
-    const rl = d.resultado_lider;
-    const rd = d.resultado_desafiante;
-    if (!rl || !rd) return;
-
-    const gRef = doc(db, 'ginasios', d.ginasio_id);
-    const gSnap = await getDoc(gRef);
-    const gData = gSnap.exists() ? (gSnap.data() as any) : null;
-
-    if (rl === rd) {
-      if (rl === 'desafiante') {
-        await addDoc(collection(db, 'insignias'), {
-          usuario_uid: d.desafiante_uid,
-          ginasio_id: d.ginasio_id,
-          ginasio_nome: gData?.nome || '',
-          ginasio_tipo: gData?.tipo || '',
-          lider_derrotado_uid: d.lider_uid,
-          insignia_icon: gData?.insignia_icon || '',
-          temporada_id: temporada?.id || '',
-          temporada_nome: temporada?.nome || '',
-          liga: gData?.liga || d.liga || '',
-          createdAt: Date.now(),
-        });
-
-        await addDoc(collection(db, 'bloqueios_ginasio'), {
-          ginasio_id: d.ginasio_id,
-          desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
-        });
-
-        if (gSnap.exists()) {
-          let derrotas = gData?.derrotas_seguidas ?? 0;
-          derrotas += 1;
-          if (derrotas >= 3) {
-            await addDoc(collection(db, 'disputas_ginasio'), {
-              ginasio_id: d.ginasio_id,
-              status: 'inscricoes',
-              liga: gData?.liga || d.liga || '',
-              tipo_original: gData?.tipo || '',
-              lider_anterior_uid: gData?.lider_uid || '',
-              temporada_id: temporada?.id || '',
-              temporada_nome: temporada?.nome || '',
-              origem: '3_derrotas',
-              createdAt: Date.now(),
-            });
-
-            if (gData?.lider_uid) {
-              await encerrarLideratoSeAberto(d.ginasio_id, gData.lider_uid);
+    // Se fechou (conflito ou concluído), limpa e fecha o chat
+    if (res.closed) {
+      try {
+        // FECHA LIDERATO se o ginásio entrou em disputa por 3 derrotas
+        // (checamos estado atual do ginásio)
+        const dRef = doc(db, "desafios_ginasio", chatDesafioId);
+        const dSnap = await getDoc(dRef);
+        if (dSnap.exists()) {
+          const d = dSnap.data() as any;
+          const gRef = doc(db, "ginasios", d.ginasio_id);
+          const gSnap = await getDoc(gRef);
+          if (gSnap.exists()) {
+            const g = gSnap.data() as any;
+            if (g.em_disputa === true && !g.lider_uid && d.lider_uid) {
+              await encerrarLideratoSeAberto(d.ginasio_id, d.lider_uid);
             }
-
-            await updateDoc(gRef, {
-              lider_uid: '',
-              em_disputa: true,
-              derrotas_seguidas: 0,
-            });
-          } else {
-            await updateDoc(gRef, { derrotas_seguidas: derrotas });
           }
         }
-      } else {
-        await updateDoc(gRef, { derrotas_seguidas: 0 });
-        await addDoc(collection(db, 'bloqueios_ginasio'), {
-          ginasio_id: d.ginasio_id,
-          desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 15 * 24 * 60 * 1000,
-        });
+      } catch (e) {
+        console.warn("Falha ao verificar/encerrar líderato:", e);
       }
 
-      await updateDoc(ref, { status: 'concluido' });
-      await clearDesafioChat(ref.id);
+      await clearDesafioChat(chatDesafioId);
       closeDesafioChat();
-    } else {
-      await updateDoc(ref, { status: 'conflito' });
-      await addDoc(collection(db, 'alertas_conflito'), {
-        desafio_id: ref.id,
-        ginasio_id: d.ginasio_id,
-        lider_uid: d.lider_uid,
-        desafiante_uid: d.desafiante_uid,
-        createdAt: Date.now(),
-      });
-      await clearDesafioChat(ref.id);
-      closeDesafioChat();
+
+      if (res.status === "conflito") {
+        alert("Conflito: os resultados enviados são divergentes. O caso foi sinalizado.");
+      }
     }
   }
 
@@ -1276,8 +1217,8 @@ export default function GinasiosPage() {
                       <div
                         key={m.id}
                         className={`max-w-[85%] px-3 py-2 rounded text-xs ${mine
-                            ? 'self-end bg-blue-600 text-white'
-                            : 'self-start bg-white border'
+                          ? 'self-end bg-blue-600 text-white'
+                          : 'self-start bg-white border'
                           }`}
                       >
                         <p>{m.text}</p>
