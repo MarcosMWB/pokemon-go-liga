@@ -27,7 +27,7 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 import { TYPE_ICONS } from '@/utils/typeIcons';
-import { User } from 'firebase/auth';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 
 /* =======================
    Types
@@ -247,6 +247,9 @@ export default function PerfilPage() {
   const [chatOtherName, setChatOtherName] = useState('Treinador');
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
+  const [jaDeclarei, setJaDeclarei] = useState(false);
+  const [jaDeclareiMsg, setJaDeclareiMsg] = useState<string | null>(null);
+
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
@@ -282,16 +285,13 @@ export default function PerfilPage() {
   ======================= */
 
   useEffect(() => {
-    if (!ehMeuPerfil && tab === 'desafios') {
-      setTab('insig_hist');
-    }
-  }, [ehMeuPerfil, tab]);
+    setLogadoUid(auth.currentUser?.uid ?? null);
 
-  useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
-      if (current) setLogadoUid(current.uid);
+    const unsub = onAuthStateChanged(auth, (u: User | null) => {
+      setLogadoUid(u?.uid ?? null);
     });
-    return () => unsub();
+
+    return unsub;
   }, []);
 
   /* Ligas */
@@ -690,6 +690,13 @@ export default function PerfilPage() {
     return () => unsub();
   }, [perfilUid]);
 
+  useEffect(() => {
+    return () => {
+      chatUnsubRef.current?.();
+      desafioUnsubRef.current?.();
+    };
+  }, []);
+
   /* =======================
      Helpers / Derivations
   ======================= */
@@ -815,25 +822,44 @@ export default function PerfilPage() {
     setChatDesafioId(desafioId);
     setChatMsgs([]);
     setChatInput('');
+    // zera o aviso a cada abertura
+    setJaDeclarei(false);
+    setJaDeclareiMsg(null);
 
-    const dSnap = await getDoc(doc(db, 'desafios_ginasio', desafioId));
+    const dRef = doc(db, 'desafios_ginasio', desafioId);
+    const dSnap = await getDoc(dRef);
+
     if (dSnap.exists()) {
       const d = dSnap.data() as any;
-      const otherUid = d.lider_uid === logadoUid ? d.desafiante_uid : d.lider_uid;
-      setSouLiderNoChat(d.lider_uid === logadoUid);
 
+      const souLider = d.lider_uid === logadoUid;
+      setSouLiderNoChat(souLider);
+
+      const otherUid = souLider ? d.desafiante_uid : d.lider_uid;
+
+      // resolve nome/FC do outro
       let nome = 'Treinador';
       let fc: string | null = null;
-      const uSnap = await getDoc(doc(db, 'usuarios', otherUid));
-      if (uSnap.exists()) {
-        const ud = uSnap.data() as any;
-        nome = ud.nome || ud.email || nome;
-        fc = ud.friend_code || null;
-      }
+      try {
+        const uSnap = await getDoc(doc(db, 'usuarios', otherUid));
+        if (uSnap.exists()) {
+          const ud = uSnap.data() as any;
+          nome = ud.nome || ud.email || nome;
+          fc = ud.friend_code || null;
+        }
+      } catch { /* ignora erro */ }
       setChatOtherName(nome);
       setChatOtherFC(fc);
+
+      // verifica se EU já declarei resultado neste desafio
+      const meuCampo = souLider ? 'resultado_lider' : 'resultado_desafiante';
+      if (d[meuCampo]) {
+        setJaDeclarei(true);
+        setJaDeclareiMsg('Você já declarou um resultado para este desafio.');
+      }
     }
 
+    // mensagens em tempo real
     const msgsQ = query(
       collection(db, 'desafios_ginasio', desafioId, 'mensagens'),
       orderBy('createdAt', 'asc')
@@ -847,13 +873,26 @@ export default function PerfilPage() {
       );
     });
 
-    desafioUnsubRef.current = onSnapshot(doc(db, 'desafios_ginasio', desafioId), async (ds) => {
+    // doc do desafio em tempo real (fecha modal e atualiza flag "já declarei")
+    desafioUnsubRef.current = onSnapshot(dRef, async (ds) => {
       if (!ds.exists()) return;
       const dd = ds.data() as any;
+
       if (dd.status === 'concluido' || dd.status === 'conflito') {
         await clearDesafioChat(desafioId);
         closeDesafioChat();
+        return;
       }
+
+      // mantenha o papel ALWAYS atualizado (caso mude no doc)
+      const souLider = dd.lider_uid === logadoUid;
+      setSouLiderNoChat(souLider);
+
+      // compute e seta sem depender do valor anterior
+      const meuCampo = souLider ? 'resultado_lider' : 'resultado_desafiante';
+      const already = Boolean(dd[meuCampo]);
+      setJaDeclarei(already);
+      setJaDeclareiMsg(already ? 'Você já declarou um resultado para este desafio.' : null);
     });
   }
 
@@ -878,18 +917,26 @@ export default function PerfilPage() {
   }
 
   async function declareResultadoVenci() {
+    if (jaDeclarei) { setJaDeclareiMsg('Você já declarou um resultado para este desafio.'); return; }
+
     if (!logadoUid || !chatDesafioId) return;
     const vencedor: 'lider' | 'desafiante' = souLiderNoChat ? 'lider' : 'desafiante';
     await handleDeclaracao(vencedor);
   }
 
   async function declareResultadoFuiDerrotado() {
+    if (jaDeclarei) { setJaDeclareiMsg('Você já declarou um resultado para este desafio.'); return; }
+
     if (!logadoUid || !chatDesafioId) return;
     const vencedor: 'lider' | 'desafiante' = souLiderNoChat ? 'desafiante' : 'lider';
     await handleDeclaracao(vencedor);
   }
 
   async function handleDeclaracao(vencedor: 'lider' | 'desafiante') {
+    // trava localmente
+    setJaDeclarei(true);
+    setJaDeclareiMsg('Você já declarou um resultado para este desafio.');
+
     try {
       const role: 'lider' | 'desafiante' = souLiderNoChat ? 'lider' : 'desafiante';
       const res = await setResultadoEFecharSePossivel({
@@ -897,17 +944,21 @@ export default function PerfilPage() {
         desafioId: chatDesafioId!,
         role,
         vencedor,
-        temporadaAtiva, // { id, nome } já carregado na página
+        temporadaAtiva,
+        callerUid: logadoUid!,
       });
 
       if (res.closed) {
-        // opcional: limpar chat local
         await clearDesafioChat(chatDesafioId!);
         closeDesafioChat();
       }
+      // se o back-end rejeitar, o catch abaixo reverte o lock
     } catch (e) {
       console.error('Falha ao declarar resultado:', e);
       alert('Não foi possível declarar o resultado agora.');
+      // libera de novo se falhou
+      setJaDeclarei(false);
+      setJaDeclareiMsg(null);
     }
   }
 
@@ -1611,30 +1662,36 @@ export default function PerfilPage() {
                   Enviar
                 </button>
               </div>
+              {jaDeclarei && (
+                <div className="mt-2 rounded border border-amber-300 bg-amber-50 text-amber-800 text-sm px-3 py-2">
+                  {jaDeclareiMsg || 'Você já declarou um resultado para este desafio.'}
+                </div>
+              )}
 
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={declareResultadoVenci}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
-                  title="Você declara que VENCEU"
-                  type="button"
-                >
-                  🏆 Venci
-                </button>
-                <button
-                  onClick={declareResultadoFuiDerrotado}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
-                  title="Você declara que FOI DERROTADO"
-                  type="button"
-                >
-                  Fui derrotado
-                </button>
-              </div>
+              <button
+                onClick={declareResultadoVenci}
+                disabled={jaDeclarei}
+                className="w-full bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 text-white text-sm px-3 py-2 rounded"
+                type="button"
+              >
+                🏆 Venci
+              </button>
+
+              <button
+                onClick={declareResultadoFuiDerrotado}
+                disabled={jaDeclarei}
+                className="w-full bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 text-white text-sm px-3 py-2 rounded"
+                type="button"
+              >
+                Fui derrotado
+              </button>
+
             </div>
           </div>
         </div>
-      )}
-    </div>
+      )
+      }
+    </div >
   );
 }
 

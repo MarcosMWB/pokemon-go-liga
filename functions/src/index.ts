@@ -1,12 +1,106 @@
 // functions/src/index.ts
-import * as admin from "firebase-admin";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 
-admin.initializeApp();
-const db = admin.firestore();
+// se existir um arquivo desafios.ts que exporta a trigger, mantenha:
+export { onDesafioResultadosWrite } from "./desafios";
 
+import { admin, db, FieldValue } from "./adminSdk";
+
+export const onDesafioConcluido = onDocumentWritten(
+  {
+    document: "desafios_ginasio/{desafioId}",
+    region: "southamerica-east1",
+  },
+  async (event: any) => {
+    const before = event.data?.before?.data() as any | undefined;
+    const after  = event.data?.after?.data()  as any | undefined;
+    if (!after) return;
+
+    // só quando vira concluído
+    const ficouConcluido = (before?.status !== "concluido") && (after.status === "concluido");
+    if (!ficouConcluido) return;
+
+    // idempotência rápida
+    if (after.statsApplied === true) return;
+
+    const desafioId   = event.params?.desafioId as string;
+    const ginasioId   = after.ginasio_id as string | undefined;
+    const liga        = (after.liga as string) || "";
+    const liderUid    = after.lider_uid as string | undefined;
+    const desafiante  = after.desafiante_uid as string | undefined;
+    const vencedorTag = after.vencedor as ("lider" | "desafiante") | undefined;
+
+    if (!desafioId || !ginasioId || !liderUid || !desafiante || !vencedorTag) return;
+
+    const winnerUid = vencedorTag === "lider" ? liderUid : desafiante;
+    const loserUid  = vencedorTag === "lider" ? desafiante : liderUid;
+
+    await db.runTransaction(async (tx) => {
+      const desafioRef = db.doc(`desafios_ginasio/${desafioId}`);
+      const dSnap = await tx.get(desafioRef);
+      const dNow = dSnap.data() as any | undefined;
+      if (!dNow) return;
+      if (dNow.status !== "concluido") return;        // ainda garantimos
+      if (dNow.statsApplied === true) return;         // já processado
+
+      // 1) stats dos usuários
+      const winRef = db.doc(`usuarios/${winnerUid}`);
+      const losRef = db.doc(`usuarios/${loserUid}`);
+      tx.set(winRef, { statsVitorias: FieldValue.increment(1) }, { merge: true });
+      tx.set(losRef, { statsDerrotas: FieldValue.increment(1) }, { merge: true });
+
+      // 2) pontos do líder (só se o líder venceu e houver campeonato aberto na mesma liga)
+      if (vencedorTag === "lider" && liga) {
+        // campeonato aberto (o mais recente)
+        const qCamp = await db.collection("campeonatos_elite4")
+          .where("liga", "==", liga)
+          .where("status", "==", "aberto")
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get();
+
+        if (!qCamp.empty) {
+          const campId = qCamp.docs[0].id;
+          const partRef = db.doc(`campeonatos_elite4/${campId}/participantes/${liderUid}`);
+          const partSnap = await tx.get(partRef);
+
+          // evita duplicar: só aplica se este desafio ainda não foi registrado
+          const jaAplicado = partSnap.exists && partSnap.get("from_desafio") === desafioId;
+
+          if (!jaAplicado) {
+            if (!partSnap.exists) {
+              tx.set(partRef, {
+                campeonato_id: campId,
+                usuario_uid: liderUid,
+                ginasio_id: ginasioId,
+                liga,
+                pontos: 1,
+                from_desafio: desafioId,
+                createdAt: Date.now(),
+              }, { merge: true });
+            } else {
+              tx.update(partRef, {
+                pontos: FieldValue.increment(1),
+                from_desafio: desafioId,
+                updatedAt: Date.now(),
+              });
+            }
+          }
+        }
+      }
+
+      // 3) marca processado (idempotência)
+      tx.update(desafioRef, {
+        statsApplied: true,
+        statsAppliedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  }
+);
+
+// ---- CALLABLE: adminDeleteUser ------------------------------------------------
 export const adminDeleteUser = onCall(
   { region: "southamerica-east1" },
   async (req) => {
@@ -26,29 +120,20 @@ export const adminDeleteUser = onCall(
       throw new HttpsError("failed-precondition", "Não é permitido excluir a si mesmo.");
     }
 
-    // 1) Apaga do Auth (ignora se já não existir)
-    await admin.auth().deleteUser(targetUid).catch((e) => {
+    await admin.auth().deleteUser(targetUid).catch((e: any) => {
       if (e?.code !== "auth/user-not-found") throw e;
     });
 
-    // 2) Apaga Firestore: usuarios + usuarios_private (e opcionalmente superusers)
     const batch = db.batch();
     batch.delete(db.doc(`usuarios/${targetUid}`));
     batch.delete(db.doc(`usuarios_private/${targetUid}`));
-    // opcional: limpar também eventual marcação de superuser do alvo
-    // batch.delete(db.doc(`superusers/${targetUid}`));
     await batch.commit().catch(() => {});
-
-    // TODO (se houver): limpar subcoleções relacionadas ao usuário, se existirem
 
     return { ok: true };
   }
 );
 
-/**
- * TRIGGER DE FIRESTORE:
- * dispara em qualquer write em disputas_ginasio_resultados/{resultadoId}
- */
+// ---- TRIGGER: onResultadoWrite ------------------------------------------------
 export const onResultadoWrite = onDocumentWritten(
   {
     document: "disputas_ginasio_resultados/{resultadoId}",
@@ -64,33 +149,15 @@ export const onResultadoWrite = onDocumentWritten(
     const ginasioId = (after?.ginasio_id ?? before?.ginasio_id) as string | undefined;
     if (!disputaId || !ginasioId) return;
 
-    // Se a disputa já não está em andamento, resolva/oculte alerta e saia
     const disputaSnap = await db.doc(`disputas_ginasio/${disputaId}`).get();
     if (!disputaSnap.exists) {
       await db.doc(`admin_alertas/disputa_${disputaId}_ready`).set(
-        { status: "resolvido", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { status: "resolvido", updatedAt: FieldValue.serverTimestamp() },
         { merge: true }
       );
       return;
     }
 
-    /*const disputaSnap = await db.doc(`disputas_ginasio/${disputaId}`).get();
-    if (!disputaSnap.exists) return;
-    const disputa = disputaSnap.data() as any;
-    if (!["batalhando", "inscricoes"].includes((disputa.status || "").toString().trim().toLowerCase())) {
-      await db
-        .doc(`admin_alertas/disputa_${disputaId}_ready`)
-        .set(
-          {
-            status: "resolvido",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      return;
-    }*/
-
-    // Ainda existe algum resultado pendente nesta disputa?
     const pendenteSnap = await db
       .collection("disputas_ginasio_resultados")
       .where("disputa_id", "==", disputaId)
@@ -101,7 +168,6 @@ export const onResultadoWrite = onDocumentWritten(
     const alertRef = db.doc(`admin_alertas/disputa_${disputaId}_ready`);
 
     if (pendenteSnap.empty) {
-      // Disputa sem pendências → cria/atualiza alerta "pronta para encerrar"
       const gSnap = await db.doc(`ginasios/${ginasioId}`).get();
       const g = gSnap.exists ? (gSnap.data() as any) : {};
 
@@ -113,16 +179,15 @@ export const onResultadoWrite = onDocumentWritten(
           ginasio_nome: g?.nome || ginasioId,
           liga: g?.liga || g?.liga_nome || "",
           status: "novo",
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
     } else {
-      // Voltou a ter pendências → esconder/fechar alerta
       await alertRef.set(
         {
           status: "resolvido",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
@@ -130,11 +195,8 @@ export const onResultadoWrite = onDocumentWritten(
   }
 );
 
-/**
- * ===== HELPERS PARA OS JOBS DE DISPUTA (CRON) =====
- */
+// ===== HELPERS DOS JOBS =======================================================
 
-// converte string/number de horas para ms
 function hoursToMs(raw: any): number {
   if (typeof raw === "number") return raw * 3600000;
   if (typeof raw === "string") {
@@ -164,12 +226,8 @@ async function getTempoBatalhasMs(): Promise<number> {
   }
 }
 
-type ScheduleOpts = {
-  delayMs?: number;
-  origem?: string;
-};
+type ScheduleOpts = { delayMs?: number; origem?: string };
 
-/** Agenda início da disputa e denormaliza nextStartAtMs para o front */
 async function scheduleIniciarDisputaJob(
   ginasioId: string,
   disputaId: string,
@@ -187,7 +245,7 @@ async function scheduleIniciarDisputaJob(
     disputa_id: disputaId,
     origem,
     runAtMs,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   batch.set(db.doc(`disputas_ginasio/${disputaId}`), { nextStartAtMs: runAtMs }, { merge: true });
   await batch.commit();
@@ -195,7 +253,6 @@ async function scheduleIniciarDisputaJob(
   return runAtMs;
 }
 
-/** Agenda encerramento da disputa e denormaliza nextEndAtMs para o front */
 async function scheduleEncerrarDisputaJob(
   ginasioId: string,
   disputaId: string,
@@ -213,7 +270,7 @@ async function scheduleEncerrarDisputaJob(
     disputa_id: disputaId,
     origem,
     runAtMs,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   batch.set(db.doc(`disputas_ginasio/${disputaId}`), { nextEndAtMs: runAtMs }, { merge: true });
   await batch.commit();
@@ -221,14 +278,12 @@ async function scheduleEncerrarDisputaJob(
   return runAtMs;
 }
 
-/** ===== FIM DO BLOCO ===== */
+// ===== PROCESSADORES DE JOB ===================================================
 
 async function processCriarDisputaJob(job: any) {
   console.log("Processando job CRIAR_DISPUTA", job);
 
-  if (!job.ginasio_id) {
-    throw new Error("Job sem ginasio_id");
-  }
+  if (!job.ginasio_id) throw new Error("Job sem ginasio_id");
 
   const gRef = db.collection("ginasios").doc(job.ginasio_id);
   const gSnap = await gRef.get();
@@ -238,7 +293,6 @@ async function processCriarDisputaJob(job: any) {
   }
   const g = gSnap.data() as any;
 
-  // confere se já existe disputa ativa (inscricoes/batalhando)
   const dSnap = await db
     .collection("disputas_ginasio")
     .where("ginasio_id", "==", job.ginasio_id)
@@ -266,25 +320,22 @@ async function processCriarDisputaJob(job: any) {
     temporada_nome: temporadaNome,
     liga,
     origem: job.origem || "job_cloud",
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   console.log("Disputa criada via job:", novaDisputaRef.id);
 
   await gRef.update({ em_disputa: true });
 
-  // agenda automaticamente o job para INICIAR a disputa
   await scheduleIniciarDisputaJob(job.ginasio_id, novaDisputaRef.id);
 }
 
 async function processIniciarDisputaJob(job: any) {
   console.log("Processando job INICIAR_DISPUTA", job);
 
-  if (!job.ginasio_id) {
-    throw new Error("Job sem ginasio_id");
-  }
+  if (!job.ginasio_id) throw new Error("Job sem ginasio_id");
 
-  let disputaRef: admin.firestore.DocumentReference | null = null;
+  let disputaRef: FirebaseFirestore.DocumentReference<FirebaseFirestore.DocumentData> | null = null;
   let disputaData: any = null;
 
   if (job.disputa_id) {
@@ -296,7 +347,6 @@ async function processIniciarDisputaJob(job: any) {
     disputaRef = snap.ref;
     disputaData = snap.data() as any;
   } else {
-    // fallback: pega disputa em inscrições do ginásio
     const ds = await db
       .collection("disputas_ginasio")
       .where("ginasio_id", "==", job.ginasio_id)
@@ -324,7 +374,6 @@ async function processIniciarDisputaJob(job: any) {
 
   const disputaId = disputaRef.id;
 
-  // Marca como removidos os participantes sem tipo_escolhido
   const partSnap0 = await db
     .collection("disputas_ginasio_participantes")
     .where("disputa_id", "==", disputaId)
@@ -339,20 +388,21 @@ async function processIniciarDisputaJob(job: any) {
   }
   await batch1.commit();
 
-  // Reconta válidos
   const partSnap = await db
     .collection("disputas_ginasio_participantes")
     .where("disputa_id", "==", disputaId)
     .get();
 
+  type DocSnap = FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>;
+
   const validos = partSnap.docs
-    .map((p) => p.data() as any)
-    .filter((d) => !d.removido && d.tipo_escolhido && d.tipo_escolhido !== "").length;
+    .map((p: DocSnap) => p.data() as any)
+    .filter((d: any) => !d.removido && d.tipo_escolhido && d.tipo_escolhido !== "").length;
 
   if (validos < 2) {
     console.log(`Menos de 2 participantes válidos em ${disputaId}. Reagendando verificação.`);
     await scheduleIniciarDisputaJob(job.ginasio_id, disputaId, {
-      delayMs: 60 * 60 * 1000, // +1h
+      delayMs: 60 * 60 * 1000,
       origem: "retry_participantes",
     });
     return;
@@ -360,18 +410,16 @@ async function processIniciarDisputaJob(job: any) {
 
   await disputaRef.update({
     status: "batalhando",
-    iniciadaEm: admin.firestore.FieldValue.serverTimestamp(),
+    iniciadaEm: FieldValue.serverTimestamp(),
   });
-  // limpa contador de início no doc (front não deve exibir após iniciar)
-  await disputaRef.set({ nextStartAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
 
-  // agenda encerramento após o período de batalhas
+  await disputaRef.set({ nextStartAtMs: FieldValue.delete() }, { merge: true });
+
   await scheduleEncerrarDisputaJob(job.ginasio_id, disputaId);
 
   console.log("Disputa iniciada via job:", disputaId);
 }
 
-/** ===== Encerramento automático da disputa (retorna objeto) ===== */
 type EncerrarResult = {
   changed: boolean;
   reason: string;
@@ -389,19 +437,14 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
     meta,
   });
 
-  if (!ginasio_id || !disputa_id) {
-    throw new Error("Job sem ginasio_id/disputa_id");
-  }
+  if (!ginasio_id || !disputa_id) throw new Error("Job sem ginasio_id/disputa_id");
 
   const dRef = db.collection("disputas_ginasio").doc(disputa_id);
   const dSnap = await dRef.get();
-  if (!dSnap.exists) {
-    return baseFail("disputa_inexistente");
-  }
+  if (!dSnap.exists) return baseFail("disputa_inexistente");
+
   const disputa = dSnap.data() as any;
   const statusNorm = (disputa.status || "").toString().trim().toLowerCase();
-
-  // Só encerra automaticamente se ainda estiver batalhando
   if (statusNorm !== "batalhando") {
     return baseFail("status_finalizado_nao_batalhando", { currentStatus: disputa.status });
   }
@@ -410,14 +453,13 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
   const gSnap = await gRef.get();
   const g = gSnap.exists ? (gSnap.data() as any) : {};
 
-  // 1) Participantes válidos
   const partSnap = await db
     .collection("disputas_ginasio_participantes")
     .where("disputa_id", "==", disputa_id)
     .get();
 
   const participantes = partSnap.docs
-    .map((p) => {
+    .map((p: FirebaseFirestore.QueryDocumentSnapshot) => {
       const d = p.data() as any;
       if (d.removido) return null;
       return {
@@ -425,23 +467,22 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
         tipo_escolhido: (d.tipo_escolhido as string) || "",
       };
     })
-    .filter((p): p is { usuario_uid: string; tipo_escolhido: string } => p !== null);
+    .filter((p: any): p is { usuario_uid: string; tipo_escolhido: string } => p !== null);
 
   if (participantes.length === 0) {
     await dRef.update({
       status: "finalizado",
-      encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      encerradaEm: FieldValue.serverTimestamp(),
       vencedor_uid: null,
       sem_vencedor: true,
       finalizacao_aplicada: true,
     });
     await gRef.update({ em_disputa: false });
     await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
-    await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
+    await dRef.set({ nextEndAtMs: FieldValue.delete() }, { merge: true });
     return { changed: true, reason: "sem_participantes", meta: { participantes: 0 }, finalStatus: "finalizado" };
   }
 
-  // 2) WO automático por par: só para resultados NÃO "empate"
   const resAllSnap = await db
     .collection("disputas_ginasio_resultados")
     .where("disputa_id", "==", disputa_id)
@@ -450,11 +491,10 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
   type ResultadoDoc = { id: string; data: any };
   const grupos: Record<string, ResultadoDoc[]> = {};
 
-  resAllSnap.docs.forEach((rDoc) => {
+  resAllSnap.docs.forEach((rDoc: FirebaseFirestore.QueryDocumentSnapshot) => {
     const d = rDoc.data() as any;
     const tipoLower = (typeof d.tipo === "string" ? d.tipo : "").toString().trim().toLowerCase();
 
-    // nunca faz WO em "empate"
     if (tipoLower === "empate") return;
 
     const a = d.vencedor_uid as string | undefined;
@@ -473,10 +513,8 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
     const pendentes = lista.filter((r) => (r.data.status || "pendente") === "pendente");
     const confirmados = lista.filter((r) => r.data.status === "confirmado");
 
-    // se já há algum confirmado entre o par, não mexe
     if (confirmados.length > 0) return;
 
-    // Exatamente 1 pendente no par → confirma ele como WO
     if (pendentes.length === 1) {
       const r = pendentes[0];
       woTargets.push(r.id);
@@ -484,35 +522,31 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
         db.collection("disputas_ginasio_resultados").doc(r.id).update({
           status: "confirmado",
           confirmadoPorWoAutomatico: true,
-          confirmadoPorWoEm: admin.firestore.FieldValue.serverTimestamp(),
+          confirmadoPorWoEm: FieldValue.serverTimestamp(),
         })
       );
     }
   });
 
-  if (woUpdates.length > 0) {
-    await Promise.all(woUpdates);
-  }
+  if (woUpdates.length > 0) await Promise.all(woUpdates);
 
-  // 3) Agora sim: resultados CONFIRMADOS para pontuar
   const resSnap = await db
     .collection("disputas_ginasio_resultados")
     .where("disputa_id", "==", disputa_id)
     .where("status", "==", "confirmado")
     .get();
 
-  // Nenhum resultado confirmado → sem vencedor
   if (resSnap.empty) {
     await dRef.update({
       status: "finalizado",
-      encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      encerradaEm: FieldValue.serverTimestamp(),
       vencedor_uid: null,
       sem_vencedor: true,
       finalizacao_aplicada: true,
     });
     await gRef.update({ em_disputa: false });
     await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
-    await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
+    await dRef.set({ nextEndAtMs: FieldValue.delete() }, { merge: true });
     return {
       changed: true,
       reason: "sem_resultados_confirmados",
@@ -521,14 +555,12 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
     };
   }
 
-  // Pontuação: 3 pontos vitória, 1 ponto empate
   const pontos: Record<string, number> = {};
   participantes.forEach((p) => (pontos[p.usuario_uid] = 0));
 
-  const confirmadosCount = resSnap.size;
   const confirmadosIds: string[] = [];
 
-  resSnap.docs.forEach((rDoc) => {
+  resSnap.docs.forEach((rDoc: FirebaseFirestore.QueryDocumentSnapshot) => {
     confirmadosIds.push(rDoc.id);
     const r = rDoc.data() as any;
     const tipoLower = (typeof r.tipo === "string" ? r.tipo : "").toString().trim().toLowerCase();
@@ -540,9 +572,7 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
       if (j2) pontos[j2] = (pontos[j2] || 0) + 1;
     } else {
       const vUid = r.vencedor_uid as string | undefined;
-      if (vUid) {
-        pontos[vUid] = (pontos[vUid] || 0) + 3;
-      }
+      if (vUid) pontos[vUid] = (pontos[vUid] || 0) + 3;
     }
   });
 
@@ -551,47 +581,44 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
     if (pontos[uid] > maior) maior = pontos[uid];
   });
 
-  // Se ninguém fez ponto (>0), trata como "sem vencedor"
   if (maior <= 0) {
     await dRef.update({
       status: "finalizado",
-      encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      encerradaEm: FieldValue.serverTimestamp(),
       vencedor_uid: null,
       sem_vencedor: true,
       finalizacao_aplicada: true,
     });
     await gRef.update({ em_disputa: false });
     await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
-    await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
+    await dRef.set({ nextEndAtMs: FieldValue.delete() }, { merge: true });
     return {
       changed: true,
       reason: "todos_zero_ponto",
-      meta: { participantes: participantes.length, confirmadosCount, confirmadosIds, woConfirmados: woTargets },
+      meta: { participantes: participantes.length, confirmadosIds },
       finalStatus: "finalizado",
     };
   }
 
   const empatados = Object.keys(pontos).filter((uid) => pontos[uid] === maior);
 
-  // Proteção: se o ginásio já tiver líder por algum motivo externo, não mexe
   if (g && g.lider_uid) {
     await dRef.update({
       status: "finalizado",
-      encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      encerradaEm: FieldValue.serverTimestamp(),
       finalizacao_aplicada: true,
     });
     await gRef.update({ em_disputa: false });
     await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
-    await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
+    await dRef.set({ nextEndAtMs: FieldValue.delete() }, { merge: true });
     return {
       changed: true,
       reason: "ginasio_ja_tem_lider",
-      meta: { lider_uid: g.lider_uid, maior, empatados, confirmadosCount, confirmadosIds },
+      meta: { lider_uid: g.lider_uid, maior, empatados, confirmadosIds },
       finalStatus: "finalizado",
     };
   }
 
-  // 4) Empate no topo com pontuação > 0 → reabre nova disputa só com os empatados
   if (empatados.length > 1) {
     const novaRef = await db.collection("disputas_ginasio").add({
       ginasio_id,
@@ -603,11 +630,10 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
       temporada_nome: disputa.temporada_nome || "",
       liga: disputa.liga || disputa.liga_nome || g.liga || g.liga_nome || "",
       origem: "empate",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     const novaId = novaRef.id;
 
-    // Replica os empatados como participantes da nova disputa
     const batchPart = db.batch();
     for (const uid of empatados) {
       const partOrig = participantes.find((p) => p.usuario_uid === uid);
@@ -616,47 +642,42 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
         ginasio_id,
         usuario_uid: uid,
         tipo_escolhido: partOrig?.tipo_escolhido || disputa.tipo_original || g.tipo || "",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
     }
     await batchPart.commit();
 
-    // Marca disputa atual como finalizada sem vencedor definido
     await dRef.update({
       status: "finalizado",
-      encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      encerradaEm: FieldValue.serverTimestamp(),
       vencedor_uid: null,
       empate_no_topo: true,
       finalizacao_aplicada: true,
     });
     await gRef.update({ em_disputa: true });
     await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
-    await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
+    await dRef.set({ nextEndAtMs: FieldValue.delete() }, { merge: true });
 
-    // Agenda automaticamente o início da nova disputa (respeitando tempo_inscricoes)
     await scheduleIniciarDisputaJob(ginasio_id, novaId);
 
     return {
       changed: true,
       reason: "empate_topo_reaberta",
-      meta: { novaDisputaId: novaId, empatados, maior, confirmadosCount, confirmadosIds },
+      meta: { novaDisputaId: novaId, empatados, maior, confirmadosIds },
       finalStatus: "finalizado",
     };
   }
 
-  // 5) Vencedor único
   const vencedorUid = empatados[0];
   const participanteVencedor = participantes.find((p) => p.usuario_uid === vencedorUid);
   const tipoDoVencedor = participanteVencedor?.tipo_escolhido || disputa.tipo_original || g.tipo || "";
 
-  // Fecha lideranças abertas e cria nova liderança
   const abertas = await db
     .collection("ginasios_liderancas")
     .where("ginasio_id", "==", ginasio_id)
     .where("fim", "==", null)
     .get();
 
-  // 1 só relógio para todos os writes
   const nowMs = Date.now();
 
   const batch = db.batch();
@@ -677,7 +698,6 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
   });
   await batch.commit();
 
-  // Aplica no ginásio
   await gRef.update({
     lider_uid: vencedorUid,
     tipo: tipoDoVencedor,
@@ -685,31 +705,25 @@ async function processEncerrarDisputaJob(job: any): Promise<EncerrarResult> {
     derrotas_seguidas: 0,
   });
 
-  // Finaliza disputa
   await dRef.update({
     status: "finalizado",
-    encerradaEm: admin.firestore.FieldValue.serverTimestamp(),
+    encerradaEm: FieldValue.serverTimestamp(),
     vencedor_uid: vencedorUid,
     finalizacao_aplicada: true,
   });
 
-  // Resolve alerta e limpa contador de encerramento
   await db.doc(`admin_alertas/disputa_${disputa_id}_ready`).set({ status: "resolvido" }, { merge: true });
-  await dRef.set({ nextEndAtMs: admin.firestore.FieldValue.delete() }, { merge: true });
+  await dRef.set({ nextEndAtMs: FieldValue.delete() }, { merge: true });
 
   return {
     changed: true,
     reason: "vencedor_definido",
-    meta: { vencedorUid, tipoDoVencedor, confirmadosCount, confirmadosIds, maior },
+    meta: { vencedorUid, tipoDoVencedor },
     finalStatus: "finalizado",
   };
 }
-/** ===== FIM DO BLOCO ===== */
 
-/**
- * FUNÇÃO AGENDADA – V2
- * Roda a cada 5 minutos e processa jobs em /jobs_disputas
- */
+// ---- CRON: processDisputeJobs ------------------------------------------------
 export const processDisputeJobs = onSchedule(
   { schedule: "every 5 minutes", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 },
   async () => {
@@ -718,7 +732,7 @@ export const processDisputeJobs = onSchedule(
     const jobsSnap = await db
       .collection("jobs_disputas")
       .where("status", "==", "pendente")
-      .where("runAtMs", "<=", now) // traz só vencidos
+      .where("runAtMs", "<=", now)
       .limit(50)
       .get();
 
@@ -730,10 +744,9 @@ export const processDisputeJobs = onSchedule(
     for (const jobDoc of jobsSnap.docs) {
       const job = jobDoc.data() as any;
 
-      // marca executando para minimizar reprocesso concorrente/retentativas
       await jobDoc.ref.update({
         status: "executando",
-        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        startedAt: FieldValue.serverTimestamp(),
       });
 
       try {
@@ -741,111 +754,38 @@ export const processDisputeJobs = onSchedule(
           await processCriarDisputaJob(job);
           await jobDoc.ref.update({
             status: "executado",
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+            executedAt: FieldValue.serverTimestamp(),
           });
         } else if (job.acao === "iniciar_disputa") {
           await processIniciarDisputaJob(job);
           await jobDoc.ref.update({
             status: "executado",
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+            executedAt: FieldValue.serverTimestamp(),
           });
         } else if (job.acao === "encerrar_disputa") {
           const result = await processEncerrarDisputaJob(job);
           await jobDoc.ref.update({
             status: "executado",
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+            executedAt: FieldValue.serverTimestamp(),
             noOp: !result.changed,
             resultReason: result.reason,
             debug: result.meta,
-            finalStatus: result.finalStatus ?? admin.firestore.FieldValue.delete(),
+            finalStatus: result.finalStatus ?? FieldValue.delete(),
           });
         } else {
           await jobDoc.ref.update({
             status: "erro",
             errorMessage: `acao_desconhecida: ${job.acao}`,
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
+            executedAt: FieldValue.serverTimestamp(),
           });
         }
       } catch (e: any) {
         await jobDoc.ref.update({
           status: "erro",
           errorMessage: (e?.message || String(e)).slice(0, 500),
-          executedAt: admin.firestore.FieldValue.serverTimestamp(),
+          executedAt: FieldValue.serverTimestamp(),
         });
       }
     }
   }
 );
-
-/*export const processDisputeJobs = onSchedule(
-  {
-    schedule: "every 5 minutes",
-    timeZone: "America/Sao_Paulo",
-    region: "southamerica-east1",
-    maxInstances: 1,//atenção aqui
-  },
-  async () => {
-    const now = Date.now();
-
-    const jobsSnap = await db
-      .collection("jobs_disputas")
-      .where("status", "==", "pendente")
-      .limit(50)
-      .get();
-
-    const dueJobs = jobsSnap.docs.filter((doc) => {
-      const data = doc.data() as any;
-      const runAtMs = typeof data.runAtMs === "number" ? data.runAtMs : 0;
-      return runAtMs <= now;
-    });
-
-    if (dueJobs.length === 0) {
-      console.log("Nenhum job pendente no horário.");
-      return;
-    }
-
-    console.log(`Processando ${dueJobs.length} job(s) vencidos.`);
-
-    for (const jobDoc of dueJobs) {
-      const job = jobDoc.data() as any;
-      try {
-        if (job.acao === "criar_disputa") {
-          await processCriarDisputaJob(job);
-          await jobDoc.ref.update({
-            status: "executado",
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        } else if (job.acao === "iniciar_disputa") {
-          await processIniciarDisputaJob(job);
-          await jobDoc.ref.update({
-            status: "executado",
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        } else if (job.acao === "encerrar_disputa") {
-          const result = await processEncerrarDisputaJob(job); // objeto
-          await jobDoc.ref.update({
-            status: "executado",
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
-            noOp: !result.changed,
-            resultReason: result.reason,
-            debug: result.meta,
-            finalStatus: result.finalStatus ?? admin.firestore.FieldValue.delete(),
-          });
-        } else {
-          await jobDoc.ref.update({
-            status: "erro",
-            errorMessage: `acao_desconhecida: ${job.acao}`,
-            executedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        }
-      } catch (e: any) {
-        await jobDoc.ref.update({
-          status: "erro",
-          errorMessage: (e?.message || String(e)).slice(0, 500),
-          executedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-    }
-  }
-);
-*/

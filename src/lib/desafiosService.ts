@@ -6,7 +6,6 @@ import {
   getDoc,
   getDocs,
   increment,
-  runTransaction,
   serverTimestamp,
   updateDoc,
   setDoc,
@@ -22,14 +21,9 @@ export type Vencedor = "lider" | "desafiante";
 
 type TemporadaAtiva = { id?: string; nome?: string } | null;
 
-type FechamentoResultado =
+export type FechamentoResultado =
   | { closed: false; status?: string; desafio?: any }
-  | {
-      closed: true;
-      status: "concluido" | "conflito";
-      vencedor?: Vencedor; // quando concluido
-      desafio: any; // snapshot.data() final
-    };
+  | { closed: true; status: "concluido" | "conflito"; vencedor?: Vencedor; desafio: any };
 
 function asInt(x: any) {
   const n = Number(x);
@@ -56,57 +50,84 @@ async function getElite4CampeonatoAtivoId(db: Firestore, liga: string): Promise<
   return s.empty ? null : s.docs[0].id;
 }
 
-async function efeitosVitoriaLider(db: Firestore, d: any) {
+// ======= VITÓRIA DO LÍDER (idempotente, com dedupe por desafio) =======
+async function efeitosVitoriaLider(
+  db: Firestore,
+  d: any,
+  callerUid?: string | null,
+  desafioId?: string
+) {
   const gRef = doc(db, "ginasios", d.ginasio_id);
-  const desafRef = doc(db, "usuarios", d.desafiante_uid);
+  const liderRef = doc(db, "usuarios", d.lider_uid);
 
-  // ler stats do desafiante ANTES de registrar a derrota
-  const desafSnap = await getDoc(desafRef);
-  const ds = desafSnap.exists() ? (desafSnap.data() as any) : {};
-  const w = asInt(ds?.statsvitorias);
-  const l = asInt(ds?.statsderrotas);
+  // quem PODE atualizar o ginásio pelas regras? o LÍDER atual
+  if (callerUid === d.lider_uid) {
+    try { await updateDoc(gRef, { derrotas_seguidas: 0 }); } catch { }
 
-  const pts = calcElite4Points(w, l);
+    // Elite4 points pro líder (só o próprio pode criar/alterar o participante)
+    try {
+      const liderSnap = await getDoc(liderRef);
+      const ls = liderSnap.exists() ? (liderSnap.data() as any) : {};
+      const w = asInt(ls?.statsvitorias);
+      const l = asInt(ls?.statsderrotas);
+      const pts = calcElite4Points(w, l);
 
-  let liga: string = d.liga || "";
-  if (!liga) {
-    const gSnap = await getDoc(gRef);
-    liga = gSnap.exists() ? ((gSnap.data() as any).liga || "") : "";
+      let liga: string = d.liga || "";
+      if (!liga) {
+        const gSnap = await getDoc(gRef);
+        liga = gSnap.exists() ? ((gSnap.data() as any).liga || "") : "";
+      }
+      const elite4Id = liga ? await getElite4CampeonatoAtivoId(db, liga) : null;
+      if (elite4Id && pts > 0) {
+        const partRef = doc(db, "campeonatos_elite4", elite4Id, "participantes", d.lider_uid);
+
+        // garante doc + campos base
+        await setDoc(
+          partRef,
+          {
+            usuario_uid: d.lider_uid,
+            campeonato_id: elite4Id,
+            ginasio_id: d.ginasio_id,
+            liga,
+            createdAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        // dedupe por desafioId (evita pontos em duplicidade)
+        if (desafioId) {
+          const partSnap = await getDoc(partRef);
+          const pdata = partSnap.exists() ? (partSnap.data() as any) : {};
+          const already = pdata?.wins_applied?.[desafioId] === true;
+          if (already) return;
+
+          await updateDoc(partRef, {
+            pontos: increment(pts),
+            [`wins_applied.${desafioId}`]: true,
+            updatedAt: serverTimestamp(),
+          } as any);
+        } else {
+          // sem id do desafio: aplica mesmo assim (não recomendado)
+          await updateDoc(partRef, { pontos: increment(pts), updatedAt: serverTimestamp() } as any);
+        }
+      }
+    } catch { }
   }
 
-  // credita pontos no Elite4 (uma única vez) — SUBCOLEÇÃO
-  const elite4Id = liga ? await getElite4CampeonatoAtivoId(db, liga) : null;
-  if (elite4Id && pts > 0) {
-    const partRef = doc(db, "campeonatos_elite4", elite4Id, "participantes", d.lider_uid);
-
-    // cria/mescla metadados — sem pontos no set
-    await setDoc(
-      partRef,
-      {
-        usuario_uid: d.lider_uid,
-        campeonato_id: elite4Id,
-        ginasio_id: d.ginasio_id,
-        liga,
-        createdAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-
-    // incrementa UMA vez
-    await updateDoc(partRef, { pontos: increment(pts) });
+  // quem PODE atualizar stats do desafiante? o PRÓPRIO desafiante
+  if (callerUid === d.desafiante_uid) {
+    try { await updateDoc(liderRef, { statsderrotas: increment(1) }); } catch { }
   }
 
-  // efeitos padrão
-  await Promise.all([
-    updateDoc(gRef, { derrotas_seguidas: 0 }),
-    addDoc(collection(db, "bloqueios_ginasio"), {
+  // bloqueio — permitido a qualquer autenticado
+  try {
+    await addDoc(collection(db, "bloqueios_ginasio"), {
       ginasio_id: d.ginasio_id,
       desafiante_uid: d.desafiante_uid,
       proximo_desafio: Date.now() + 15 * 24 * 60 * 60 * 1000,
       createdAt: serverTimestamp(),
-    }),
-    updateDoc(desafRef, { statsderrotas: increment(1) }),
-  ]);
+    });
+  } catch { }
 }
 
 async function resetElite4PontuacaoDoUsuario(
@@ -118,7 +139,7 @@ async function resetElite4PontuacaoDoUsuario(
 ) {
   if (!userUid) return;
 
-  // resolve liga: param -> via ginásio -> aborta se não achar
+  // resolve liga
   let liga = ligaParam || "";
   if (!liga && ginasioId) {
     const g = await getDoc(doc(db, "ginasios", ginasioId));
@@ -130,7 +151,6 @@ async function resetElite4PontuacaoDoUsuario(
   if (!elite4Id) return;
 
   const partRef = doc(db, "campeonatos_elite4", elite4Id, "participantes", userUid);
-
   await setDoc(
     partRef,
     {
@@ -146,18 +166,20 @@ async function resetElite4PontuacaoDoUsuario(
   );
 }
 
+// ======= VITÓRIA DO DESAFIANTE =======
 async function efeitosVitoriaDesafiante(
   db: Firestore,
   d: any,
-  temp: TemporadaAtiva
+  temp: TemporadaAtiva,
+  callerUid?: string | null
 ) {
   const gRef = doc(db, "ginasios", d.ginasio_id);
   const gSnap = await getDoc(gRef);
   const g = gSnap.exists() ? (gSnap.data() as any) : null;
 
-  await Promise.all([
-    // 1) insígnia para o desafiante
-    (async () => {
+  // quem PODE criar insígnia e atualizar suas stats? o PRÓPRIO desafiante
+  if (callerUid === d.desafiante_uid) {
+    try {
       await addDoc(collection(db, "insignias"), {
         usuario_uid: d.desafiante_uid,
         ginasio_id: d.ginasio_id,
@@ -170,144 +192,167 @@ async function efeitosVitoriaDesafiante(
         lider_derrotado_uid: d.lider_uid,
         createdAt: Date.now(),
       });
-    })(),
+    } catch { }
 
-    // 2) bloqueio de 7 dias para novo desafio nesse ginásio
-    (async () => {
+    try { await updateDoc(doc(db, "usuarios", d.desafiante_uid), { statsvitorias: increment(1) }); } catch { }
+
+    try {
       await addDoc(collection(db, "bloqueios_ginasio"), {
         ginasio_id: d.ginasio_id,
         desafiante_uid: d.desafiante_uid,
         proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
         createdAt: serverTimestamp(),
       });
-    })(),
+    } catch { }
+  }
 
-    // 3) stats do desafiante: +1 vitória
-    (async () => {
-      const desafRef = doc(db, "usuarios", d.desafiante_uid);
-      await updateDoc(desafRef, { statsvitorias: increment(1) });
-    })(),
-  ]);
-
-  // 4) derrotas seguidas do líder + possível abertura de disputa
-  if (!gSnap.exists()) return;
-  const derrotas = Math.max(0, Number(g?.derrotas_seguidas ?? 0) + 1);
-
-  if (derrotas >= 3) {
-    await Promise.all([
-      addDoc(collection(db, "disputas_ginasio"), {
-        ginasio_id: d.ginasio_id,
-        status: "inscricoes",
-        tipo_original: g?.tipo || "",
-        lider_anterior_uid: g?.lider_uid || "",
-        temporada_id: temp?.id || "",
-        temporada_nome: temp?.nome || "",
-        liga: g?.liga || d.liga || "",
-        origem: "3_derrotas",
-        createdAt: Date.now(),
-      }),
-      updateDoc(gRef, { lider_uid: "", em_disputa: true, derrotas_seguidas: 0 }),
-    ]);
-
-    if (g?.lider_uid) {
-      await resetElite4PontuacaoDoUsuario(db, g.lider_uid, d.ginasio_id, "3_derrotas", g?.liga || d.liga || "");
-    }
-  } else {
-    await updateDoc(gRef, { derrotas_seguidas: derrotas });
+  // quem PODE mexer no ginásio/reset Elite4 do líder? o LÍDER (ainda é o líder nas regras)
+  if (callerUid === d.lider_uid && gSnap.exists()) {
+    try {
+      const derrotas = Math.max(0, Number(g?.derrotas_seguidas ?? 0) + 1);
+      if (derrotas >= 3) {
+        await Promise.all([
+          addDoc(collection(db, "disputas_ginasio"), {
+            ginasio_id: d.ginasio_id,
+            status: "inscricoes",
+            tipo_original: g?.tipo || "",
+            lider_anterior_uid: g?.lider_uid || "",
+            temporada_id: temp?.id || "",
+            temporada_nome: temp?.nome || "",
+            liga: g?.liga || d.liga || "",
+            origem: "3_derrotas",
+            createdAt: Date.now(),
+          }),
+          updateDoc(gRef, { lider_uid: "", em_disputa: true, derrotas_seguidas: 0 }),
+        ]);
+        if (g?.lider_uid) {
+          try {
+            await resetElite4PontuacaoDoUsuario(db, g.lider_uid, d.ginasio_id, "3_derrotas", g?.liga || d.liga || "");
+          } catch { }
+        }
+      } else {
+        await updateDoc(gRef, { derrotas_seguidas: derrotas });
+      }
+    } catch { }
   }
 }
 
 /**
- * Marca o resultado do "meu lado" (líder/desafiante) e,
- * se ambos já declararam, fecha o desafio (concluido/conflito).
- * Idempotente: só aplica efeitos colaterais (insígnia, bloqueio, stats)
- * se ESTE call foi quem fechou o desafio agora.
- *
- * Aceita tanto `temporadaAtiva` quanto `temporada` no opts.
+ * Marca o resultado do "meu lado" e, se ambos já declararam, fecha (concluido/conflito).
+ * Efeitos colaterais só rodam quando ESTE call fechou agora.
  */
 export async function setResultadoEFecharSePossivel(opts: {
   db: Firestore;
   desafioId: string;
-  role: Role;           // quem está declarando (lider|desafiante)
-  vencedor: Vencedor;   // quem venceu (lider|desafiante)
-  temporadaAtiva?: TemporadaAtiva;
-  temporada?: TemporadaAtiva;       // alias suportado
-  callerUid?: string;
+  role: "lider" | "desafiante";
+  vencedor: "lider" | "desafiante";
+  temporadaAtiva?: { id?: string; nome?: string } | null;
+  temporada?: { id?: string; nome?: string } | null;
+  callerUid?: string | null;
 }): Promise<FechamentoResultado> {
   const { db, desafioId, role, vencedor } = opts;
   const temp: TemporadaAtiva = opts.temporadaAtiva ?? opts.temporada ?? null;
+  const callerUid = opts.callerUid ?? null;
 
   const ref = doc(db, "desafios_ginasio", desafioId);
 
-  // 1) Transação: grava meu resultado e, se possível, fecha
-  const txResult = await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error("Desafio inexistente");
-    const d = snap.data() as any;
+  // FASE A: grava SOMENTE meu resultado
+  const campo = role === "lider" ? "resultado_lider" : "resultado_desafiante";
+  try {
+    await updateDoc(ref, { [campo]: vencedor } as any);
+  } catch {
+    throw new Error("perm:set-resultado");
+  }
 
-    if (d.status === "concluido" || d.status === "conflito") {
-      return { closed: false, status: d.status, desafio: d } as FechamentoResultado;
-    }
+  // Lê estado atual
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Desafio inexistente");
+  const d = snap.data() as any;
 
-    const campo = role === "lider" ? "resultado_lider" : "resultado_desafiante";
-    const atual = d[campo] ?? null;
+  const rl = d.resultado_lider ?? null;
+  const rd = d.resultado_desafiante ?? null;
 
-    if (atual && atual !== vencedor) {
-      // mantém o já declarado para evitar troca
-    } else if (!atual) {
-      tx.update(ref, { [campo]: vencedor });
-      d[campo] = vencedor;
-    }
+  // Ainda falta o outro declarar
+  if (!rl || !rd) return { closed: false, status: d.status, desafio: d };
 
-    const rl = d.resultado_lider ?? null;
-    const rd = d.resultado_desafiante ?? null;
-
-    if (!rl || !rd) {
-      return { closed: false, status: d.status, desafio: d } as FechamentoResultado;
-    }
-
-    if (rl === rd) {
-      tx.update(ref, {
+  // FASE B: fechar
+  if (rl === rd) {
+    const vencedorUid = rl === "lider" ? d.lider_uid : d.desafiante_uid;
+    try {
+      await updateDoc(ref, {
         status: "concluido",
         vencedor: rl,
+        vencedor_uid: vencedorUid,
         fechadoEm: serverTimestamp(),
+      } as any);
+    } catch {
+      throw new Error("perm:close-concordante");
+    }
+
+    // efeitos — só quando ESTE call fechou
+    try {
+      if (rl === "desafiante") {
+        await efeitosVitoriaDesafiante(db, { ...d, vencedor: rl }, temp, callerUid);
+      } else {
+        await efeitosVitoriaLider(db, { ...d, vencedor: rl }, callerUid, ref.id);
+      }
+    } catch { }
+
+    return {
+      closed: true,
+      status: "concluido",
+      vencedor: rl as Vencedor,
+      desafio: { ...d, status: "concluido", vencedor: rl, vencedor_uid: vencedorUid },
+    };
+  } else {
+    try {
+      await updateDoc(ref, { status: "conflito", fechadoEm: serverTimestamp() } as any);
+    } catch {
+      throw new Error("perm:close-conflito");
+    }
+
+    try {
+      await addDoc(collection(db, "alertas_conflito"), {
+        desafio_id: ref.id,
+        ginasio_id: d.ginasio_id,
+        lider_uid: d.lider_uid,
+        desafiante_uid: d.desafiante_uid,
+        createdAt: Date.now(),
       });
-      return {
-        closed: true,
-        status: "concluido",
-        vencedor: rl as Vencedor,
-        desafio: { ...d, status: "concluido", vencedor: rl },
-      } as FechamentoResultado;
-    } else {
-      tx.update(ref, { status: "conflito", fechadoEm: serverTimestamp() });
-      return {
-        closed: true,
-        status: "conflito",
-        desafio: { ...d, status: "conflito" },
-      } as FechamentoResultado;
-    }
-  });
+    } catch { }
 
-  // 2) Efeitos colaterais apenas se ESTE call fechou agora
-  if (txResult.closed && txResult.status === "concluido") {
-    const d = txResult.desafio;
-    if (txResult.vencedor === "desafiante") {
-      await efeitosVitoriaDesafiante(db, d, temp);
-    } else {
-      await efeitosVitoriaLider(db, d);
-    }
+    return { closed: true, status: "conflito", desafio: { ...d, status: "conflito" } };
   }
+}
 
-  if (txResult.closed && txResult.status === "conflito") {
-    const d = txResult.desafio;
-    await addDoc(collection(db, "alertas_conflito"), {
-      desafio_id: ref.id,
-      ginasio_id: d.ginasio_id,
-      lider_uid: d.lider_uid,
-      desafiante_uid: d.desafiante_uid,
-      createdAt: Date.now(),
-    });
+/**
+ * Garantia pós-fechamento (sem mexer em regras):
+ * Se eu sou o vencedor legítimo segundo as regras (logo tenho permissão),
+ * reaplico efeitos idempotentes (com dedupe).
+ */
+export async function garantirEfeitosPosConclusao(opts: {
+  db: Firestore;
+  desafioId: string;
+  callerUid: string | null;
+  temporadaAtiva?: TemporadaAtiva;
+  temporada?: TemporadaAtiva;
+}): Promise<void> {
+  const { db, desafioId } = opts;
+  const callerUid = opts.callerUid ?? null;
+  const temp: TemporadaAtiva = opts.temporadaAtiva ?? opts.temporada ?? null;
+
+  const ref = doc(db, "desafios_ginasio", desafioId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const d = snap.data() as any;
+  if (d.status !== "concluido") return;
+
+  const vencedor: Vencedor | undefined = d.vencedor;
+  if (vencedor === "lider" && callerUid === d.lider_uid) {
+    // idempotente: usa wins_applied.{desafioId}
+    await efeitosVitoriaLider(db, d, callerUid, desafioId);
+  } else if (vencedor === "desafiante" && callerUid === d.desafiante_uid) {
+    await efeitosVitoriaDesafiante(db, d, temp, callerUid);
   }
-
-  return txResult;
 }

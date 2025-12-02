@@ -134,7 +134,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         request.resource.data.declarado_por == request.auth.uid;
       allow update: if isSignedIn() &&
-        (resource.data.declarado_por != request.auth.uid || isSuper());
+        (resource.data.declarado_por == request.auth.uid || isSuper());
       allow delete: if isSuper();
     }
 
@@ -142,22 +142,107 @@ service cloud.firestore {
     match /desafios_ginasio/{id} {
       allow read: if true;
 
-      // só participantes criam (líder ou desafiante)
-      allow create: if isSignedIn() && (
-        request.resource.data.lider_uid == request.auth.uid ||
-        request.resource.data.desafiante_uid == request.auth.uid
-      );
+      allow create: if isSignedIn()
+        && (request.resource.data.lider_uid == request.auth.uid
+            || request.resource.data.desafiante_uid == request.auth.uid)
+        && request.resource.data.status == 'pendente'
+        && (!('resultado_lider' in request.resource.data) || request.resource.data.resultado_lider == null)
+        && (!('resultado_desafiante' in request.resource.data) || request.resource.data.resultado_desafiante == null)
+        && (!('vencedor' in request.resource.data))
+        && (!('vencedor_uid' in request.resource.data))
+        && (!('fechadoEm' in request.resource.data))
+        && (!('disputa_id' in request.resource.data) || request.resource.data.disputa_id == null)
+        && request.resource.data.keys().hasOnly([
+          'ginasio_id','liga','lider_uid','desafiante_uid','status',
+          'resultado_lider','resultado_desafiante','createdAt','disputa_id'
+        ]);
 
-      // participantes ou super podem atualizar
-      allow update: if isDesafioParticipant(id) || isSuper();
+      function changedKeys() {
+        return request.resource.data.diff(resource.data).changedKeys();
+      }
+      function isParticipant() {
+        return isSignedIn() && (
+          request.auth.uid == resource.data.lider_uid ||
+          request.auth.uid == resource.data.desafiante_uid
+        );
+      }
 
-      // remoção só super
+      // permitir adicionar fechadoEm:null sem fechar
+      function addingFechadoEmNullOnly() {
+        return changedKeys().hasAny(['fechadoEm']) &&
+               request.resource.data.fechadoEm == null &&
+               !(resource.data.keys().hasAny(['fechadoEm']));
+      }
+
+      function canSetResultadoLider() {
+        return isSignedIn()
+          && request.auth.uid == resource.data.lider_uid
+          && (resource.data.status != 'concluido' && resource.data.status != 'conflito')
+          && (!resource.data.keys().hasAny(['resultado_lider']) || resource.data.resultado_lider == null)
+          && (request.resource.data.resultado_lider in ['lider','desafiante'])
+          // não pode alterar o resultado do outro
+          && !changedKeys().hasAny(['resultado_desafiante'])
+          // não pode mexer em campos sensíveis (status/fechamento/vencedor); exceto incluir fechadoEm:null
+          && !changedKeys().hasAny(['vencedor','vencedor_uid','status','lider_uid','desafiante_uid','ginasio_id','createdAt'])
+          && (!changedKeys().hasAny(['fechadoEm']) || addingFechadoEmNullOnly());
+      }
+
+      function canSetResultadoDesafiante() {
+        return isSignedIn()
+          && request.auth.uid == resource.data.desafiante_uid
+          && (resource.data.status != 'concluido' && resource.data.status != 'conflito')
+          && (!resource.data.keys().hasAny(['resultado_desafiante']) || resource.data.resultado_desafiante == null)
+          && (request.resource.data.resultado_desafiante in ['lider','desafiante'])
+          && !changedKeys().hasAny(['resultado_lider'])
+          && !changedKeys().hasAny(['vencedor','vencedor_uid','status','lider_uid','desafiante_uid','ginasio_id','createdAt'])
+          && (!changedKeys().hasAny(['fechadoEm']) || addingFechadoEmNullOnly());
+      }
+
+      // fechamento CONCORDANTE
+      function canCloseConcordante() {
+        return isParticipant()
+          && request.resource.data.status == 'concluido'
+          && (request.resource.data.resultado_lider in ['lider','desafiante'])
+          && (request.resource.data.resultado_desafiante in ['lider','desafiante'])
+          && request.resource.data.resultado_lider == request.resource.data.resultado_desafiante
+          && (request.resource.data.vencedor in ['lider','desafiante'])
+          && (
+            (request.resource.data.vencedor == 'lider' && request.resource.data.vencedor_uid == resource.data.lider_uid) ||
+            (request.resource.data.vencedor == 'desafiante' && request.resource.data.vencedor_uid == resource.data.desafiante_uid)
+          )
+          && (
+            (request.auth.uid == resource.data.lider_uid   && !changedKeys().hasAny(['resultado_desafiante'])) ||
+            (request.auth.uid == resource.data.desafiante_uid && !changedKeys().hasAny(['resultado_lider']))
+          )
+          && changedKeys().hasOnlyAny(['resultado_lider','resultado_desafiante','status','vencedor','vencedor_uid','fechadoEm','updatedAt','updatedBy','lastActivityAt']);
+      }
+
+      // fechamento em CONFLITO
+      function canCloseConflito() {
+        return isParticipant()
+          && request.resource.data.status == 'conflito'
+          && (request.resource.data.resultado_lider in ['lider','desafiante'])
+          && (request.resource.data.resultado_desafiante in ['lider','desafiante'])
+          && request.resource.data.resultado_lider != request.resource.data.resultado_desafiante
+          && (
+            (request.auth.uid == resource.data.lider_uid   && !changedKeys().hasAny(['resultado_desafiante'])) ||
+            (request.auth.uid == resource.data.desafiante_uid && !changedKeys().hasAny(['resultado_lider']))
+          )
+          && !changedKeys().hasAny(['vencedor','vencedor_uid'])
+          && changedKeys().hasOnlyAny(['resultado_lider','resultado_desafiante','status','fechadoEm','updatedAt','updatedBy','lastActivityAt']);
+      }
+
+      allow update: if isSuper()
+        || canSetResultadoLider()
+        || canSetResultadoDesafiante()
+        || canCloseConcordante()
+        || canCloseConflito();
+
       allow delete: if isSuper();
 
       match /mensagens/{msgId} {
         allow read: if isDesafioParticipant(id) || isSuper();
-        allow create: if isDesafioParticipant(id) &&
-          request.resource.data.from == request.auth.uid;
+        allow create: if isDesafioParticipant(id) && request.resource.data.from == request.auth.uid;
         allow delete: if isDesafioParticipant(id) || isSuper();
         allow update: if false;
       }

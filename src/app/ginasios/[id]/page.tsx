@@ -978,6 +978,7 @@ export default function GinasioOverviewPage() {
         role,
         vencedor,
         temporadaAtiva: temporada,
+        callerUid: uid,
       });
       // O onSnapshot já fecha/limpa o chat quando status muda.
       if (res.closed && res.status === "conflito") {
@@ -1004,6 +1005,7 @@ export default function GinasioOverviewPage() {
         role,
         vencedor,
         temporadaAtiva: temporada,
+        callerUid: uid,
       });
       if (res.closed && res.status === "conflito") {
         alert("Conflito declarado. A moderação foi notificada.");
