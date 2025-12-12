@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -9,6 +9,95 @@ const https_1 = require("firebase-functions/v2/https");
 var desafios_1 = require("./desafios");
 Object.defineProperty(exports, "onDesafioResultadosWrite", { enumerable: true, get: function () { return desafios_1.onDesafioResultadosWrite; } });
 const adminSdk_1 = require("./adminSdk");
+const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
+const COOLDOWN_DIAS = 7;
+const COOLDOWN_MS = COOLDOWN_DIAS * 24 * 60 * 60 * 1000;
+function asInt(n) {
+    const v = Number(n);
+    return Number.isFinite(v) ? Math.trunc(v) : 0;
+}
+function calcElite4Points(w, l) {
+    // (vitórias * 2) - derrotas, com clamp: negativo = 0, zero = 1
+    const base = 2 * asInt(w) - asInt(l);
+    if (base < 0)
+        return 0;
+    if (base === 0)
+        return 1;
+    return base;
+}
+function toMillisAny(v) {
+    if (!v)
+        return null;
+    if (typeof v === "number" && Number.isFinite(v))
+        return Math.trunc(v);
+    if (typeof v?.toMillis === "function")
+        return v.toMillis(); // Timestamp
+    return null;
+}
+exports.onDesafioCriadoCriarBloqueio = (0, firestore_1.onDocumentWritten)({ document: "desafios_ginasio/{desafioId}", region: "southamerica-east1" }, async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!after)
+        return;
+    // só na criação (antes não existia)
+    const isCreate = !event.data?.before?.exists;
+    if (!isCreate)
+        return;
+    // idempotência (porque vamos dar update no próprio desafio)
+    if (after.cooldownApplied === true)
+        return;
+    const desafioId = event.params?.desafioId;
+    const ginasioId = after.ginasio_id;
+    const desafiante = after.desafiante_uid;
+    const liderUid = after.lider_uid;
+    const liga = after.liga || "";
+    if (!desafioId || !ginasioId || !desafiante)
+        return;
+    // pega createdAt do próprio doc (number ou Timestamp)
+    let createdAtMs = toMillisAny(after.createdAt) ??
+        toMillisAny(after.criadoEm) ??
+        toMillisAny(after.created_at);
+    // fallback: createTime do documento (servidor)
+    const createTime = event.data?.after?.createTime;
+    if (!createdAtMs && createTime && typeof createTime.toMillis === "function") {
+        createdAtMs = createTime.toMillis();
+    }
+    // último fallback (não ideal, mas não quebra)
+    if (!createdAtMs)
+        createdAtMs = Date.now();
+    const blockedUntilMs = createdAtMs + COOLDOWN_MS;
+    const blockedUntil = adminSdk_1.admin.firestore.Timestamp.fromMillis(blockedUntilMs);
+    // chave determinística: (ginasio + desafiante) = seu requisito
+    const blockId = `${ginasioId}__${desafiante}`;
+    const blockRef = adminSdk_1.db.doc(`${BLOQUEIOS_COLLECTION}/${blockId}`);
+    const desafioRef = adminSdk_1.db.doc(`desafios_ginasio/${desafioId}`);
+    await adminSdk_1.db.runTransaction(async (tx) => {
+        const dSnap = await tx.get(desafioRef);
+        if (!dSnap.exists)
+            return;
+        const dNow = dSnap.data();
+        if (dNow.cooldownApplied === true)
+            return; // idempotência de verdade
+        tx.set(blockRef, {
+            status: "ativo",
+            ginasio_id: ginasioId,
+            desafiante_uid: desafiante,
+            lider_uid: liderUid || null,
+            liga,
+            desafio_id: desafioId,
+            // importante pro cliente e pra Rules
+            createdAtMs,
+            blockedUntilMs,
+            blockedUntil,
+            createdAt: adminSdk_1.FieldValue.serverTimestamp(),
+            updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        tx.update(desafioRef, {
+            cooldownApplied: true,
+            cooldownAppliedAt: adminSdk_1.FieldValue.serverTimestamp(),
+        });
+    });
+});
 exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
     document: "desafios_ginasio/{desafioId}",
     region: "southamerica-east1",
@@ -41,52 +130,73 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         if (!dNow)
             return;
         if (dNow.status !== "concluido")
-            return; // ainda garantimos
+            return;
         if (dNow.statsApplied === true)
-            return; // já processado
-        // 1) stats dos usuários
+            return;
         const winRef = adminSdk_1.db.doc(`usuarios/${winnerUid}`);
         const losRef = adminSdk_1.db.doc(`usuarios/${loserUid}`);
-        tx.set(winRef, { statsVitorias: adminSdk_1.FieldValue.increment(1) }, { merge: true });
-        tx.set(losRef, { statsDerrotas: adminSdk_1.FieldValue.increment(1) }, { merge: true });
-        // 2) pontos do líder (só se o líder venceu e houver campeonato aberto na mesma liga)
-        if (vencedorTag === "lider" && liga) {
-            // campeonato aberto (o mais recente)
-            const qCamp = await adminSdk_1.db.collection("campeonatos_elite4")
+        // =========================
+        // FASE 1: TODAS AS LEITURAS
+        // =========================
+        // (A) pré-leitura do líder para calcular ptsElite4
+        let ptsElite4 = 0;
+        let leaderSnapPre = null;
+        if (vencedorTag === "lider") {
+            leaderSnapPre = await tx.get(winRef); // winRef == liderUid quando líder vence
+            const w0 = leaderSnapPre.exists ? asInt(leaderSnapPre.get("statsVitorias")) : 0;
+            const l0 = leaderSnapPre.exists ? asInt(leaderSnapPre.get("statsDerrotas")) : 0;
+            ptsElite4 = calcElite4Points(w0 + 1, l0);
+        }
+        // (B) pré-leitura de campeonato + participante (SE for aplicar Elite4)
+        let campId = null;
+        let partRef = null;
+        let partSnap = null;
+        if (vencedorTag === "lider" && liga && ptsElite4 > 0) {
+            const campQuery = adminSdk_1.db.collection("campeonatos_elite4")
                 .where("liga", "==", liga)
                 .where("status", "==", "aberto")
                 .orderBy("createdAt", "desc")
-                .limit(1)
-                .get();
+                .limit(1);
+            // @ts-ignore (depende da versão do admin/firestore)
+            const qCamp = await tx.get(campQuery);
             if (!qCamp.empty) {
-                const campId = qCamp.docs[0].id;
-                const partRef = adminSdk_1.db.doc(`campeonatos_elite4/${campId}/participantes/${liderUid}`);
-                const partSnap = await tx.get(partRef);
-                // evita duplicar: só aplica se este desafio ainda não foi registrado
-                const jaAplicado = partSnap.exists && partSnap.get("from_desafio") === desafioId;
-                if (!jaAplicado) {
-                    if (!partSnap.exists) {
-                        tx.set(partRef, {
-                            campeonato_id: campId,
-                            usuario_uid: liderUid,
-                            ginasio_id: ginasioId,
-                            liga,
-                            pontos: 1,
-                            from_desafio: desafioId,
-                            createdAt: Date.now(),
-                        }, { merge: true });
-                    }
-                    else {
-                        tx.update(partRef, {
-                            pontos: adminSdk_1.FieldValue.increment(1),
-                            from_desafio: desafioId,
-                            updatedAt: Date.now(),
-                        });
-                    }
+                campId = qCamp.docs[0].id;
+                partRef = adminSdk_1.db.doc(`campeonatos_elite4/${campId}/participantes/${liderUid}`);
+                partSnap = await tx.get(partRef);
+            }
+        }
+        // =========================
+        // FASE 2: ESCRITAS
+        // =========================
+        // 1) stats
+        tx.set(winRef, { statsVitorias: adminSdk_1.FieldValue.increment(1) }, { merge: true });
+        tx.set(losRef, { statsDerrotas: adminSdk_1.FieldValue.increment(1) }, { merge: true });
+        // 2) Elite4 (somente se líder venceu e achou campeonato)
+        if (vencedorTag === "lider" && liga && ptsElite4 > 0 && campId && partRef && partSnap) {
+            const applied = partSnap.exists ? (partSnap.get("wins_applied") || {}) : {};
+            const jaAplicado = typeof applied === "object" && applied && applied[desafioId] != null;
+            if (!jaAplicado) {
+                const patch = { [desafioId]: ptsElite4 };
+                if (!partSnap.exists) {
+                    tx.set(partRef, {
+                        campeonato_id: campId,
+                        usuario_uid: liderUid,
+                        ginasio_id: ginasioId,
+                        liga,
+                        pontos: ptsElite4,
+                        wins_applied: patch,
+                        createdAt: Date.now(),
+                    }, { merge: true });
+                }
+                else {
+                    tx.update(partRef, {
+                        pontos: adminSdk_1.FieldValue.increment(ptsElite4),
+                        wins_applied: { ...applied, ...patch },
+                        updatedAt: Date.now(),
+                    });
                 }
             }
         }
-        // 3) marca processado (idempotência)
         tx.update(desafioRef, {
             statsApplied: true,
             statsAppliedAt: adminSdk_1.FieldValue.serverTimestamp(),

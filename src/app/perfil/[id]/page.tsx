@@ -933,34 +933,35 @@ export default function PerfilPage() {
   }
 
   async function handleDeclaracao(vencedor: 'lider' | 'desafiante') {
-    // trava localmente
     setJaDeclarei(true);
     setJaDeclareiMsg('Você já declarou um resultado para este desafio.');
 
     try {
-      const role: 'lider' | 'desafiante' = souLiderNoChat ? 'lider' : 'desafiante';
-      const res = await setResultadoEFecharSePossivel({
+      const callerUid = auth.currentUser?.uid;
+      if (!callerUid || !chatDesafioId) throw new Error('Sem sessão ou desafio');
+
+      const actor: 'lider' | 'desafiante' = souLiderNoChat ? 'lider' : 'desafiante';
+
+      const res = await setResultadoEFecharSePossivel(
         db,
-        desafioId: chatDesafioId!,
-        role,
+        chatDesafioId!,
+        actor,
         vencedor,
-        temporadaAtiva,
-        callerUid: logadoUid!,
-      });
+        callerUid
+      );
 
       if (res.closed) {
-        await clearDesafioChat(chatDesafioId!);
+        await clearDesafioChat(chatDesafioId);
         closeDesafioChat();
       }
-      // se o back-end rejeitar, o catch abaixo reverte o lock
     } catch (e) {
       console.error('Falha ao declarar resultado:', e);
       alert('Não foi possível declarar o resultado agora.');
-      // libera de novo se falhou
       setJaDeclarei(false);
       setJaDeclareiMsg(null);
     }
   }
+
 
   async function clearDesafioChat(desafioId: string) {
     const snap = await getDocs(collection(db, 'desafios_ginasio', desafioId, 'mensagens'));

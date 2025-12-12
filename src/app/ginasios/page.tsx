@@ -52,7 +52,7 @@ type Bloqueio = {
   id: string;
   ginasio_id: string;
   desafiante_uid: string;
-  proximo_desafio: number;
+  blockedUntilMs: number;
 };
 
 type Disputa = {
@@ -434,15 +434,23 @@ export default function GinasiosPage() {
     const unsub = onSnapshot(qBloq, (snap) => {
       const list: Bloqueio[] = snap.docs.map((d) => {
         const data = d.data() as any;
+
+        const blockedUntilMs =
+          typeof data.blockedUntilMs === 'number'
+            ? data.blockedUntilMs
+            : data.blockedUntil?.toMillis?.() ?? 0;
+
         return {
           id: d.id,
           ginasio_id: data.ginasio_id,
           desafiante_uid: data.desafiante_uid,
-          proximo_desafio: data.proximo_desafio,
+          blockedUntilMs,
         };
       });
+
       setBloqueios(list);
     });
+
     return () => unsub();
   }, [userUid]);
 
@@ -744,13 +752,13 @@ export default function GinasiosPage() {
   async function declareResultado(vencedor: "lider" | "desafiante") {
     if (!userUid || !chatDesafioId) return;
 
-    const res = await setResultadoEFecharSePossivel({
+    const res = await setResultadoEFecharSePossivel(
       db,
-      desafioId: chatDesafioId,
-      role: souLiderNoChat ? "lider" : "desafiante",
+      chatDesafioId,
+      souLiderNoChat ? "lider" : "desafiante",
       vencedor,
-      temporada, // pode ser null; o service trata
-    });
+      userUid
+    );
 
     // Se fechou (conflito ou concluído), limpa e fecha o chat
     if (res.closed) {
@@ -850,7 +858,8 @@ export default function GinasiosPage() {
         const meuBloqueio = bloqueios.find(
           (b) => b.ginasio_id === g.id && b.desafiante_uid === userUid
         );
-        const bloqueado = meuBloqueio ? meuBloqueio.proximo_desafio > agora : false;
+
+        const bloqueado = !!meuBloqueio && meuBloqueio.blockedUntilMs > Date.now();
 
         const disputaDoGinasio = disputas.find(
           (d) => d.ginasio_id === g.id && d.status === 'inscricoes'
@@ -876,6 +885,8 @@ export default function GinasiosPage() {
 
         const desafioSelecionado =
           desafiosPendentesGinasio.find((d) => d.id === desafioSelecionadoId) || null;
+
+        const quandoLibera = meuBloqueio ? new Date(meuBloqueio.blockedUntilMs) : null;
 
         const equipeDesafianteSelecionado =
           desafioSelecionado && desafioSelecionado.liga
@@ -1103,8 +1114,9 @@ export default function GinasiosPage() {
                         : jaTemInsignia
                           ? 'Já ganhou'
                           : bloqueado
-                            ? 'Aguarde novo desafio'
-                            : 'Desafiar'}
+                            ? `Aguarde até ${quandoLibera?.toLocaleString('pt-BR')}`
+                            : 'Desafiar'
+                    }
                   </button>
                 </div>
               )}

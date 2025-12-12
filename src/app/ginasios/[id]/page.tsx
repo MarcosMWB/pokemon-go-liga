@@ -25,8 +25,6 @@ import {
 } from "firebase/firestore";
 import {
   setResultadoEFecharSePossivel,
-  type Role,
-  type Vencedor,
 } from "@/lib/desafiosService";
 
 /** ----------------- Tipos ----------------- */
@@ -87,7 +85,7 @@ type Bloqueio = {
   id: string;
   ginasio_id: string;
   desafiante_uid: string;
-  proximo_desafio: number;
+  blockedUntilMs: number;
 };
 
 type Insignia = {
@@ -541,11 +539,17 @@ export default function GinasioOverviewPage() {
         setBloqueio(null);
       } else {
         const x = d.data() as any;
+
+        const blockedUntilMs =
+          typeof x.blockedUntilMs === "number"
+            ? x.blockedUntilMs
+            : x.blockedUntil?.toMillis?.() ?? 0;
+
         setBloqueio({
           id: d.id,
           ginasio_id: x.ginasio_id,
           desafiante_uid: x.desafiante_uid,
-          proximo_desafio: x.proximo_desafio,
+          blockedUntilMs,
         });
       }
     });
@@ -680,7 +684,7 @@ export default function GinasioOverviewPage() {
 
   /** --------- Ações / computados --------- */
   const agora = Date.now();
-  const bloqueado = bloqueio ? bloqueio.proximo_desafio > agora : false;
+  const bloqueado = !!bloqueio && bloqueio.blockedUntilMs > agora;
   const jaTemInsignia =
     !!temporada &&
     minhasInsignias.some((i) => i.ginasio_id === ginasioId && i.temporada_id === temporada.id);
@@ -968,19 +972,18 @@ export default function GinasioOverviewPage() {
     const ok = window.confirm("Você confirma que venceu esta batalha?");
     if (!ok) return;
 
-    const role: Role = souLiderNoChat ? "lider" : "desafiante";
-    const vencedor: Vencedor = souLiderNoChat ? "lider" : "desafiante";
+    const role = souLiderNoChat ? "lider" : "desafiante";
+    const vencedor = souLiderNoChat ? "lider" : "desafiante";
 
     try {
-      const res = await setResultadoEFecharSePossivel({
+      const res = await setResultadoEFecharSePossivel(
         db,
-        desafioId: chatDesafioId,
+        chatDesafioId,
         role,
         vencedor,
-        temporadaAtiva: temporada,
-        callerUid: uid,
-      });
-      // O onSnapshot já fecha/limpa o chat quando status muda.
+        uid
+      );
+
       if (res.closed && res.status === "conflito") {
         alert("Conflito declarado. A moderação foi notificada.");
       }
@@ -995,18 +998,18 @@ export default function GinasioOverviewPage() {
     const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
     if (!ok) return;
 
-    const role: Role = souLiderNoChat ? "lider" : "desafiante";
-    const vencedor: Vencedor = souLiderNoChat ? "desafiante" : "lider";
+    const role = souLiderNoChat ? "lider" : "desafiante";
+    const vencedor = souLiderNoChat ? "desafiante" : "lider";
 
     try {
-      const res = await setResultadoEFecharSePossivel({
+      const res = await setResultadoEFecharSePossivel(
         db,
-        desafioId: chatDesafioId,
+        chatDesafioId,
         role,
         vencedor,
-        temporadaAtiva: temporada,
-        callerUid: uid,
-      });
+        uid
+      );
+
       if (res.closed && res.status === "conflito") {
         alert("Conflito declarado. A moderação foi notificada.");
       }
@@ -1034,6 +1037,8 @@ export default function GinasioOverviewPage() {
       </div>
     );
   }
+
+  const bloqueioAte = bloqueio?.blockedUntilMs ? new Date(bloqueio.blockedUntilMs) : null;
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
@@ -1195,8 +1200,9 @@ export default function GinasioOverviewPage() {
                       : jaTemInsignia
                         ? "Já ganhou na temporada"
                         : bloqueado
-                          ? "Aguarde para desafiar"
-                          : "Desafiar este ginásio"}
+                          ? `Aguarde até ${bloqueioAte?.toLocaleString("pt-BR")}`
+                          : "Desafiar este ginásio"
+                  }
                 </button>
               )}
             </>
