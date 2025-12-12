@@ -800,8 +800,6 @@ export default function GinasiosPage() {
     );
   }
 
-  const agora = Date.now();
-
   const minhaEquipeLiga =
     userUid && selectedLiga
       ? equipesUsuariosLiga[`${userUid}::${selectedLiga}`] || []
