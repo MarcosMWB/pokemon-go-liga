@@ -569,6 +569,7 @@ export default function PerfilPage() {
           const parent = parentSnap.exists() ? (parentSnap.data() as any) : {};
 
           if (parentCol === 'disputas_ginasio') {
+            if (!['inscricoes', 'batalhando'].includes(parent.status)) return;
             disputas.push({
               id: d.id,
               disputa_id: parentDoc.id,
@@ -578,7 +579,8 @@ export default function PerfilPage() {
               disputa_status: parent.status ?? '—',
             });
           } else if (parentCol === 'campeonatos_elite4') {
-            if (parent.status === 'aberto' && data.tipo_participante !== 'elite4' && data.optou_participar !== true) return;
+            if (parent.status !== 'aberto') return;
+            if (data.tipo_participante !== 'elite4' && data.optou_participar !== true) return;
             elite.push({
               id: d.id,
               campeonato_id: parentDoc.id,
