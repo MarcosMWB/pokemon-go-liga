@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
 
-type Elite = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string };
+type Elite = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string; nome?: string };
 type HistoricoItem = {
   id: string;
   campeonato_id: string;
@@ -49,6 +49,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
             liga: x.liga,
             pos: x.pos as 1 | 2 | 3 | 4,
             uid: x.uid,
+            nome: x.nome,
           });
         }
       });
@@ -120,7 +121,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
                 className="flex items-center justify-between bg-gray-50 rounded px-3 py-2"
               >
                 <span>Posição {pos}</span>
-                <span className="font-medium">{e?.uid || "—"}</span>
+                <span className="font-medium">{e?.nome || e?.uid || "—"}</span>
               </li>
             );
           })}

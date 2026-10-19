@@ -5,6 +5,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 
 // se existir um arquivo desafios.ts que exporta a trigger, mantenha:
 export { onDesafioResultadosWrite } from "./desafios";
+export { adminFinalizeElite4 } from "./elite4";
 export {
   onGymChallengeNotification,
   onGymDisputeBattleNotification,

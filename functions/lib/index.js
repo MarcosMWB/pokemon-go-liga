@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -8,6 +8,8 @@ const https_1 = require("firebase-functions/v2/https");
 // se existir um arquivo desafios.ts que exporta a trigger, mantenha:
 var desafios_1 = require("./desafios");
 Object.defineProperty(exports, "onDesafioResultadosWrite", { enumerable: true, get: function () { return desafios_1.onDesafioResultadosWrite; } });
+var elite4_1 = require("./elite4");
+Object.defineProperty(exports, "adminFinalizeElite4", { enumerable: true, get: function () { return elite4_1.adminFinalizeElite4; } });
 var notifications_1 = require("./notifications");
 Object.defineProperty(exports, "onGymChallengeNotification", { enumerable: true, get: function () { return notifications_1.onGymChallengeNotification; } });
 Object.defineProperty(exports, "onGymDisputeBattleNotification", { enumerable: true, get: function () { return notifications_1.onGymDisputeBattleNotification; } });
