@@ -146,6 +146,28 @@ function computeWishCost(base: number, up: number, uses: number) {
   return b + u * level;
 }
 
+function timestampToMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'string') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value && typeof value === 'object') {
+    const timestamp = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+    if (typeof timestamp.toMillis === 'function') {
+      const millis = timestamp.toMillis();
+      return Number.isFinite(millis) ? millis : null;
+    }
+    if (typeof timestamp.seconds === 'number' && Number.isFinite(timestamp.seconds)) {
+      return timestamp.seconds * 1000 + Math.floor((timestamp.nanoseconds || 0) / 1_000_000);
+    }
+  }
+  return null;
+}
+
 async function getElite4CampeonatoAtivoId(db: any, liga?: string): Promise<string | null> {
   // tenta por "ativo"
   const q1 = liga
@@ -658,8 +680,8 @@ export default function PerfilPage() {
     const unsub = onSnapshot(qL, (snap) => {
       const list: Liderato[] = snap.docs.map((d) => {
         const x = d.data() as any;
-        const inicio = Number(x.inicio ?? x.startedAt ?? 0);
-        const fim = (x.fim ?? x.endedAt ?? null) as number | null;
+        const inicio = timestampToMs(x.inicio ?? x.startedAt) ?? 0;
+        const fim = timestampToMs(x.fim ?? x.endedAt);
         return {
           id: d.id,
           ginasio_id: x.ginasio_id,
@@ -685,8 +707,8 @@ export default function PerfilPage() {
           id: d.id,
           usuario_uid: x.usuario_uid,
           liga: x.liga || '',
-          inicio: Number(x.inicio || 0),
-          fim: x.fim ?? null,
+          inicio: timestampToMs(x.inicio ?? x.startedAt) ?? 0,
+          fim: timestampToMs(x.fim ?? x.endedAt),
         };
       });
       setEliteMandatos(list);
