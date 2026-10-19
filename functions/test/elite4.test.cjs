@@ -94,6 +94,8 @@ test('um vencedor troca com o Elite de menor pontuação e os dois preservam seu
   assert.equal(env.dados.get('elite4_mandatos/m2').fim, null);
   assert.equal([...env.dados.keys()].some((k) => k.startsWith('disputas_ginasio/')), false);
   assert.equal(env.dados.get('desafios_ginasio/pendente').status, 'cancelado');
+  assert.equal(env.dados.get('campeonatos_elite4_resultados/c1').top4.find((p) => p.uid === 'u1').pontos, 99);
+  assert.equal(env.dados.get('campeonatos_elite4_resultados/c1').top4.find((p) => p.uid === 'e2').pontos, 20);
 });
 
 test('todos optando por não participar mantém os quatro cargos e todos os ginásios intactos', async () => {

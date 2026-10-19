@@ -1112,6 +1112,11 @@ export default function GinasioOverviewPage() {
         {/* AÇÃO */}
         <div className="bg-white rounded shadow p-4">
           <h2 className="font-semibold mb-2">Ação</h2>
+          {uid && ginasio.lider_uid === uid && (
+            <Link href={`/elite4/inscricao?liga=${encodeURIComponent(ginasio.liga || "")}`} className="mb-3 block rounded border border-purple-200 bg-purple-50 p-3 text-sm font-semibold text-purple-900">
+              Minha participação na disputa da Elite 4: escolher se quero concorrer
+            </Link>
+          )}
 
           {hasDisputa ? (
             <>

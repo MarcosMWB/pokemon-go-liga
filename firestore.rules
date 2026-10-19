@@ -480,7 +480,8 @@ service cloud.firestore {
         function validEnrollment() {
           let camp = get(/databases/$(database)/documents/campeonatos_elite4/$(id));
           let gym = get(/databases/$(database)/documents/ginasios/$(request.resource.data.ginasio_id));
-          return camp.exists() && camp.data.status == 'aberto' && gym.exists()
+          return exists(/databases/$(database)/documents/campeonatos_elite4/$(id)) && camp.data.status == 'aberto'
+            && exists(/databases/$(database)/documents/ginasios/$(request.resource.data.ginasio_id))
             && gym.data.lider_uid == request.auth.uid
             && gym.data.liga == request.resource.data.liga
             && camp.data.liga == request.resource.data.liga;

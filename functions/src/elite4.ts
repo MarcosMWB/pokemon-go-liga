@@ -102,6 +102,7 @@ export async function aplicarPromocaoElite4(campeonatoId: string, adminUid: stri
     }));
     if (atuais.size + mandatos.size + 18 + detalhes.reduce((s, d) => s + d.historico.size + d.desafios.size + 4, 0) > 450) throw new HttpsError("resource-exhausted", "Há registros demais para esta operação. Solicite uma revisão administrativa.");
     const agora = Date.now();
+    const top4 = plano.novaElite.map((membro) => ({ ...membro, pontos: ranking.find((p) => p.uid === membro.uid)?.pontos || 0 }));
     const horas = Number(String(config.get("tempo_inscricoes") || 0).replace(",", "."));
     const nextStartAtMs = agora + (Number.isFinite(horas) ? Math.max(0, horas) * 3600000 : 0);
     const temporadaId = String(camp.get("temporada_id") || temporadas.docs[0]?.id || "");
@@ -142,13 +143,13 @@ export async function aplicarPromocaoElite4(campeonatoId: string, adminUid: stri
     }
     const resultadoRef = resultadoAnterior?.ref || db.doc(`campeonatos_elite4_resultados/${campeonatoId}`);
     tx.set(resultadoRef, {
-      campeonato_id: campeonatoId, liga, ranking: ranking.map((p, i) => ({ ...p, pos: i + 1 })), top4: plano.novaElite,
+      campeonato_id: campeonatoId, liga, ranking: ranking.map((p, i) => ({ ...p, pos: i + 1 })), top4,
       top4_classificacao: ranking.filter((p) => p.optou_participar && p.tipo_participante === "lider").slice(0, 4),
       trocas: plano.trocas, appliedAt: agora, promocao_aplicada: true, admin_uid: adminUid, regra_versao: 2,
       elite4_anterior: atuais.docs.map((d) => ({ id: d.id, ...d.data() })), ginasios_liberados: ginasiosLiberados, ginasios_transferidos: ginasiosTransferidos,
     }, { merge: true });
-    tx.update(campRef, { status: "fechado", ativo: false, closedAt: camp.get("closedAt") || agora, promocao_aplicada: true, promocao_aplicada_at: agora, promocao_admin_uid: adminUid, regra_versao: 2, resultado_id: resultadoRef.id, elite4_definida: plano.novaElite, ginasios_liberados: ginasiosLiberados, ginasios_transferidos: ginasiosTransferidos, trocas: plano.trocas });
-    return { ok: true, jaAplicada: false, top4: plano.novaElite, ginasiosLiberados, ginasiosTransferidos };
+    tx.update(campRef, { status: "fechado", ativo: false, closedAt: camp.get("closedAt") || agora, promocao_aplicada: true, promocao_aplicada_at: agora, promocao_admin_uid: adminUid, regra_versao: 2, resultado_id: resultadoRef.id, elite4_definida: top4, ginasios_liberados: ginasiosLiberados, ginasios_transferidos: ginasiosTransferidos, trocas: plano.trocas });
+    return { ok: true, jaAplicada: false, top4, ginasiosLiberados, ginasiosTransferidos };
   });
 }
 
