@@ -315,6 +315,10 @@ export default function GinasioOverviewPage() {
   const [chatOtherName, setChatOtherName] = useState("Treinador");
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
+  const [chatResultadoEnviado, setChatResultadoEnviado] = useState<"vitoria" | "derrota" | null>(null);
+  const [chatResultadoEnviando, setChatResultadoEnviando] = useState<"vitoria" | "derrota" | null>(null);
+  const [chatResultadoFinal, setChatResultadoFinal] = useState<"concluido" | "conflito" | null>(null);
+  const [chatErroResultado, setChatErroResultado] = useState<string | null>(null);
   const [showChatInfo, setShowChatInfo] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
@@ -894,6 +898,12 @@ export default function GinasioOverviewPage() {
 
     const otherUid = d.lider_uid === uid ? d.desafiante_uid : d.lider_uid;
     setSouLiderNoChat(d.lider_uid === uid);
+    const minhaDeclaracao = d.lider_uid === uid ? d.resultado_lider : d.resultado_desafiante;
+    const resultadoEsperado = d.lider_uid === uid ? "lider" : "desafiante";
+    setChatResultadoEnviado(minhaDeclaracao ? (minhaDeclaracao === resultadoEsperado ? "vitoria" : "derrota") : null);
+    setChatResultadoEnviando(null);
+    setChatResultadoFinal(d.status === "concluido" || d.status === "conflito" ? d.status : null);
+    setChatErroResultado(null);
 
     let nome = "Treinador";
     let fc: string | null = null;
@@ -932,9 +942,13 @@ export default function GinasioOverviewPage() {
       async (ds) => {
         if (!ds.exists()) return;
         const dd = ds.data() as any;
+        const minhaDeclaracao = dd.lider_uid === uid ? dd.resultado_lider : dd.resultado_desafiante;
+        const resultadoEsperado = dd.lider_uid === uid ? "lider" : "desafiante";
+        if (minhaDeclaracao) {
+          setChatResultadoEnviado(minhaDeclaracao === resultadoEsperado ? "vitoria" : "derrota");
+        }
         if (dd.status === "concluido" || dd.status === "conflito") {
-          await clearDesafioChat(desafioId);
-          closeDesafioChat();
+          setChatResultadoFinal(dd.status);
         }
       },
       (err) => console.error("Desafio listener error:", err)
@@ -942,6 +956,9 @@ export default function GinasioOverviewPage() {
   }
 
   function closeDesafioChat() {
+    if (chatResultadoFinal && chatDesafioId) {
+      void clearDesafioChat(chatDesafioId).catch((err) => console.warn("Falha ao limpar o chat finalizado:", err));
+    }
     chatUnsubRef.current?.();
     desafioUnsubRef.current?.();
     chatUnsubRefRefCleanup();
@@ -951,6 +968,10 @@ export default function GinasioOverviewPage() {
     setChatInput("");
     setChatOtherFC(null);
     setShowChatInfo(false);
+    setChatResultadoEnviado(null);
+    setChatResultadoEnviando(null);
+    setChatResultadoFinal(null);
+    setChatErroResultado(null);
   }
   function chatUnsubRefRefCleanup() {
     chatUnsubRef.current = null;
@@ -972,25 +993,8 @@ export default function GinasioOverviewPage() {
     const ok = window.confirm("Você confirma que venceu esta batalha?");
     if (!ok) return;
 
-    const role = souLiderNoChat ? "lider" : "desafiante";
     const vencedor = souLiderNoChat ? "lider" : "desafiante";
-
-    try {
-      const res = await setResultadoEFecharSePossivel(
-        db,
-        chatDesafioId,
-        role,
-        vencedor,
-        uid
-      );
-
-      if (res.closed && res.status === "conflito") {
-        alert("Conflito declarado. A moderação foi notificada.");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Falha ao declarar o resultado. Tente novamente.");
-    }
+    await declareResultado(vencedor, "vitoria");
   }
 
   async function declareResultadoFuiDerrotado() {
@@ -998,24 +1002,31 @@ export default function GinasioOverviewPage() {
     const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
     if (!ok) return;
 
-    const role = souLiderNoChat ? "lider" : "desafiante";
     const vencedor = souLiderNoChat ? "desafiante" : "lider";
+    await declareResultado(vencedor, "derrota");
+  }
 
+  async function declareResultado(vencedor: "lider" | "desafiante", declaracao: "vitoria" | "derrota") {
+    if (!uid || !chatDesafioId || chatResultadoEnviando) return;
+    setChatResultadoEnviando(declaracao);
+    setChatErroResultado(null);
     try {
       const res = await setResultadoEFecharSePossivel(
         db,
         chatDesafioId,
-        role,
+        souLiderNoChat ? "lider" : "desafiante",
         vencedor,
         uid
       );
-
-      if (res.closed && res.status === "conflito") {
-        alert("Conflito declarado. A moderação foi notificada.");
-      }
+      setChatResultadoEnviado(declaracao);
+      if (res.closed) setChatResultadoFinal(res.status);
     } catch (e) {
       console.error(e);
-      alert("Falha ao declarar o resultado. Tente novamente.");
+      setChatResultadoEnviado(null);
+      setChatResultadoFinal(null);
+      setChatErroResultado("Não foi possível enviar sua declaração. Confira a conexão e tente novamente.");
+    } finally {
+      setChatResultadoEnviando(null);
     }
   }
 
@@ -1465,24 +1476,44 @@ export default function GinasioOverviewPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={declareResultadoVenci}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm px-3 py-2 rounded"
-                  title="Você declara que VENCEU"
-                  type="button"
-                >
-                  🏆 Venci
-                </button>
-                <button
-                  onClick={declareResultadoFuiDerrotado}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm px-3 py-2 rounded"
-                  title="Você declara que FOI DERROTADO"
-                  type="button"
-                >
-                  Fui derrotado
-                </button>
-              </div>
+              {chatResultadoEnviado ? (
+                <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
+                  <p className="font-semibold">
+                    ✓ Declaração enviada: você informou que {chatResultadoEnviado === "vitoria" ? "venceu" : "foi derrotado"}.
+                  </p>
+                  {chatResultadoFinal === "conflito" ? (
+                    <p className="mt-1">Os relatos foram diferentes. A equipe de moderação precisa analisar o resultado.</p>
+                  ) : chatResultadoFinal === "concluido" ? (
+                    <p className="mt-1">Resultado confirmado pelos dois participantes.</p>
+                  ) : (
+                    <p className="mt-1">Aguardando a declaração do outro participante.</p>
+                  )}
+                </div>
+              ) : chatResultadoEnviando ? (
+                <p role="status" aria-live="polite" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-950">
+                  Enviando sua declaração de {chatResultadoEnviando === "vitoria" ? "vitória" : "derrota"}…
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={declareResultadoVenci}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm px-3 py-2 rounded"
+                    title="Você declara que VENCEU"
+                    type="button"
+                  >
+                    🏆 Venci
+                  </button>
+                  <button
+                    onClick={declareResultadoFuiDerrotado}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm px-3 py-2 rounded"
+                    title="Você declara que FOI DERROTADO"
+                    type="button"
+                  >
+                    Fui derrotado
+                  </button>
+                </div>
+              )}
+              {chatErroResultado && <p role="alert" className="text-sm text-red-700">{chatErroResultado}</p>}
             </div>
           </div>
         </div>

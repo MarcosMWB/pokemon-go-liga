@@ -211,9 +211,6 @@ export default function PerfilPage() {
   /* Auth / user */
   const [logadoUid, setLogadoUid] = useState<string | null>(null);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [notificationsSaving, setNotificationsSaving] = useState(false);
 
   /* Gym / disputes */
   const [ginasiosLider, setGinasiosLider] = useState<Ginasio[]>([]);
@@ -297,50 +294,6 @@ export default function PerfilPage() {
 
     return unsub;
   }, []);
-
-  useEffect(() => {
-    if (!ehMeuPerfil || !perfilUid) {
-      setNotificationsEnabled(false);
-      setNotificationsLoading(false);
-      return;
-    }
-
-    let active = true;
-    setNotificationsLoading(true);
-    getDoc(doc(db, 'usuarios_private', perfilUid))
-      .then((snapshot) => {
-        if (active) {
-          setNotificationsEnabled(snapshot.data()?.notifications?.enabled === true);
-        }
-      })
-      .catch((error) => {
-        console.error('Não foi possível carregar a preferência de notificações:', error);
-      })
-      .finally(() => {
-        if (active) setNotificationsLoading(false);
-      });
-
-    return () => { active = false; };
-  }, [ehMeuPerfil, perfilUid]);
-
-  async function salvarPreferenciaNotifications(enabled: boolean) {
-    if (!ehMeuPerfil || !perfilUid || notificationsSaving) return;
-    setNotificationsSaving(true);
-    try {
-      await setDoc(doc(db, 'usuarios_private', perfilUid), {
-        notifications: {
-          enabled,
-          updatedAt: serverTimestamp(),
-        },
-      }, { merge: true });
-      setNotificationsEnabled(enabled);
-    } catch (error) {
-      console.error('Não foi possível salvar a preferência de notificações:', error);
-      alert('Não foi possível salvar sua preferência. Tente novamente.');
-    } finally {
-      setNotificationsSaving(false);
-    }
-  }
 
   /* Ligas */
   useEffect(() => {
@@ -1148,7 +1101,7 @@ export default function PerfilPage() {
     }
   }
 
-  const displayName = usuario?.nome || usuario?.email || 'Jogador';
+  const displayName = usuario?.nome || 'Jogador';
 
   /* =======================
      Render
@@ -1225,7 +1178,7 @@ export default function PerfilPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => router.push(`/equipes/${perfilUid}`)}
             className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
@@ -1238,28 +1191,15 @@ export default function PerfilPage() {
           >
             Ver tutorial
           </button>
+          {ehMeuPerfil && (
+            <button
+              onClick={() => router.push(`/perfil/${perfilUid}/configuracoes`)}
+              className="border border-slate-300 bg-white px-3 py-2 rounded text-sm"
+            >
+              Configurações do perfil
+            </button>
+          )}
         </div>
-
-        {ehMeuPerfil && (
-          <section className="rounded border border-slate-200 bg-slate-50 p-3">
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={notificationsEnabled}
-                disabled={notificationsLoading || notificationsSaving}
-                onChange={(event) => salvarPreferenciaNotifications(event.target.checked)}
-              />
-              <span>
-                <b>Receber notificações no site</b>
-                <span className="mt-1 block text-xs text-slate-600">
-                  Novas batalhas/disputas, desafios recebidos e confirmação de insígnias. Você pode alterar esta opção quando quiser.
-                </span>
-              </span>
-            </label>
-            {notificationsSaving && <p className="mt-2 text-xs text-slate-500">Salvando preferência…</p>}
-          </section>
-        )}
       </div>
 
       {/* ABAS */}

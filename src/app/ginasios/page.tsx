@@ -228,6 +228,10 @@ export default function GinasiosPage() {
   const [chatOtherName, setChatOtherName] = useState('Treinador');
   const [chatOtherFC, setChatOtherFC] = useState<string | null>(null);
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
+  const [chatResultadoEnviado, setChatResultadoEnviado] = useState<"vitoria" | "derrota" | null>(null);
+  const [chatResultadoEnviando, setChatResultadoEnviando] = useState<"vitoria" | "derrota" | null>(null);
+  const [chatResultadoFinal, setChatResultadoFinal] = useState<"concluido" | "conflito" | null>(null);
+  const [chatErroResultado, setChatErroResultado] = useState<string | null>(null);
   const [showChatInfo, setShowChatInfo] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
   const desafioUnsubRef = useRef<Unsubscribe | null>(null);
@@ -673,6 +677,12 @@ export default function GinasiosPage() {
 
     const otherUid = d.lider_uid === userUid ? d.desafiante_uid : d.lider_uid;
     setSouLiderNoChat(d.lider_uid === userUid);
+    const minhaDeclaracao = d.lider_uid === userUid ? d.resultado_lider : d.resultado_desafiante;
+    const resultadoEsperado = d.lider_uid === userUid ? "lider" : "desafiante";
+    setChatResultadoEnviado(minhaDeclaracao ? (minhaDeclaracao === resultadoEsperado ? "vitoria" : "derrota") : null);
+    setChatResultadoEnviando(null);
+    setChatResultadoFinal(d.status === "concluido" || d.status === "conflito" ? d.status : null);
+    setChatErroResultado(null);
 
     let nome = 'Treinador';
     let fc: string | null = null;
@@ -711,9 +721,13 @@ export default function GinasiosPage() {
       async (ds) => {
         if (!ds.exists()) return;
         const dd = ds.data() as any;
+        const minhaDeclaracao = dd.lider_uid === userUid ? dd.resultado_lider : dd.resultado_desafiante;
+        const resultadoEsperado = dd.lider_uid === userUid ? "lider" : "desafiante";
+        if (minhaDeclaracao) {
+          setChatResultadoEnviado(minhaDeclaracao === resultadoEsperado ? "vitoria" : "derrota");
+        }
         if (dd.status === 'concluido' || dd.status === 'conflito') {
-          await clearDesafioChat(desafioId);
-          closeDesafioChat();
+          setChatResultadoFinal(dd.status);
         }
       },
       (err) => console.error('Desafio listener error:', err)
@@ -721,6 +735,9 @@ export default function GinasiosPage() {
   }
 
   function closeDesafioChat() {
+    if (chatResultadoFinal && chatDesafioId) {
+      void clearDesafioChat(chatDesafioId).catch((err) => console.warn("Falha ao limpar o chat finalizado:", err));
+    }
     chatUnsubRef.current?.();
     desafioUnsubRef.current?.();
     chatUnsubRef.current = null;
@@ -731,6 +748,10 @@ export default function GinasiosPage() {
     setChatInput('');
     setChatOtherFC(null);
     setShowChatInfo(false);
+    setChatResultadoEnviado(null);
+    setChatResultadoEnviando(null);
+    setChatResultadoFinal(null);
+    setChatErroResultado(null);
   }
 
   async function sendChatMessage() {
@@ -746,54 +767,56 @@ export default function GinasiosPage() {
   async function declareResultadoVenci() {
     const ok = window.confirm("Você confirma que venceu esta batalha?");
     if (!ok) return;
-    await declareResultado(souLiderNoChat ? "lider" : "desafiante");
+    await declareResultado(souLiderNoChat ? "lider" : "desafiante", "vitoria");
   }
 
   async function declareResultadoFuiDerrotado() {
     const ok = window.confirm("Você confirma que foi derrotado nesta batalha?");
     if (!ok) return;
-    await declareResultado(souLiderNoChat ? "desafiante" : "lider");
+    await declareResultado(souLiderNoChat ? "desafiante" : "lider", "derrota");
   }
 
-  async function declareResultado(vencedor: "lider" | "desafiante") {
-    if (!userUid || !chatDesafioId) return;
-
-    const res = await setResultadoEFecharSePossivel(
-      db,
-      chatDesafioId,
-      souLiderNoChat ? "lider" : "desafiante",
-      vencedor,
-      userUid
-    );
-
-    // Se fechou (conflito ou concluído), limpa e fecha o chat
-    if (res.closed) {
-      try {
-        // FECHA LIDERATO se o ginásio entrou em disputa por 3 derrotas
-        // (checamos estado atual do ginásio)
-        const dRef = doc(db, "desafios_ginasio", chatDesafioId);
-        const dSnap = await getDoc(dRef);
-        if (dSnap.exists()) {
-          const d = dSnap.data() as any;
-          const gRef = doc(db, "ginasios", d.ginasio_id);
-          const gSnap = await getDoc(gRef);
-          if (gSnap.exists()) {
-            const g = gSnap.data() as any;
-            if (g.em_disputa === true && !g.lider_uid && d.lider_uid) {
-              await encerrarLideratoSeAberto(d.ginasio_id, d.lider_uid);
+  async function declareResultado(vencedor: "lider" | "desafiante", declaracao: "vitoria" | "derrota") {
+    if (!userUid || !chatDesafioId || chatResultadoEnviando) return;
+    setChatResultadoEnviando(declaracao);
+    setChatErroResultado(null);
+    try {
+      const res = await setResultadoEFecharSePossivel(
+        db,
+        chatDesafioId,
+        souLiderNoChat ? "lider" : "desafiante",
+        vencedor,
+        userUid
+      );
+      setChatResultadoEnviado(declaracao);
+      if (res.closed) {
+        setChatResultadoFinal(res.status);
+        try {
+          // Fecha a liderança se o ginásio entrou em disputa após três derrotas.
+          const dRef = doc(db, "desafios_ginasio", chatDesafioId);
+          const dSnap = await getDoc(dRef);
+          if (dSnap.exists()) {
+            const d = dSnap.data() as any;
+            const gRef = doc(db, "ginasios", d.ginasio_id);
+            const gSnap = await getDoc(gRef);
+            if (gSnap.exists()) {
+              const g = gSnap.data() as any;
+              if (g.em_disputa === true && !g.lider_uid && d.lider_uid) {
+                await encerrarLideratoSeAberto(d.ginasio_id, d.lider_uid);
+              }
             }
           }
+        } catch (e) {
+          console.warn("Falha ao verificar/encerrar líderato:", e);
         }
-      } catch (e) {
-        console.warn("Falha ao verificar/encerrar líderato:", e);
       }
-
-      await clearDesafioChat(chatDesafioId);
-      closeDesafioChat();
-
-      if (res.status === "conflito") {
-        alert("Conflito: os resultados enviados são divergentes. O caso foi sinalizado.");
-      }
+    } catch (e) {
+      console.error(e);
+      setChatResultadoEnviado(null);
+      setChatResultadoFinal(null);
+      setChatErroResultado("Não foi possível enviar sua declaração. Confira a conexão e tente novamente.");
+    } finally {
+      setChatResultadoEnviando(null);
     }
   }
 
@@ -1263,24 +1286,44 @@ export default function GinasiosPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={declareResultadoVenci}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm px-3 py-2 rounded"
-                  title="Você declara que VENCEU"
-                  type="button"
-                >
-                  🏆 Venci
-                </button>
-                <button
-                  onClick={declareResultadoFuiDerrotado}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm px-3 py-2 rounded"
-                  title="Você declara que FOI DERROTADO"
-                  type="button"
-                >
-                  Fui derrotado
-                </button>
-              </div>
+              {chatResultadoEnviado ? (
+                <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
+                  <p className="font-semibold">
+                    ✓ Declaração enviada: você informou que {chatResultadoEnviado === "vitoria" ? "venceu" : "foi derrotado"}.
+                  </p>
+                  {chatResultadoFinal === "conflito" ? (
+                    <p className="mt-1">Os relatos foram diferentes. A equipe de moderação precisa analisar o resultado.</p>
+                  ) : chatResultadoFinal === "concluido" ? (
+                    <p className="mt-1">Resultado confirmado pelos dois participantes.</p>
+                  ) : (
+                    <p className="mt-1">Aguardando a declaração do outro participante.</p>
+                  )}
+                </div>
+              ) : chatResultadoEnviando ? (
+                <p role="status" aria-live="polite" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-950">
+                  Enviando sua declaração de {chatResultadoEnviando === "vitoria" ? "vitória" : "derrota"}…
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={declareResultadoVenci}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm px-3 py-2 rounded"
+                    title="Você declara que VENCEU"
+                    type="button"
+                  >
+                    🏆 Venci
+                  </button>
+                  <button
+                    onClick={declareResultadoFuiDerrotado}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm px-3 py-2 rounded"
+                    title="Você declara que FOI DERROTADO"
+                    type="button"
+                  >
+                    Fui derrotado
+                  </button>
+                </div>
+              )}
+              {chatErroResultado && <p role="alert" className="text-sm text-red-700">{chatErroResultado}</p>}
             </div>
           </div>
         </div>
