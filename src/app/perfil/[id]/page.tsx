@@ -815,7 +815,11 @@ export default function PerfilPage() {
     const months = Math.floor(daysTotal / 30);
     const days = daysTotal % 30;
     const hours = Math.floor((ms % 86_400_000) / 3_600_000);
-    if (months > 0) return `${months}m ${days}d`;
+    if (months > 0) {
+      const labelMeses = months === 1 ? 'mês' : 'meses';
+      const labelDias = days === 1 ? 'dia' : 'dias';
+      return `${months} ${labelMeses}${days > 0 ? ` e ${days} ${labelDias}` : ''}`;
+    }
     if (days > 0) return `${days}d ${hours}h`;
     return `${hours}h`;
   }
