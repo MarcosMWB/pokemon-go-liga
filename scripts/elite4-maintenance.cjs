@@ -21,14 +21,34 @@ async function main() {
   } });
   const args = process.argv.slice(2);
   const id = args.includes('--apply') ? args[args.indexOf('--apply') + 1] : '';
-  if (args.includes('--verify')) {
+  if (args.includes('--correct-origin')) {
+    const campId = args[args.indexOf('--correct-origin') + 1];
+    if (!campId || campId.includes('/')) throw new Error('Informe a disputa a corrigir.');
+    const { corrigirGinasiosDaPromocao } = require('../functions/lib/elite4Repair');
+    console.log(JSON.stringify(await corrigirGinasiosDaPromocao(campId), null, 2));
+  } else if (args.includes('--inspect-correction')) {
+    const campId = args[args.indexOf('--inspect-correction') + 1];
+    const camp = await db.doc(`campeonatos_elite4/${campId}`).get();
+    const source = new Set(camp.get('elite4_definida').map((p) => p.ginasio_id));
+    const details = [];
+    for (const gym of camp.get('ginasios_liberados')) {
+      const [g, dispute, participants, results, jobs] = await Promise.all([
+        db.doc(`ginasios/${gym.id}`).get(), db.doc(`disputas_ginasio/${gym.disputa_id}`).get(),
+        db.collection('disputas_ginasio_participantes').where('disputa_id', '==', gym.disputa_id).get(),
+        db.collection('disputas_ginasio_resultados').where('disputa_id', '==', gym.disputa_id).get(),
+        db.collection('jobs_disputas').where('disputa_id', '==', gym.disputa_id).get(),
+      ]);
+      details.push({ ...gym, representado: source.has(gym.id), lider_uid: g.get('lider_uid'), tipo: g.get('tipo'), disputa: dispute.get('status'), lider_anterior_uid: dispute.get('lider_anterior_uid'), participantes: participants.size, resultados: results.docs.map((r) => r.get('status')), jobs: jobs.docs.map((j) => ({id:j.id,status:j.get('status')})) });
+    }
+    console.log(JSON.stringify({ campeonato_id: campId, top4: camp.get('elite4_definida'), ginasios: details }, null, 2));
+  } else if (args.includes('--verify')) {
     const verifyId = args[args.indexOf('--verify') + 1];
     if (!verifyId || verifyId.includes('/')) throw new Error('Informe a disputa para verificar.');
     const camp = await db.doc(`campeonatos_elite4/${verifyId}`).get();
     if (camp.get('promocao_aplicada') !== true) throw new Error('A promoção não está marcada como aplicada.');
     const escolhidos = camp.get('elite4_definida');
     const elite = await db.collection('elite4').where('liga', '==', camp.get('liga')).get();
-    if (elite.size !== 4 || escolhidos.some((p) => !elite.docs.some((e) => e.get('uid') === p.uid && e.get('pos') === p.pos))) throw new Error('A composição da Elite 4 não corresponde ao resultado aplicado.');
+    if (elite.size !== escolhidos.length || escolhidos.some((p) => !elite.docs.some((e) => e.get('uid') === p.uid && e.get('pos') === p.pos && e.get('tipo')))) throw new Error('A composição ou os tipos da Elite 4 não correspondem ao resultado aplicado.');
     const checks = [];
     for (const gym of camp.get('ginasios_liberados')) {
       const [g, dispute, job, history] = await Promise.all([
@@ -43,7 +63,17 @@ async function main() {
     }
     const mandates = await db.collection('elite4_mandatos').where('liga', '==', camp.get('liga')).get();
     if (escolhidos.some((p) => !mandates.docs.some((m) => m.get('usuario_uid') === p.uid && m.get('fim') == null))) throw new Error('Há um promovido sem mandato ativo no histórico.');
-    console.log(JSON.stringify({ ok: true, campeonato_id: verifyId, elite4: escolhidos.map((p) => ({ nome: p.nome, pos: p.pos })), ginasios: checks }, null, 2));
+    const restaurados = [];
+    for (const gym of camp.get('ginasios_restaurados') || []) {
+      const g = await db.doc(`ginasios/${gym.id}`).get();
+      if (g.get('lider_uid') !== gym.lider_uid || g.get('em_disputa') === true) throw new Error(`A liderança de ${gym.nome} não foi restaurada.`);
+      restaurados.push({ nome: gym.nome, lider_restaurado: true });
+    }
+    for (const gym of camp.get('ginasios_transferidos') || []) {
+      const g = await db.doc(`ginasios/${gym.id}`).get();
+      if (g.get('lider_uid') !== gym.lider_uid || g.get('tipo') !== gym.tipo || g.get('em_disputa') === true) throw new Error(`A troca em ${gym.nome} está divergente.`);
+    }
+    console.log(JSON.stringify({ ok: true, campeonato_id: verifyId, elite4: escolhidos.map((p) => ({ nome: p.nome, pos: p.pos, tipo: p.tipo })), ginasios: checks, restaurados }, null, 2));
   } else if (id) {
     const expected = args[args.indexOf('--expected') + 1]?.split(',') || [];
     if (!args.includes('--expected') || expected.length !== 4 || new Set(expected).size !== 4 || id.includes('/')) throw new Error('Informe o ID da disputa e os quatro UIDs esperados.');

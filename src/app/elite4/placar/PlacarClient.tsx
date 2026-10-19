@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
 
-type Elite = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string; nome?: string };
+type Elite = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string; nome?: string; tipo?: string };
 type HistoricoItem = {
   id: string;
   campeonato_id: string;
@@ -50,6 +50,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
             pos: x.pos as 1 | 2 | 3 | 4,
             uid: x.uid,
             nome: x.nome,
+            tipo: x.tipo,
           });
         }
       });
@@ -89,7 +90,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
   useEffect(() => {
     if (!campeonatoAbertoId) { setRanking([]); return; }
     return onSnapshot(collection(db, "campeonatos_elite4", campeonatoAbertoId, "participantes"), async (snap) => {
-      const rows = await Promise.all(snap.docs.map(async (d) => {
+      const rows = await Promise.all(snap.docs.filter((d) => d.data().tipo_participante === "elite4" || d.data().optou_participar === true).map(async (d) => {
         const x = d.data() as any;
         const uid = String(x.usuario_uid || d.id);
         const user = await getDoc(doc(db, "usuarios", uid));
@@ -121,7 +122,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
                 className="flex items-center justify-between bg-gray-50 rounded px-3 py-2"
               >
                 <span>Posição {pos}</span>
-                <span className="font-medium">{e?.nome || e?.uid || "—"}</span>
+                <span className="text-right"><span className="block font-medium">{e?.nome || e?.uid || "—"}</span>{e?.tipo && <span className="text-xs capitalize text-slate-500">Tipo {e.tipo}</span>}</span>
               </li>
             );
           })}

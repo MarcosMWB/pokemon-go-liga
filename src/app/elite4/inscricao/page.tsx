@@ -1,438 +1,101 @@
 "use client";
 
-import type { User } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { onAuthStateChanged } from "firebase/auth";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { auth, db } from "@/lib/firebase";
-import {
-  setDoc,
-  collection,
-  collectionGroup,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  updateDoc,
-  where,
-} from "firebase/firestore";
 
-type Liga = { id: string; nome: string };
-
-type Ginasio = {
-  id: string;
-  nome: string;
-  liga?: string;
-  lider_uid?: string;
-  tipo?: string; // tipo do ginásio (Fogo, Água, etc.)
-};
-
-type Campeonato = {
-  id: string;
-  liga: string;
-  status: "aberto" | "fechado";
-  createdAt: number;
-};
-
-type Participacao = {
-  id: string;
-  campeonato_id: string;
-  usuario_uid: string;
-  ginasio_id: string;
-  pontos: number;
-  createdAt: number;
-  ginasio_nome: string; // "Nome - Tipo"
-};
-
-function toMillis(v: any): number {
-  if (!v) return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "object" && "seconds" in v) {
-    const s = v.seconds ?? 0;
-    const ns = v.nanoseconds ?? 0;
-    return s * 1000 + Math.floor(ns / 1e6);
-  }
-  return Number(v) || 0;
-}
+type Ginasio = { id: string; nome: string; tipo: string; liga: string; em_disputa: boolean };
+type Disputa = { id: string; liga: string; createdAt: number };
+type Escolha = { optou_participar: boolean; ginasio_id: string; ginasio_tipo: string; pontos: number };
+type Elite = { liga: string; tipo: string };
 
 export default function Elite4InscricaoPage() {
   const router = useRouter();
-
   const [uid, setUid] = useState<string | null>(null);
-  const [, setLigas] = useState<Liga[]>([]);
-  const [meusGinasios, setMeusGinasios] = useState<Ginasio[]>([]);
-  const [abertosPorLiga, setAbertosPorLiga] = useState<
-    Record<string, Campeonato | null>
-  >({});
-  const [minhasInscricoes, setMinhasInscricoes] = useState<Participacao[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState<string>("");
+  const [ginasios, setGinasios] = useState<Ginasio[]>([]);
+  const [disputas, setDisputas] = useState<Disputa[]>([]);
+  const [elites, setElites] = useState<Elite[]>([]);
+  const [escolhas, setEscolhas] = useState<Record<string, Escolha>>({});
+  const [carregando, setCarregando] = useState(true);
+  const [preferenciasCarregadas, setPreferenciasCarregadas] = useState<Record<string, boolean>>({});
+  const [salvando, setSalvando] = useState<string | null>(null);
+  const [mensagem, setMensagem] = useState("");
 
-  // Auth
-  useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (current: User | null) => {
-      if (!current) {
-        router.replace("/login");
-        return;
-      }
-      setUid(current.uid);
-    });
-    return () => unsub();
-  }, [router]);
+  useEffect(() => onAuthStateChanged(auth, (user) => {
+    if (!user) { router.replace("/login"); return; }
+    setUid(user.uid);
+  }), [router]);
 
-  // Ligas (catálogo)
-  useEffect(() => {
-    (async () => {
-      const snap = await getDocs(collection(db, "ligas"));
-      const ls: Liga[] = snap.docs.map((d) => ({
-        id: d.id,
-        nome: (d.data() as any).nome || d.id,
-      }));
-      setLigas(ls);
-    })();
-  }, []);
-
-  // Meus ginásios (onde sou líder)
   useEffect(() => {
     if (!uid) return;
-    const qG = query(collection(db, "ginasios"), where("lider_uid", "==", uid));
-    const unsub = onSnapshot(qG, (snap) => {
-      const list: Ginasio[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          nome: data.nome || d.id,
-          liga: data.liga || "",
-          lider_uid: data.lider_uid || "",
-          tipo: data.tipo || "",
-        };
-      });
-      setMeusGinasios(list);
-    });
-    return () => unsub();
+    const erro = () => { setMensagem("Não foi possível carregar as informações. Atualize a página e tente novamente."); setCarregando(false); };
+    const stopGym = onSnapshot(query(collection(db, "ginasios"), where("lider_uid", "==", uid)), (snap) => {
+      setGinasios(snap.docs.map((d) => ({ id: d.id, nome: d.data().nome || d.id, tipo: d.data().tipo || "", liga: d.data().liga || d.data().liga_nome || "", em_disputa: d.data().em_disputa === true })));
+      setCarregando(false);
+    }, erro);
+    const stopElite = onSnapshot(query(collection(db, "elite4"), where("uid", "==", uid)), (snap) => setElites(snap.docs.map((d) => ({ liga: d.data().liga, tipo: d.data().tipo || "" }))), erro);
+    const stopCamp = onSnapshot(query(collection(db, "campeonatos_elite4"), where("status", "==", "aberto")), (snap) => {
+      setDisputas(snap.docs.map((d) => ({ id: d.id, liga: d.data().liga, createdAt: typeof d.data().createdAt?.toMillis === "function" ? d.data().createdAt.toMillis() : Number(d.data().createdAt) || 0 })));
+    }, erro);
+    return () => { stopGym(); stopElite(); stopCamp(); };
   }, [uid]);
 
-  // Campeonatos ABERTOS por liga dos meus ginásios
-  useEffect(() => {
-    if (meusGinasios.length === 0) {
-      setAbertosPorLiga({});
-      return;
-    }
-    let cancel = false;
-    (async () => {
-      const ligasSet = Array.from(
-        new Set(meusGinasios.map((g) => g.liga || "").filter(Boolean))
-      );
-      const out: Record<string, Campeonato | null> = {};
-      // busca 1 por liga (o mais recente aberto)
-      for (const ln of ligasSet) {
-        const qC = query(
-          collection(db, "campeonatos_elite4"),
-          where("liga", "==", ln),
-          where("status", "==", "aberto"),
-          orderBy("createdAt", "desc")
-        );
-        const snap = await getDocs(qC);
-        if (!snap.empty) {
-          const c = snap.docs[0];
-          const d = c.data() as any;
-          out[ln] = {
-            id: c.id,
-            liga: d.liga,
-            status: d.status,
-            createdAt: toMillis(d.createdAt),
-          };
-        } else {
-          out[ln] = null;
-        }
-      }
-      if (!cancel) setAbertosPorLiga(out);
-    })();
-    return () => {
-      cancel = true;
-    };
-  }, [meusGinasios]);
+  const porLiga = useMemo(() => {
+    const ligas = [...new Set([...ginasios.map((g) => g.liga), ...elites.map((e) => e.liga)])].filter(Boolean);
+    return ligas.map((liga) => ({ liga, gyms: ginasios.filter((g) => g.liga === liga), elite: elites.find((e) => e.liga === liga), disputa: disputas.filter((d) => d.liga === liga).sort((a, b) => b.createdAt - a.createdAt)[0] }));
+  }, [ginasios, elites, disputas]);
 
-  // Minhas inscrições ativas (em campeonatos abertos)
   useEffect(() => {
     if (!uid) return;
-    const qP = query(collectionGroup(db, "participantes"), where("usuario_uid", "==", uid));
-    const unsub = onSnapshot(qP, async (snap) => {
-      const campeonatosCache = new Map<string, any>();
-      const ginasiosCache = new Map<string, string>();
+    setPreferenciasCarregadas({});
+    const stops = disputas.map((camp) => onSnapshot(doc(db, "campeonatos_elite4", camp.id, "participantes", uid), (snap) => {
+      const data = snap.data();
+      setEscolhas((atual) => ({ ...atual, [camp.id]: { optou_participar: data?.optou_participar === true, ginasio_id: data?.ginasio_id || "", ginasio_tipo: data?.ginasio_tipo || "", pontos: Number(data?.pontos || 0) } }));
+      setPreferenciasCarregadas((atual) => ({ ...atual, [camp.id]: true }));
+    }, () => setMensagem("Não foi possível carregar sua escolha de participação.")));
+    return () => stops.forEach((stop) => stop());
+  }, [uid, disputas]);
 
-      const items = await Promise.all(
-        snap.docs.map(async (d) => {
-          const x = d.data() as any;
-
-          // campId do campo ou do pai
-          const campId: string | undefined = x.campeonato_id || d.ref.parent.parent?.id;
-          if (!campId) return null;
-
-          // campeonato em cache
-          let cData = campeonatosCache.get(campId);
-          if (!cData) {
-            const cDoc = await getDoc(doc(db, "campeonatos_elite4", campId));
-            if (!cDoc.exists()) return null;
-            cData = cDoc.data();
-            campeonatosCache.set(campId, cData);
-          }
-          if (cData.status !== "aberto") return null;
-
-          // ginasio_id válido
-          const gId = String(x.ginasio_id || "");
-          if (!gId) return null;
-
-          // resolver nome do ginásio garantindo string
-          const cached = ginasiosCache.get(gId);
-          let gName: string;
-          if (cached) {
-            gName = cached;
-          } else {
-            const gDoc = await getDoc(doc(db, "ginasios", gId));
-            if (gDoc.exists()) {
-              const gd = gDoc.data() as any;
-              const nome = gd.nome || gId;
-              const tipo = gd.tipo as string | undefined;
-              gName = tipo ? `${nome} - ${tipo}` : nome;
-            } else {
-              gName = gId;
-            }
-            ginasiosCache.set(gId, gName);
-          }
-
-          return {
-            id: d.id, // aqui será = uid
-            campeonato_id: campId,
-            usuario_uid: x.usuario_uid,
-            ginasio_id: gId,
-            pontos: x.pontos ?? 0,
-            createdAt: x.createdAt ? toMillis(x.createdAt) : 0,
-            ginasio_nome: gName, // agora é sempre string
-          } as Participacao;
-        })
-      );
-
-      setMinhasInscricoes(items.filter(Boolean) as Participacao[]);
-      setLoading(false);
-    });
-    return () => unsub();
-  }, [uid]);
-
-  // Mapas auxiliares – inscrição por liga
-  const inscricaoPorLiga = useMemo(() => {
-    const map: Record<string, Participacao | undefined> = {};
-    for (const p of minhasInscricoes) {
-      const ligaMatch = Object.entries(abertosPorLiga).find(
-        ([, c]) => c?.id === p.campeonato_id
-      );
-      if (ligaMatch) map[ligaMatch[0]] = p;
-    }
-    return map;
-  }, [minhasInscricoes, abertosPorLiga]);
-
-  async function inscrever(g: Ginasio) {
-    if (!uid) return;
-    setMsg("");
-    const liga = g.liga || "";
-    const camp = abertosPorLiga[liga];
-    if (!camp) {
-      setMsg(`Não há campeonato aberto na liga ${liga}.`);
-      return;
-    }
-
-    // doc único por usuário: campeonatos_elite4/{campId}/participantes/{uid}
-    const partRef = doc(db, "campeonatos_elite4", camp.id, "participantes", uid);
-    const partSnap = await getDoc(partRef);
-    if (partSnap.exists()) {
-      setMsg("Você já está inscrito neste campeonato.");
-      return;
-    }
-
-    await setDoc(partRef, {
-      campeonato_id: camp.id,        // mantém campo para buscas
-      usuario_uid: uid,
-      ginasio_id: g.id,
-      liga,                          // grave a liga para passar nas regras de update
-      pontos: 0,
-      createdAt: Date.now(),
-    });
-
-    setMsg(
-      `Inscrição feita na liga ${liga} usando o ginásio "${g.nome}${g.tipo ? ` - ${g.tipo}` : ""}".`
-    );
+  async function salvar(camp: Disputa, ginasioId: string) {
+    if (salvando) return;
+    const anterior = escolhas[camp.id];
+    if (ginasioId && anterior?.ginasio_id && anterior.ginasio_id !== ginasioId && anterior.pontos > 0 && !confirm("Trocar o ginásio representado reinicia os pontos nesta disputa. Confirmar a troca?")) return;
+    setSalvando(camp.id); setMensagem("");
+    try {
+      const mudar = httpsCallable(getFunctions(auth.app, "southamerica-east1"), "setElite4Participation");
+      await mudar({ campeonatoId: camp.id, participar: Boolean(ginasioId), ...(ginasioId ? { ginasioId } : {}) });
+      setMensagem(ginasioId ? "Participação confirmada. Apenas o ginásio escolhido será envolvido se você conquistar uma vaga na Elite 4." : "Escolha salva: você não participará desta disputa pela Elite 4. Seus ginásios permanecem com você.");
+    } catch (error: any) { setMensagem("Não foi possível salvar sua escolha: " + error.message); }
+    finally { setSalvando(null); }
   }
 
-  async function trocarGinasio(ligaNome: string, novo: Ginasio) {
-    if (!uid) return;
-    const atual = inscricaoPorLiga[ligaNome];
-    if (!atual) return;
-    if (atual.ginasio_id === novo.id) return;
-
-    const nomeAtual = atual.ginasio_nome || atual.ginasio_id;
-    const nomeNovo = `${novo.nome}${novo.tipo ? ` - ${novo.tipo}` : ""}`;
-
-    const ok = window.confirm(
-      `Confirmar troca do ginásio representado na liga ${ligaNome}?\n\n` +
-      `Atual: ${nomeAtual}\n` +
-      `Novo: ${nomeNovo}\n\n` +
-      `Se confirmar, seus pontos neste campeonato serão zerados.`
-    );
-    if (!ok) return;
-
-    setMsg("");
-
-    const ref = doc(db, "campeonatos_elite4", atual.campeonato_id, "participantes", uid);
-    await updateDoc(ref, {
-      ginasio_id: novo.id,
-      pontos: 0,
-    });
-
-    setMsg(
-      `Atualizado: agora você representa o ginásio "${nomeNovo}" na liga ${ligaNome}. Pontos deste campeonato foram zerados.`
-    );
-  }
-
-  if (!uid || loading) return <p className="p-6">Carregando…</p>;
-
-  // Agrupa meus ginásios por liga
-  const gByLiga = meusGinasios.reduce<Record<string, Ginasio[]>>((acc, g) => {
-    const ln = g.liga || "Sem liga";
-    if (!acc[ln]) acc[ln] = [];
-    acc[ln].push(g);
-    return acc;
-  }, {});
-
+  if (!uid || carregando) return <p className="p-6">Carregando sua participação…</p>;
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">
-            Campeonato Elite 4 — Inscrição do Líder
-          </h1>
-          <p className="text-sm text-gray-500">
-            Inscreva-se no campeonato aberto da sua liga. 1 inscrição por liga.
-          </p>
-        </div>
-      </div>
-
-      {msg && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm">
-          {msg}
-        </div>
-      )}
-
-      {Object.keys(gByLiga).length === 0 ? (
-        <div className="p-4 bg-white rounded shadow">
-          <p className="text-sm text-gray-600">
-            Você não lidera nenhum ginásio no momento.
-          </p>
-        </div>
-      ) : (
-        Object.entries(gByLiga).map(([ligaNome, gs]) => {
-          const camp = abertosPorLiga[ligaNome];
-          const inscricao = inscricaoPorLiga[ligaNome];
-          return (
-            <div
-              key={ligaNome}
-              className="bg-white p-4 rounded shadow space-y-3"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">{ligaNome}</h2>
-                  <p className="text-xs text-gray-500">
-                    Campeonato: {camp ? "ABERTO" : "— sem campeonato aberto —"}
-                  </p>
-                </div>
-                {camp && (
-                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                    {camp.createdAt
-                      ? new Date(camp.createdAt).toLocaleString()
-                      : "—"}
-                  </span>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                {gs.map((g) => {
-                  const jaInscritoNesteCamp = Boolean(inscricao);
-                  const representandoEste = inscricao?.ginasio_id === g.id;
-                  return (
-                    <div
-                      key={g.id}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border rounded px-3 py-2"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">
-                          {g.nome}
-                          {g.tipo ? ` - ${g.tipo}` : ""}
-                        </p>
-                        <p className="text-xs text-gray-500">ID: {g.id}</p>
-                      </div>
-
-                      {!camp ? (
-                        <span className="text-xs text-gray-500">
-                          Aguardando abertura do campeonato…
-                        </span>
-                      ) : jaInscritoNesteCamp ? (
-                        <div className="flex flex-wrap items-center gap-2">
-                          {representandoEste ? (
-                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                              Você está inscrito representando este ginásio
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => trocarGinasio(ligaNome, g)}
-                              className="text-xs px-2 py-1 rounded bg-slate-200 hover:bg-slate-300"
-                            >
-                              Trocar para este ginásio
-                            </button>
-                          )}
-                          <a
-                            className="text-xs text-blue-600 underline"
-                            href={`/elite4/placar?liga=${encodeURIComponent(
-                              ligaNome
-                            )}`}
-                          >
-                            Ver placar
-                          </a>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => inscrever(g)}
-                          className="text-sm px-3 py-2 rounded bg-purple-600 text-white hover:bg-purple-700"
-                        >
-                          Inscrever-me por este ginásio
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })
-      )}
-
-      {minhasInscricoes.length > 0 && (
-        <div className="bg-white p-4 rounded shadow">
-          <h3 className="text-lg font-semibold mb-2">
-            Minhas inscrições ativas
-          </h3>
-          <ul className="space-y-2">
-            {minhasInscricoes.map((p) => (
-              <li
-                key={p.id}
-                className="text-sm bg-gray-50 border rounded px-3 py-2"
-              >
-                Campeonato: {p.campeonato_id} · Ginásio: {p.ginasio_nome} ·
-                Pontos: {p.pontos ?? 0}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+    <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6">
+      <header><h1 className="text-2xl font-bold">Sua participação na disputa da Elite 4</h1><p className="mt-2 text-sm text-slate-600">Por padrão, líderes não participam e mantêm seus ginásios. Para disputar uma vaga, escolha um único ginásio por liga.</p></header>
+      {mensagem && <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">{mensagem}</p>}
+      {!porLiga.length && <p className="rounded border bg-white p-5 text-sm">Você ainda não lidera um ginásio nem ocupa uma vaga da Elite 4.</p>}
+      {porLiga.map(({ liga, gyms, elite, disputa }) => {
+        const escolha = disputa ? escolhas[disputa.id] : undefined;
+        return <section key={liga} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-bold">Liga {liga}</h2><Link href={`/elite4/placar?liga=${encodeURIComponent(liga)}`} className="text-sm font-semibold text-blue-800 underline">Ver classificação</Link></div>
+          {elite ? <p className="rounded-lg bg-purple-50 p-3 text-sm text-purple-950">Você já integra a Elite 4{elite.tipo ? ` com o tipo ${elite.tipo}` : ""}. Seus pontos administrativos entram na classificação dos membros atuais. Se for substituído, você assumirá o ginásio inscrito do promovido, com o seu tipo.</p> : !disputa ? <p className="text-sm text-slate-600">Não há disputa aberta nesta liga. Seus ginásios permanecem com você.</p> : <>
+            <label className="block text-sm font-semibold" htmlFor={`participacao-${disputa.id}`}>O que você quer fazer nesta disputa?</label>
+            <select id={`participacao-${disputa.id}`} value={escolha?.optou_participar ? escolha.ginasio_id : ""} disabled={Boolean(salvando) || !preferenciasCarregadas[disputa.id]} onChange={(event) => salvar(disputa, event.target.value)} className="min-h-12 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base">
+              <option value="">Não participar — manter meus ginásios (padrão)</option>
+              {gyms.map((g) => <option key={g.id} value={g.id} disabled={g.em_disputa || !g.tipo}>Participar por {g.nome} · {g.tipo || "sem tipo"}{g.em_disputa ? " · ginásio em disputa" : ""}</option>)}
+            </select>
+            <p className="text-sm text-slate-600">{salvando === disputa.id ? "Salvando sua escolha…" : escolha?.optou_participar ? `Você participa representando um ginásio, com o tipo ${escolha.ginasio_tipo}. Pontos: ${escolha.pontos}.` : "Você não está concorrendo à Elite 4. Essa é a opção inicial de toda nova disputa."}</p>
+            <div className="rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">Se vencer, você mantém o tipo do ginásio inscrito. O Elite 4 com menos pontos assume esse ginásio e leva seu próprio tipo para ele. Seus outros ginásios continuam com você. Na primeira formação, quando não houver um Elite 4 para assumir, só o ginásio inscrito abrirá disputa de liderança.</div>
+          </>}
+          {gyms.length > 0 && <p className="text-xs text-slate-500">Ginásios que você lidera: {gyms.map((g) => g.nome).join(", ")}.</p>}
+        </section>;
+      })}
+      <Link href={`/perfil/${uid}`} className="inline-block text-sm font-semibold text-blue-800 underline">Voltar ao meu perfil</Link>
     </div>
   );
 }

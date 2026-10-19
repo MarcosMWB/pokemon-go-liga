@@ -578,6 +578,7 @@ export default function PerfilPage() {
               disputa_status: parent.status ?? '—',
             });
           } else if (parentCol === 'campeonatos_elite4') {
+            if (parent.status === 'aberto' && data.tipo_participante !== 'elite4' && data.optou_participar !== true) return;
             elite.push({
               id: d.id,
               campeonato_id: parentDoc.id,
@@ -1500,7 +1501,7 @@ export default function PerfilPage() {
                           href={`/elite4/inscricao${g.liga ? `?liga=${encodeURIComponent(g.liga)}` : ''}`}
                           className="bg-purple-700 text-white px-3 py-1 rounded text-sm"
                         >
-                          Elite 4
+                          Participação na Elite 4
                         </Link>
                       </div>
                     )}

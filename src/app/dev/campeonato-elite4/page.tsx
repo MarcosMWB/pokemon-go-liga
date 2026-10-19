@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { planejarElite4, type ParticipanteElite, type MembroElite } from "../../../../functions/src/elite4Plan";
 import {
   addDoc,
   collection,
@@ -34,12 +35,13 @@ type Participante = {
   pontos_vitoria: number;
   pontos_admin: number;
   tipo_participante: "lider" | "elite4";
+  optou_participar: boolean;
   elite4_pos?: number;
   nome?: string;
   ginasio_nome?: string;
   ginasio_tipo?: string;
 };
-type Elite4 = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string; nome?: string };
+type Elite4 = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string; nome?: string; tipo: string; ginasio_origem_id?: string; ginasio_origem_nome?: string };
 type ResultadoPendente = { campeonato_id: string; top4: Array<{ uid: string; nome?: string; pontos?: number }> };
 type PontoAdmin = { id: string; participante_nome: string; quantidade: number; motivo: string; createdAt: number };
 
@@ -120,7 +122,7 @@ export default function DevCampeonatoElite4() {
       const map: Record<number, Elite4 | undefined> = {};
       snap.docs.forEach((dd) => {
         const data = dd.data() as any;
-        if (data.pos >= 1 && data.pos <= 4) map[data.pos] = { id: dd.id, liga: data.liga, pos: data.pos, uid: data.uid, nome: data.nome };
+        if (data.pos >= 1 && data.pos <= 4) map[data.pos] = { id: dd.id, liga: data.liga, pos: data.pos, uid: data.uid, nome: data.nome, tipo: data.tipo || "", ginasio_origem_id: data.ginasio_origem_id || "", ginasio_origem_nome: data.ginasio_origem_nome || "" };
       });
       setElite4Atual(map);
     });
@@ -159,6 +161,9 @@ export default function DevCampeonatoElite4() {
           pontos_vitoria: x.pontos_vitoria ?? 0,
           pontos_admin: x.pontos_admin ?? 0,
           tipo_participante: x.tipo_participante === "elite4" ? "elite4" : "lider",
+          optou_participar: x.optou_participar === true,
+          ginasio_tipo: x.ginasio_tipo || "",
+          ginasio_nome: x.ginasio_nome || "",
           elite4_pos: x.elite4_pos,
         };
         // Nome do usuário
@@ -168,11 +173,10 @@ export default function DevCampeonatoElite4() {
         const g = p.ginasio_id ? await getDoc(doc(db, "ginasios", p.ginasio_id)) : null;
         if (g?.exists()) {
           const gd = g.data() as any;
-          p.ginasio_nome = gd?.nome || p.ginasio_id;
-          p.ginasio_tipo = gd?.tipo || "";
+          p.ginasio_nome = p.ginasio_nome || gd?.nome || p.ginasio_id;
+          p.ginasio_tipo = p.ginasio_tipo || gd?.tipo || "";
         } else {
-          p.ginasio_nome = p.ginasio_id;
-          p.ginasio_tipo = "";
+          p.ginasio_nome = p.ginasio_nome || p.ginasio_id;
         }
         base.push(p);
       }
@@ -209,14 +213,14 @@ export default function DevCampeonatoElite4() {
     for (const g of gs.docs) {
       const data = g.data() as any;
       const uid = String(data.lider_uid || "");
-      if (uid && !entradas.has(uid)) entradas.set(uid, { usuario_uid: uid, ginasio_id: g.id, tipo_participante: "lider" });
+      if (uid && !entradas.has(uid)) entradas.set(uid, { usuario_uid: uid, tipo_participante: "lider", optou_participar: false });
     }
     for (const e of e4.docs) {
       const data = e.data() as any;
       const uid = String(data.uid || "");
       const pos = Number(data.pos);
       if (uid && [1, 2, 3, 4].includes(pos)) {
-        entradas.set(uid, { ...(entradas.get(uid) || {}), usuario_uid: uid, tipo_participante: "elite4", elite4_pos: pos });
+        entradas.set(uid, { usuario_uid: uid, tipo_participante: "elite4", elite4_pos: pos, optou_participar: true, ginasio_tipo: data.tipo || "" });
       }
     }
     let adicionados = 0;
@@ -224,16 +228,15 @@ export default function DevCampeonatoElite4() {
       const ref = doc(db, "campeonatos_elite4", campId, "participantes", uid);
       const atual = await getDoc(ref);
       if (atual.exists()) {
-        await updateDoc(ref, {
-          tipo_participante: dados.tipo_participante,
-          elite4_pos: dados.elite4_pos ?? null,
-          ...(dados.ginasio_id ? { ginasio_id: dados.ginasio_id } : {}),
-        });
+        // Sincronizar nunca escolhe outro ginásio nem inscreve um líder por conta própria.
+        if (dados.tipo_participante === "elite4") await updateDoc(ref, { tipo_participante: "elite4", elite4_pos: dados.elite4_pos, ginasio_tipo: dados.ginasio_tipo, optou_participar: true });
+        else if (atual.data().optou_participar === undefined) await updateDoc(ref, { optou_participar: false });
         continue;
       }
       await setDoc(ref, {
         campeonato_id: campId, usuario_uid: uid, liga: ligaSel,
-        ginasio_id: dados.ginasio_id || "", tipo_participante: dados.tipo_participante,
+        ginasio_id: "", ginasio_nome: "", ginasio_tipo: dados.ginasio_tipo || "", tipo_participante: dados.tipo_participante,
+        optou_participar: dados.optou_participar === true,
         ...(dados.elite4_pos ? { elite4_pos: dados.elite4_pos } : {}),
         pontos: 0, pontos_participacao: 0, pontos_vitoria: 0, pontos_admin: 0,
         createdAt: Date.now(),
@@ -252,11 +255,12 @@ export default function DevCampeonatoElite4() {
       const campRef = await addDoc(collection(db, "campeonatos_elite4"), {
         liga: ligaSel,
         status: "aberto",
+        regra_versao: 2,
         createdAt: Date.now(),
       });
 
       const quantidade = await sincronizarParticipantes(campRef.id);
-      setMsg(`Disputa criada com ${quantidade} participantes, incluindo líderes e Elite 4.`);
+      setMsg(`Disputa criada com ${quantidade} registros. Líderes começam sem participar; cada um deve escolher seu ginásio na página de participação. A Elite 4 atual permanece no ranking.`);
     } catch (e: any) {
       setMsg("Erro ao criar: " + e.message);
     } finally {
@@ -267,6 +271,7 @@ export default function DevCampeonatoElite4() {
   /** Pontos administrativos são somados à pontuação automática e ficam auditáveis. */
   const concederPontos = async (p: Participante) => {
     if (!campeonato) return;
+    if (p.tipo_participante !== "elite4" && !p.optou_participar) { setMsg("Este líder escolheu não participar da disputa."); return; }
     const quantidade = Math.trunc(Number(pontosManuais[p.id]));
     const motivo = (motivosPontos[p.id] || "").trim();
     if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > 1000) { setMsg("Informe de 1 a 1000 pontos."); return; }
@@ -279,6 +284,7 @@ export default function DevCampeonatoElite4() {
         const snap = await tx.get(ref);
         if (!snap.exists()) throw new Error("Participante não encontrado.");
         const atual = snap.data() as any;
+        if (atual.tipo_participante !== "elite4" && atual.optou_participar !== true) throw new Error("O líder não está inscrito na disputa.");
         tx.update(ref, { pontos: Number(atual.pontos || 0) + quantidade, pontos_admin: Number(atual.pontos_admin || 0) + quantidade, updatedAt: Date.now() });
         tx.set(historicoRef, {
           campeonato_id: campeonato.id, liga: ligaSel, usuario_uid: p.usuario_uid,
@@ -293,20 +299,19 @@ export default function DevCampeonatoElite4() {
   };
 
   /** A função valida e aplica a composição e a sucessão dos ginásios em uma transação. */
-  const aplicarElite4 = async (campId: string, escolhidos: Array<{ uid: string; nome?: string; pontos?: number }>) => {
+  const aplicarElite4 = async (campId: string, vencedores: string[] = []) => {
     if (salvando) return;
-    if (escolhidos.length !== 4 || new Set(escolhidos.map((p) => p.uid)).size !== 4) {
-      setMsg("Escolha quatro participantes diferentes para a Elite 4."); return;
-    }
-    if (!confirm(`Definir a Elite 4 da liga ${ligaSel}?\n\n` +
-      escolhidos.map((p, index) => `${index + 1}º: ${p.nome || p.uid} (${p.pontos || 0} pts)`).join("\n") +
-      "\n\nOs quatro nomes ocuparão a Elite 4. Seus ginásios ficarão vagos e abrirão inscrições para novos líderes. Desafios pendentes contra esses líderes serão cancelados. A composição anterior ficará no histórico.")) return;
+    const plano = campId === campeonato?.id ? previa.plano : planejarElite4(membrosPlano, [], []);
+    if (!plano) { setMsg(previa.erro || "Revise a seleção de vencedores."); return; }
+    const descricao = plano.trocas.length ? plano.trocas.map((t) => `${t.promovido.nome} assume a Elite 4 com o tipo ${t.promovido.ginasio_tipo}. ` +
+      (t.rebaixado ? `${t.rebaixado.nome} assume ${t.promovido.ginasio_nome}, que passa a ter o tipo ${t.rebaixado.tipo}.` : `${t.promovido.ginasio_nome} abre disputa por liderança.`)).join("\n\n") : "Nenhum líder será promovido. A Elite 4 e todas as lideranças de ginásio serão mantidas.";
+    if (!confirm(`Encerrar a disputa da liga ${ligaSel}?\n\n${descricao}\n\nApenas os ginásios inscritos dos vencedores são envolvidos. Desafios pendentes nesses ginásios serão cancelados quando houver troca de líder.`)) return;
     setSalvando(true); setMsg("");
     try {
-      const finalizar = httpsCallable<{ campeonatoId: string; selecionados: string[] }, { jaAplicada: boolean; ginasiosLiberados: Array<{ nome: string }> }>(getFunctions(auth.app, "southamerica-east1"), "adminFinalizeElite4");
-      const { data } = await finalizar({ campeonatoId: campId, selecionados: escolhidos.map((p) => p.uid) });
+      const finalizar = httpsCallable<{ campeonatoId: string; vencedores: string[] }, { jaAplicada: boolean; ginasiosLiberados: Array<{ nome: string }>; ginasiosTransferidos: Array<{ nome: string }> }>(getFunctions(auth.app, "southamerica-east1"), "adminFinalizeElite4");
+      const { data } = await finalizar({ campeonatoId: campId, vencedores });
       setMsg(data.jaAplicada ? "Esta promoção já foi aplicada. Nenhuma disputa foi duplicada." :
-        `Elite 4 definida com sucesso. ${data.ginasiosLiberados.length} ginásio(s) liberado(s), com disputa de liderança aberta${data.ginasiosLiberados.length ? `: ${data.ginasiosLiberados.map((g) => g.nome).join(", ")}` : ""}.`);
+        vencedores.length ? `Disputa encerrada. ${data.ginasiosTransferidos.length} ginásio(s) transferido(s) aos membros rebaixados e ${data.ginasiosLiberados.length} disputa(s) de liderança aberta(s) por vagas sem antecessor.` : "Disputa encerrada. A Elite 4 atual e os líderes dos ginásios foram mantidos.");
     } catch (error: any) { setMsg("Não foi possível aplicar a promoção: " + error.message); }
     finally { setSalvando(false); }
   };
@@ -359,11 +364,16 @@ export default function DevCampeonatoElite4() {
 
   const emAberto = Boolean(campeonato && campeonato.status === "aberto");
 
-  const topPreview = useMemo(() => {
-    return participantes.filter((p) => p.tipo_participante === "lider").sort(ordenarParticipantes).slice(0, 4);
-  }, [participantes]);
-  const escolhasAtuais = selecionados ?? topPreview.map((p) => p.usuario_uid);
-  const escolhidosAtuais = escolhasAtuais.map((uid) => participantes.find((p) => p.usuario_uid === uid)).filter((p): p is Participante => Boolean(p));
+  const rankingPlano: ParticipanteElite[] = useMemo(() => participantes.map((p) => ({
+    uid: p.usuario_uid, nome: p.nome || p.usuario_uid, pontos: p.pontos, pontos_vitoria: p.pontos_vitoria, pontos_participacao: p.pontos_participacao, pontos_admin: p.pontos_admin,
+    tipo_participante: p.tipo_participante, optou_participar: p.optou_participar, ginasio_id: p.ginasio_id || "", ginasio_nome: p.ginasio_nome || "", ginasio_tipo: p.ginasio_tipo || "",
+  })), [participantes]);
+  const membrosPlano: MembroElite[] = useMemo(() => Object.values(elite4Atual).filter((e): e is Elite4 => Boolean(e)).map((e) => ({ uid: e.uid, nome: e.nome || e.uid, pos: e.pos, tipo: e.tipo, ginasio_origem_id: e.ginasio_origem_id || "", ginasio_origem_nome: e.ginasio_origem_nome || "" })), [elite4Atual]);
+  const previa = useMemo(() => {
+    try { return { plano: planejarElite4(membrosPlano, rankingPlano, selecionados ?? undefined), erro: "" }; }
+    catch (error: any) { return { plano: null, erro: error.message as string }; }
+  }, [membrosPlano, rankingPlano, selecionados]);
+  const escolhasAtuais = selecionados ?? previa.plano?.trocas.map((t) => t.promovido.uid) ?? [];
 
   if (isAdmin === null) return <p className="p-6">Carregando…</p>;
   if (isAdmin === false) return null;
@@ -374,7 +384,7 @@ export default function DevCampeonatoElite4() {
         <div>
         <h1 className="text-2xl font-bold">Disputa da Elite 4 — {ligaSel || "Liga"}</h1>
           <p className="text-sm text-gray-500">
-            Cada desafio concluído rende 1 ponto de participação; uma vitória do líder soma mais 2 (3 no total). A Elite 4 recebe pontos administrativos. Revise os quatro escolhidos antes de encerrar e aplicar a nova composição.
+            Líderes só concorrem depois de optar por participar e escolher um ginásio. Batalhas desse ginásio rendem 1 ponto de participação e mais 2 por vitória. A Elite 4 recebe pontos administrativos. Cada vencedor troca de cargo com o membro atual de menor pontuação, preservando os tipos de ambos.
           </p>
         </div>
         <button onClick={() => router.push("/dev")} className="text-sm text-blue-600 underline">Voltar ao painel</button>
@@ -385,9 +395,9 @@ export default function DevCampeonatoElite4() {
       {!emAberto && resultadoPendente && (
         <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
           <h2 className="font-semibold">A última disputa foi encerrada sem aplicar a promoção</h2>
-          <p className="text-sm">Você pode concluir a operação usando os quatro classificados que ficaram registrados, sem abrir outra disputa da Elite 4.</p>
+          <p className="text-sm">Este resultado usa as regras antigas. Para preservar as escolhas dos líderes, você pode concluir o encerramento mantendo a Elite 4 atual e realizar as próximas trocas em uma nova disputa com participação voluntária.</p>
           <ol className="list-decimal pl-5 text-sm">{resultadoPendente.top4.map((p) => <li key={p.uid}>{p.nome || p.uid} · {p.pontos || 0} pontos</li>)}</ol>
-          <button onClick={() => aplicarElite4(resultadoPendente.campeonato_id, resultadoPendente.top4)} disabled={salvando} className="rounded bg-purple-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{salvando ? "Aplicando promoção…" : "Aplicar promoção e abrir disputas dos ginásios"}</button>
+          <button onClick={() => aplicarElite4(resultadoPendente.campeonato_id, [])} disabled={salvando} className="rounded bg-purple-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{salvando ? "Concluindo…" : "Concluir mantendo os cargos atuais"}</button>
         </section>
       )}
 
@@ -429,11 +439,11 @@ export default function DevCampeonatoElite4() {
               <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded">Disputa aberta</span>
               <button onClick={async () => { if (!campeonato) return; setSalvando(true); try { const n = await sincronizarParticipantes(campeonato.id); setMsg(`${n} participante(s) novo(s) incluído(s). Pontuações anteriores foram preservadas.`); } catch (e: any) { setMsg("Erro ao sincronizar participantes: " + e.message); } finally { setSalvando(false); } }} disabled={salvando} className="px-3 py-2 rounded border text-sm disabled:opacity-50">Sincronizar líderes e Elite 4</button>
               <button
-                onClick={() => campeonato && aplicarElite4(campeonato.id, escolhidosAtuais.map((p) => ({ uid: p.usuario_uid, nome: p.nome, pontos: p.pontos })))}
-                disabled={salvando || escolhidosAtuais.length !== 4 || new Set(escolhasAtuais).size !== 4}
+                onClick={() => campeonato && aplicarElite4(campeonato.id, escolhasAtuais)}
+                disabled={salvando || !previa.plano}
                 className="px-3 py-2 rounded bg-purple-700 text-white text-sm disabled:opacity-50"
               >
-                {salvando ? "Aplicando promoção…" : "Encerrar e definir Elite 4"}
+                {salvando ? "Aplicando resultado…" : "Encerrar disputa e aplicar resultado"}
               </button>
             </>
           )}
@@ -448,7 +458,7 @@ export default function DevCampeonatoElite4() {
             <li key={pos} className="p-3 bg-gray-50 rounded flex justify-between items-center">
               <span className="text-sm">Posição {pos}</span>
               <span className="text-sm font-medium">
-                {elite4Atual[pos]?.nome || elite4Atual[pos]?.uid || "—"}
+                {elite4Atual[pos]?.nome || elite4Atual[pos]?.uid || "—"}{elite4Atual[pos]?.tipo ? ` · ${elite4Atual[pos]?.tipo}` : ""}
               </span>
             </li>
           ))}
@@ -469,7 +479,8 @@ export default function DevCampeonatoElite4() {
                     <th className="py-2 pr-3">Treinador</th>
                     <th className="py-2 pr-3">Ginásio</th>
                     <th className="py-2 pr-3">Categoria</th>
-                    <th className="py-2 pr-3">Participação</th>
+                    <th className="py-2 pr-3">Escolha de participação</th>
+                    <th className="py-2 pr-3">Pontos de batalha</th>
                     <th className="py-2 pr-3">Bônus vitória</th>
                     <th className="py-2 pr-3">Admin</th>
                     <th className="py-2 pr-3">Total</th>
@@ -484,6 +495,7 @@ export default function DevCampeonatoElite4() {
                         <td className="py-2 pr-3">{p.nome || p.usuario_uid}</td>
                         <td className="py-2 pr-3">{p.ginasio_nome || "—"}</td>
                         <td className="py-2 pr-3">{p.tipo_participante === "elite4" ? `Elite 4 · posição ${p.elite4_pos || "—"}` : `Líder · ${p.ginasio_tipo || "ginásio"}`}</td>
+                        <td className="py-2 pr-3">{p.tipo_participante === "elite4" ? "Defende o cargo" : p.optou_participar ? "Participando pelo ginásio escolhido" : "Não participa (padrão)"}</td>
                         <td className="py-2 pr-3">{p.pontos_participacao}</td>
                         <td className="py-2 pr-3">{p.pontos_vitoria}</td>
                         <td className="py-2 pr-3">{p.pontos_admin}</td>
@@ -492,7 +504,7 @@ export default function DevCampeonatoElite4() {
                           <div className="flex gap-1">
                             <input type="number" min="1" max="1000" value={pontosManuais[p.id] || ""} onChange={(e) => setPontosManuais((prev) => ({ ...prev, [p.id]: e.target.value }))} className="w-16 rounded border px-2 py-1" aria-label={`Pontos para ${p.nome || p.usuario_uid}`} />
                             <input type="text" maxLength={160} value={motivosPontos[p.id] || ""} onChange={(e) => setMotivosPontos((prev) => ({ ...prev, [p.id]: e.target.value }))} placeholder="Motivo" className="min-w-24 flex-1 rounded border px-2 py-1" />
-                            <button onClick={() => concederPontos(p)} className="rounded bg-blue-700 px-2 py-1 text-white" aria-label={`Atribuir pontos a ${p.nome || p.usuario_uid}`}>+</button>
+                            <button disabled={salvando || (p.tipo_participante !== "elite4" && !p.optou_participar)} onClick={() => concederPontos(p)} className="rounded bg-blue-700 px-2 py-1 text-white disabled:opacity-40" aria-label={`Atribuir pontos a ${p.nome || p.usuario_uid}`}>+</button>
                           </div>
                         </td>
                       </tr>
@@ -521,17 +533,18 @@ export default function DevCampeonatoElite4() {
       {/* Pré-visualização do TOP-4 */}
       {emAberto && participantes.length > 0 && (
         <div className="bg-white p-4 rounded shadow">
-          <h2 className="text-lg font-semibold mb-2">Definir os quatro membros da Elite 4</h2>
-          <div className="grid gap-3 sm:grid-cols-2">{[0, 1, 2, 3].map((index) => (
-            <label key={index} className="text-sm font-medium">Posição {index + 1}
-              <select disabled={salvando} value={escolhasAtuais[index] || ""} onChange={(event) => { const lista = Array.from({ length: 4 }, (_, i) => escolhasAtuais[i] || ""); lista[index] = event.target.value; setSelecionados(lista); }} className="mt-1 block w-full rounded border p-2">
-                <option value="">Selecione um participante</option>
-                {[...participantes].sort(ordenarParticipantes).map((p) => <option key={p.id} value={p.usuario_uid}>{p.nome || p.usuario_uid} · {p.pontos} pts · {p.tipo_participante === "elite4" ? "Elite 4 atual" : p.ginasio_nome || "Líder"}</option>)}
-              </select>
+          <h2 className="text-lg font-semibold mb-2">Vencedores e prévia das trocas</h2>
+          <p className="mb-3 text-sm text-slate-600">A sugestão considera os pontos e preserva a vaga atual em caso de empate. Se você realizou confrontos, marque os líderes vencedores antes de confirmar. O rebaixado é sempre definido pela menor pontuação entre os membros atuais.</p>
+          <div className="space-y-2">{participantes.filter((p) => p.tipo_participante === "lider" && p.optou_participar).sort(ordenarParticipantes).map((p) => (
+            <label key={p.id} className="flex items-start gap-3 rounded border p-3 text-sm">
+              <input type="checkbox" disabled={salvando} checked={escolhasAtuais.includes(p.usuario_uid)} onChange={(event) => setSelecionados(event.target.checked ? [...escolhasAtuais, p.usuario_uid] : escolhasAtuais.filter((uid) => uid !== p.usuario_uid))} />
+              <span><b>{p.nome || p.usuario_uid}</b> · {p.ginasio_nome} · {p.ginasio_tipo} · {p.pontos} pontos</span>
             </label>
           ))}</div>
+          <div className="my-3 flex flex-wrap gap-2"><button disabled={salvando} onClick={() => setSelecionados(null)} className="rounded border px-3 py-2 text-sm">Usar sugestão por pontos</button><button disabled={salvando} onClick={() => setSelecionados([])} className="rounded border px-3 py-2 text-sm">Manter a Elite 4 atual</button></div>
+          {previa.erro ? <p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-800">{previa.erro}</p> : !previa.plano?.trocas.length ? <p className="rounded bg-blue-50 p-3 text-sm text-blue-950">Nenhum líder será promovido. A composição atual da Elite 4 e todos os ginásios serão mantidos.</p> : <ul className="space-y-2 rounded bg-blue-50 p-3 text-sm text-blue-950">{previa.plano.trocas.map((t) => <li key={t.promovido.uid}><b>{t.promovido.nome}</b> entra na Elite 4 com o tipo <b>{t.promovido.ginasio_tipo}</b>. {t.rebaixado ? <><b>{t.rebaixado.nome}</b> assume <b>{t.promovido.ginasio_nome}</b>, que passa a ter o tipo <b>{t.rebaixado.tipo}</b>.</> : <><b>{t.promovido.ginasio_nome}</b> abre disputa por liderança porque não há membro anterior para assumir.</>}</li>)}</ul>}
           <p className="text-xs text-gray-500 mt-2">
-            A sugestão inicial usa os quatro líderes mais bem pontuados. Você pode ajustar a seleção após os confrontos, inclusive mantendo membros atuais da Elite 4. Ao confirmar o encerramento, os escolhidos assumem os cargos e seus ginásios abrem disputa por novos líderes.
+            Apenas o ginásio inscrito de cada vencedor é transferido. Os demais ginásios do mesmo jogador continuam com ele. Se todos os líderes optarem por não participar, encerrar a disputa mantém os quatro membros atuais da Elite 4.
           </p>
         </div>
       )}

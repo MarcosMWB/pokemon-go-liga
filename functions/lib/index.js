@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -10,12 +10,14 @@ var desafios_1 = require("./desafios");
 Object.defineProperty(exports, "onDesafioResultadosWrite", { enumerable: true, get: function () { return desafios_1.onDesafioResultadosWrite; } });
 var elite4_1 = require("./elite4");
 Object.defineProperty(exports, "adminFinalizeElite4", { enumerable: true, get: function () { return elite4_1.adminFinalizeElite4; } });
+Object.defineProperty(exports, "setElite4Participation", { enumerable: true, get: function () { return elite4_1.setElite4Participation; } });
 var notifications_1 = require("./notifications");
 Object.defineProperty(exports, "onGymChallengeNotification", { enumerable: true, get: function () { return notifications_1.onGymChallengeNotification; } });
 Object.defineProperty(exports, "onGymDisputeBattleNotification", { enumerable: true, get: function () { return notifications_1.onGymDisputeBattleNotification; } });
 Object.defineProperty(exports, "onTournamentBattleNotification", { enumerable: true, get: function () { return notifications_1.onTournamentBattleNotification; } });
 Object.defineProperty(exports, "onBadgeEarnedNotification", { enumerable: true, get: function () { return notifications_1.onBadgeEarnedNotification; } });
 const adminSdk_1 = require("./adminSdk");
+const elite4Plan_1 = require("./elite4Plan");
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
 const COOLDOWN_DIAS = 7;
 const COOLDOWN_MS = COOLDOWN_DIAS * 24 * 60 * 60 * 1000;
@@ -231,7 +233,7 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         }
         // 2) Pontuação direta dos líderes: 1 ponto por participação concluída,
         // mais 2 pontos de bônus quando o líder vence (total de 3 por vitória).
-        if (liga && campId && partRef) {
+        if (liga && campId && partRef && (0, elite4Plan_1.podePontuarGinasio)(partSnap?.data(), ginasioId)) {
             const applied = partSnap?.exists ? (partSnap.get("desafios_aplicados") || {}) : {};
             const jaAplicado = typeof applied === "object" && applied && applied[desafioId] != null;
             if (!jaAplicado) {

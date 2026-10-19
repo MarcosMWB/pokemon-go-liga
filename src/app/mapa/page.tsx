@@ -189,11 +189,12 @@ export default function MapaPage() {
         const eliteRows = eliteSnap.docs.map((d) => ({ id: d.id, data: d.data() })).sort((a, b) => Number(a.data.pos || 0) - Number(b.data.pos || 0)).slice(0, 4);
         const elites = await Promise.all(eliteRows.map(async (d) => {
           const data = d.data;
-          if (data.nome || data.usuario_nome) return String(data.nome || data.usuario_nome);
+          if (data.nome || data.usuario_nome) return `${String(data.nome || data.usuario_nome)}${data.tipo ? ` · ${data.tipo}` : ""}`;
           const uid = data.usuario_uid || data.uid;
           if (!uid) return d.id;
           const user = await getDoc(doc(db, "usuarios", uid));
-          return user.exists() ? String(user.data().nome || user.data().nick || uid) : uid;
+          const nome = user.exists() ? String(user.data().nome || user.data().nick || uid) : uid;
+          return `${nome}${data.tipo ? ` · ${data.tipo}` : ""}`;
         }));
         setTituloRegional({ campeao: champ?.campeao_nome, elites });
       } catch (e) { console.warn("erro carregando campeões da região", e); setTituloRegional({ elites: [] }); }

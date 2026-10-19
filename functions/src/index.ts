@@ -5,7 +5,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 
 // se existir um arquivo desafios.ts que exporta a trigger, mantenha:
 export { onDesafioResultadosWrite } from "./desafios";
-export { adminFinalizeElite4 } from "./elite4";
+export { adminFinalizeElite4, setElite4Participation } from "./elite4";
 export {
   onGymChallengeNotification,
   onGymDisputeBattleNotification,
@@ -13,6 +13,7 @@ export {
   onBadgeEarnedNotification,
 } from "./notifications";
 import { admin, db, FieldValue } from "./adminSdk";
+import { podePontuarGinasio } from "./elite4Plan";
 
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
 
@@ -256,7 +257,7 @@ export const onDesafioConcluido = onDocumentWritten(
 
       // 2) Pontuação direta dos líderes: 1 ponto por participação concluída,
       // mais 2 pontos de bônus quando o líder vence (total de 3 por vitória).
-      if (liga && campId && partRef) {
+      if (liga && campId && partRef && podePontuarGinasio(partSnap?.data(), ginasioId)) {
         const applied = partSnap?.exists ? ((partSnap as any).get("desafios_aplicados") || {}) : {};
         const jaAplicado = typeof applied === "object" && applied && applied[desafioId] != null;
         if (!jaAplicado) {

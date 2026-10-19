@@ -338,6 +338,12 @@ service cloud.firestore {
       allow create, update, delete: if isSuper();
     }
 
+    // Preferências e trocas executadas no servidor; backup restrito ao administrador.
+    match /elite4_auditoria/{id} {
+      allow read: if isSuper();
+      allow write: if false;
+    }
+
     /* ========== GREAT PLATEAU / LIGA RO ========== */
     match /campeonatos_liga_ro/{id} {
       allow read: if true;
@@ -488,7 +494,8 @@ service cloud.firestore {
           && validEnrollment());
 
         allow update: if isSuper() || (isSignedIn() && request.auth.uid == uid
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['ginasio_id','pontos'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['pontos'])
+          && request.resource.data.ginasio_id == resource.data.ginasio_id
           && request.resource.data.pontos == 0
           && request.resource.data.usuario_uid == uid
           && request.resource.data.campeonato_id == id
