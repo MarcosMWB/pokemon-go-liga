@@ -68,7 +68,7 @@ export async function POST(req: Request) {
 
     await batch.commit();
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
+  } catch {
     console.error('Falha ao semear ginásios.');
     return NextResponse.json({ ok: false, error: 'erro interno' }, { status: 500 });
   }

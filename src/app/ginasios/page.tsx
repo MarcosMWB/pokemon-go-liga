@@ -609,6 +609,10 @@ export default function GinasiosPage() {
 
   const handleDesafiar = async (g: Ginasio) => {
     if (!userUid || !g.lider_uid) return;
+    if (!temporada) {
+      alert('Não há temporada ativa para registrar este desafio.');
+      return;
+    }
 
     const jaTem = minhasInsignias.some(
       (i) => i.ginasio_id === g.id && (temporada?.id ? i.temporada_id === temporada.id : false)
@@ -637,6 +641,8 @@ export default function GinasiosPage() {
       resultado_desafiante: null,
       createdAt: Date.now(),
       disputa_id: null,
+      temporada_id: temporada.id,
+      temporada_nome: temporada.nome || '',
     });
   };
 

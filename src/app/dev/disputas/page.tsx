@@ -682,68 +682,14 @@ export default function DevDisputasPage() {
     const rd = d.resultado_desafiante;
     if (!rl || !rd) return;
 
-    const gRef = doc(db, "ginasios", d.ginasio_id);
-    const gSnap = await getDoc(gRef);
-    const gData = gSnap.exists() ? (gSnap.data() as any) : null;
-
     if (rl === rd) {
-      if (rl === "desafiante") {
-        await addDoc(collection(db, "insignias"), {
-          usuario_uid: d.desafiante_uid,
-          ginasio_id: d.ginasio_id,
-          ginasio_nome: gData?.nome || "",
-          ginasio_tipo: gData?.tipo || "",
-          insignia_icon: gData?.insignia_icon || "",
-          temporada_id: temporada?.id || "",
-          temporada_nome: temporada?.nome || "",
-          liga: gData?.liga || d.liga || "",
-          createdAt: Date.now(),
-          concedidaPorAdminUid: auth.currentUser?.uid || null,
-          lider_derrotado_uid: d.lider_uid,
-        });
-
-        await addDoc(collection(db, "bloqueios_ginasio"), {
-          ginasio_id: d.ginasio_id,
-          desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 7 * 24 * 60 * 60 * 1000,
-        });
-
-        if (gSnap.exists()) {
-          const derrotas = Number(gData?.derrotas_seguidas ?? 0) + 1;
-          if (derrotas >= 3) {
-            await endActiveLeadership(d.ginasio_id);
-            await closeAndPurgeActiveDisputes(d.ginasio_id);
-
-            await addDoc(collection(db, "disputas_ginasio"), {
-              ginasio_id: d.ginasio_id,
-              status: "inscricoes",
-              tipo_original: gData?.tipo || "",
-              lider_anterior_uid: gData?.lider_uid || "",
-              temporada_id: temporada?.id || "",
-              temporada_nome: temporada?.nome || "",
-              liga: gData?.liga || d.liga || "",
-              createdAt: Date.now(),
-              origem: "3_derrotas",
-            });
-            await updateDoc(gRef, {
-              lider_uid: "",
-              em_disputa: true,
-              derrotas_seguidas: 0,
-            });
-          } else {
-            await updateDoc(gRef, { derrotas_seguidas: derrotas });
-          }
-        }
-      } else {
-        await updateDoc(gRef, { derrotas_seguidas: 0 });
-        await addDoc(collection(db, "bloqueios_ginasio"), {
-          ginasio_id: d.ginasio_id,
-          desafiante_uid: d.desafiante_uid,
-          proximo_desafio: Date.now() + 15 * 24 * 60 * 60 * 1000,
-        });
-      }
-
-      await updateDoc(ref, { status: "concluido" });
+      const vencedorUid = rl === "lider" ? d.lider_uid : d.desafiante_uid;
+      await updateDoc(ref, {
+        status: "concluido",
+        vencedor: rl,
+        vencedor_uid: vencedorUid,
+        fechadoEm: Date.now(),
+      });
       await clearDesafioChat(ref.id);
     } else {
       await updateDoc(ref, { status: "conflito" });

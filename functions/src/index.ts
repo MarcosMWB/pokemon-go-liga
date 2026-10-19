@@ -152,6 +152,17 @@ export const onDesafioConcluido = onDocumentWritten(
 
       const winRef = db.doc(`usuarios/${winnerUid}`);
       const losRef = db.doc(`usuarios/${loserUid}`);
+      const gymRef = db.doc(`ginasios/${ginasioId}`);
+      const gymSnap = await tx.get(gymRef);
+      const gymData = gymSnap.exists ? (gymSnap.data() as any) : null;
+      const seasonId = (dNow.temporada_id as string) || "";
+      const seasonName = (dNow.temporada_nome as string) || "";
+      const blockRef = db.doc(`${BLOQUEIOS_COLLECTION}/${ginasioId}__${desafiante}`);
+      const badgeRef = seasonId
+        ? db.doc(`insignias/${seasonId}__${ginasioId}__${desafiante}`)
+        : null;
+      const blockSnap = await tx.get(blockRef);
+      const badgeSnap = badgeRef ? await tx.get(badgeRef) : null;
 
       // =========================
       // FASE 1: TODAS AS LEITURAS
@@ -197,6 +208,64 @@ export const onDesafioConcluido = onDocumentWritten(
       // 1) stats
       tx.set(winRef, { statsVitorias: FieldValue.increment(1) }, { merge: true });
       tx.set(losRef, { statsDerrotas: FieldValue.increment(1) }, { merge: true });
+
+      // O registro sazonal é aplicado no servidor e é idempotente pelo ID determinístico.
+      if (gymData && vencedorTag === "desafiante") {
+        const nextLosses = asInt(gymData.derrotas_seguidas) + 1;
+        const seasonPatch: Record<string, unknown> = {
+          ...(blockSnap.exists ? blockSnap.data() : {}),
+          status: "ativo",
+          ginasio_id: ginasioId,
+          desafiante_uid: desafiante,
+          lider_uid: liderUid,
+          liga,
+          desafio_id: desafioId,
+          blockedUntil: blockSnap.get("blockedUntil") || admin.firestore.Timestamp.fromMillis(Date.now() + COOLDOWN_MS),
+          blockedUntilMs: blockSnap.get("blockedUntilMs") || Date.now() + COOLDOWN_MS,
+          updatedAt: FieldValue.serverTimestamp(),
+        };
+        if (seasonId) seasonPatch.lockedSeasonId = seasonId;
+        tx.set(blockRef, seasonPatch, { merge: true });
+
+        if (badgeRef && badgeSnap && !badgeSnap.exists) {
+          tx.create(badgeRef, {
+            usuario_uid: desafiante,
+            ginasio_id: ginasioId,
+            ginasio_nome: gymData.nome || "",
+            ginasio_tipo: gymData.tipo || "",
+            insignia_icon: gymData.insignia_icon || "",
+            temporada_id: seasonId,
+            temporada_nome: seasonName,
+            liga: gymData.liga || liga,
+            createdAt: FieldValue.serverTimestamp(),
+            lider_derrotado_uid: liderUid,
+            desafio_id: desafioId,
+            impressao_status: "pendente",
+          });
+        }
+
+        if (nextLosses >= 3) {
+          tx.update(gymRef, { lider_uid: "", em_disputa: true, derrotas_seguidas: 0 });
+          const jobRef = db.doc(`jobs_disputas/criar_${ginasioId}_${desafioId}`);
+          tx.set(jobRef, {
+            acao: "criar_disputa",
+            status: "pendente",
+            ginasio_id: ginasioId,
+            tipo_original: gymData.tipo || "",
+            lider_anterior_uid: liderUid,
+            temporada_id: seasonId,
+            temporada_nome: seasonName,
+            liga: gymData.liga || liga,
+            origem: "3_derrotas",
+            runAtMs: Date.now(),
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        } else {
+          tx.update(gymRef, { derrotas_seguidas: nextLosses });
+        }
+      } else if (gymData && vencedorTag === "lider") {
+        tx.update(gymRef, { derrotas_seguidas: 0 });
+      }
 
       // 2) Elite4 (somente se líder venceu e achou campeonato)
       if (vencedorTag === "lider" && liga && ptsElite4 > 0 && campId && partRef && partSnap) {
@@ -264,6 +333,67 @@ export const adminDeleteUser = onCall(
     await batch.commit().catch(() => { });
 
     return { ok: true };
+  }
+);
+
+// Valida e contabiliza a presença no servidor; o navegador não pode editar PP diretamente.
+export const registerPresence = onCall(
+  { region: "southamerica-east1" },
+  async (req) => {
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Faça login.");
+
+    const qrId = typeof req.data?.qrId === "string" ? req.data.qrId : "";
+    const lat = Number(req.data?.lat);
+    const lng = Number(req.data?.lng);
+    if (!qrId || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      throw new HttpsError("invalid-argument", "QR Code ou localização inválidos.");
+    }
+
+    const qrRef = db.doc(`pp_qr/${qrId}`);
+    const userRef = db.doc(`usuarios/${uid}`);
+    const logRef = db.doc(`pp_logs/${qrId}__${uid}`);
+    const previousLogs = db.collection("pp_logs")
+      .where("userId", "==", uid)
+      .where("qrId", "==", qrId)
+      .limit(1);
+    const distanceKm = (aLat: number, aLng: number, bLat: number, bLng: number) => {
+      const rad = (v: number) => (v * Math.PI) / 180;
+      const dLat = rad(bLat - aLat);
+      const dLng = rad(bLng - aLng);
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLng / 2) ** 2;
+      return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    };
+
+    return db.runTransaction(async (tx) => {
+      const qrSnap = await tx.get(qrRef);
+      const userSnap = await tx.get(userRef);
+      const logSnap = await tx.get(logRef);
+      const previousLogSnap = await tx.get(previousLogs);
+      if (!qrSnap.exists || qrSnap.get("active") !== true) {
+        throw new HttpsError("failed-precondition", "Este QR Code não está ativo.");
+      }
+      if (!userSnap.exists) throw new HttpsError("not-found", "Perfil de jogador não encontrado.");
+      if (logSnap.exists || !previousLogSnap.empty) {
+        throw new HttpsError("already-exists", "Você já recebeu ponto de presença com este QR Code.");
+      }
+
+      const qr = qrSnap.data() as any;
+      const adminLat = typeof qr.adminLat === "number" ? qr.adminLat : -22.941834;
+      const adminLng = typeof qr.adminLng === "number" ? qr.adminLng : -43.057178;
+      const distance = distanceKm(lat, lng, adminLat, adminLng);
+      if (distance > 1) throw new HttpsError("permission-denied", "Você está a mais de 1 km do ponto de encontro.");
+
+      tx.update(userRef, { pontosPresenca: FieldValue.increment(1) });
+      tx.create(logRef, {
+        userId: uid,
+        qrId,
+        tipo: "qr",
+        distanciaKm: Math.round(distance * 1000) / 1000,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return { success: true, distanceKm: Math.round(distance * 1000) / 1000 };
+    });
   }
 );
 

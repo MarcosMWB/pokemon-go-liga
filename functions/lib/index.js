@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -135,6 +135,17 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
             return;
         const winRef = adminSdk_1.db.doc(`usuarios/${winnerUid}`);
         const losRef = adminSdk_1.db.doc(`usuarios/${loserUid}`);
+        const gymRef = adminSdk_1.db.doc(`ginasios/${ginasioId}`);
+        const gymSnap = await tx.get(gymRef);
+        const gymData = gymSnap.exists ? gymSnap.data() : null;
+        const seasonId = dNow.temporada_id || "";
+        const seasonName = dNow.temporada_nome || "";
+        const blockRef = adminSdk_1.db.doc(`${BLOQUEIOS_COLLECTION}/${ginasioId}__${desafiante}`);
+        const badgeRef = seasonId
+            ? adminSdk_1.db.doc(`insignias/${seasonId}__${ginasioId}__${desafiante}`)
+            : null;
+        const blockSnap = await tx.get(blockRef);
+        const badgeSnap = badgeRef ? await tx.get(badgeRef) : null;
         // =========================
         // FASE 1: TODAS AS LEITURAS
         // =========================
@@ -171,6 +182,64 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         // 1) stats
         tx.set(winRef, { statsVitorias: adminSdk_1.FieldValue.increment(1) }, { merge: true });
         tx.set(losRef, { statsDerrotas: adminSdk_1.FieldValue.increment(1) }, { merge: true });
+        // O registro sazonal é aplicado no servidor e é idempotente pelo ID determinístico.
+        if (gymData && vencedorTag === "desafiante") {
+            const nextLosses = asInt(gymData.derrotas_seguidas) + 1;
+            const seasonPatch = {
+                ...(blockSnap.exists ? blockSnap.data() : {}),
+                status: "ativo",
+                ginasio_id: ginasioId,
+                desafiante_uid: desafiante,
+                lider_uid: liderUid,
+                liga,
+                desafio_id: desafioId,
+                blockedUntil: blockSnap.get("blockedUntil") || adminSdk_1.admin.firestore.Timestamp.fromMillis(Date.now() + COOLDOWN_MS),
+                blockedUntilMs: blockSnap.get("blockedUntilMs") || Date.now() + COOLDOWN_MS,
+                updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+            };
+            if (seasonId)
+                seasonPatch.lockedSeasonId = seasonId;
+            tx.set(blockRef, seasonPatch, { merge: true });
+            if (badgeRef && badgeSnap && !badgeSnap.exists) {
+                tx.create(badgeRef, {
+                    usuario_uid: desafiante,
+                    ginasio_id: ginasioId,
+                    ginasio_nome: gymData.nome || "",
+                    ginasio_tipo: gymData.tipo || "",
+                    insignia_icon: gymData.insignia_icon || "",
+                    temporada_id: seasonId,
+                    temporada_nome: seasonName,
+                    liga: gymData.liga || liga,
+                    createdAt: adminSdk_1.FieldValue.serverTimestamp(),
+                    lider_derrotado_uid: liderUid,
+                    desafio_id: desafioId,
+                    impressao_status: "pendente",
+                });
+            }
+            if (nextLosses >= 3) {
+                tx.update(gymRef, { lider_uid: "", em_disputa: true, derrotas_seguidas: 0 });
+                const jobRef = adminSdk_1.db.doc(`jobs_disputas/criar_${ginasioId}_${desafioId}`);
+                tx.set(jobRef, {
+                    acao: "criar_disputa",
+                    status: "pendente",
+                    ginasio_id: ginasioId,
+                    tipo_original: gymData.tipo || "",
+                    lider_anterior_uid: liderUid,
+                    temporada_id: seasonId,
+                    temporada_nome: seasonName,
+                    liga: gymData.liga || liga,
+                    origem: "3_derrotas",
+                    runAtMs: Date.now(),
+                    createdAt: adminSdk_1.FieldValue.serverTimestamp(),
+                });
+            }
+            else {
+                tx.update(gymRef, { derrotas_seguidas: nextLosses });
+            }
+        }
+        else if (gymData && vencedorTag === "lider") {
+            tx.update(gymRef, { derrotas_seguidas: 0 });
+        }
         // 2) Elite4 (somente se líder venceu e achou campeonato)
         if (vencedorTag === "lider" && liga && ptsElite4 > 0 && campId && partRef && partSnap) {
             const applied = partSnap.exists ? (partSnap.get("wins_applied") || {}) : {};
@@ -228,6 +297,61 @@ exports.adminDeleteUser = (0, https_1.onCall)({ region: "southamerica-east1" }, 
     batch.delete(adminSdk_1.db.doc(`usuarios_private/${targetUid}`));
     await batch.commit().catch(() => { });
     return { ok: true };
+});
+// Valida e contabiliza a presença no servidor; o navegador não pode editar PP diretamente.
+exports.registerPresence = (0, https_1.onCall)({ region: "southamerica-east1" }, async (req) => {
+    const uid = req.auth?.uid;
+    if (!uid)
+        throw new https_1.HttpsError("unauthenticated", "Faça login.");
+    const qrId = typeof req.data?.qrId === "string" ? req.data.qrId : "";
+    const lat = Number(req.data?.lat);
+    const lng = Number(req.data?.lng);
+    if (!qrId || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        throw new https_1.HttpsError("invalid-argument", "QR Code ou localização inválidos.");
+    }
+    const qrRef = adminSdk_1.db.doc(`pp_qr/${qrId}`);
+    const userRef = adminSdk_1.db.doc(`usuarios/${uid}`);
+    const logRef = adminSdk_1.db.doc(`pp_logs/${qrId}__${uid}`);
+    const previousLogs = adminSdk_1.db.collection("pp_logs")
+        .where("userId", "==", uid)
+        .where("qrId", "==", qrId)
+        .limit(1);
+    const distanceKm = (aLat, aLng, bLat, bLng) => {
+        const rad = (v) => (v * Math.PI) / 180;
+        const dLat = rad(bLat - aLat);
+        const dLng = rad(bLng - aLng);
+        const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLng / 2) ** 2;
+        return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    };
+    return adminSdk_1.db.runTransaction(async (tx) => {
+        const qrSnap = await tx.get(qrRef);
+        const userSnap = await tx.get(userRef);
+        const logSnap = await tx.get(logRef);
+        const previousLogSnap = await tx.get(previousLogs);
+        if (!qrSnap.exists || qrSnap.get("active") !== true) {
+            throw new https_1.HttpsError("failed-precondition", "Este QR Code não está ativo.");
+        }
+        if (!userSnap.exists)
+            throw new https_1.HttpsError("not-found", "Perfil de jogador não encontrado.");
+        if (logSnap.exists || !previousLogSnap.empty) {
+            throw new https_1.HttpsError("already-exists", "Você já recebeu ponto de presença com este QR Code.");
+        }
+        const qr = qrSnap.data();
+        const adminLat = typeof qr.adminLat === "number" ? qr.adminLat : -22.941834;
+        const adminLng = typeof qr.adminLng === "number" ? qr.adminLng : -43.057178;
+        const distance = distanceKm(lat, lng, adminLat, adminLng);
+        if (distance > 1)
+            throw new https_1.HttpsError("permission-denied", "Você está a mais de 1 km do ponto de encontro.");
+        tx.update(userRef, { pontosPresenca: adminSdk_1.FieldValue.increment(1) });
+        tx.create(logRef, {
+            userId: uid,
+            qrId,
+            tipo: "qr",
+            distanciaKm: Math.round(distance * 1000) / 1000,
+            createdAt: adminSdk_1.FieldValue.serverTimestamp(),
+        });
+        return { success: true, distanceKm: Math.round(distance * 1000) / 1000 };
+    });
 });
 // ---- TRIGGER: onResultadoWrite ------------------------------------------------
 exports.onResultadoWrite = (0, firestore_1.onDocumentWritten)({

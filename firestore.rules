@@ -46,14 +46,20 @@ service cloud.firestore {
       let p = /databases/$(database)/documents/bloqueios_ginasio/$(blockDocId(ginasioId, desafianteUid));
       return !exists(p) ||
         (
-          (get(p).data.blockedUntil is timestamp) &&
-          (get(p).data.blockedUntil <= request.time)
+          get(p).data.lockedSeasonId != request.resource.data.temporada_id &&
+          (!(get(p).data.blockedUntil is timestamp) ||
+            get(p).data.blockedUntil <= request.time)
         );
     }
 
     function gymLeaderUid(ginasioId) {
       let p = /databases/$(database)/documents/ginasios/$(ginasioId);
       return exists(p) ? get(p).data.lider_uid : null;
+    }
+
+    function activeSeason(temporadaId) {
+      let p = /databases/$(database)/documents/temporadas/$(temporadaId);
+      return temporadaId is string && exists(p) && get(p).data.ativa == true;
     }
 
     /* ================ CONTAS / CADASTROS BÁSICOS ================ */
@@ -175,6 +181,8 @@ service cloud.firestore {
         && request.resource.data.lider_uid == gymLeaderUid(request.resource.data.ginasio_id)
         && cooldownOk(request.resource.data.ginasio_id, request.auth.uid)
         && request.resource.data.status == 'pendente'
+        && request.resource.data.temporada_id is string
+        && activeSeason(request.resource.data.temporada_id)
         && (!('resultado_lider' in request.resource.data) || request.resource.data.resultado_lider == null)
         && (!('resultado_desafiante' in request.resource.data) || request.resource.data.resultado_desafiante == null)
         && (!('vencedor' in request.resource.data))
@@ -183,7 +191,8 @@ service cloud.firestore {
         && (!('disputa_id' in request.resource.data) || request.resource.data.disputa_id == null)
         && request.resource.data.keys().hasOnly([
           'ginasio_id','liga','lider_uid','desafiante_uid','status',
-          'resultado_lider','resultado_desafiante','createdAt','disputa_id'
+          'resultado_lider','resultado_desafiante','createdAt','disputa_id',
+          'temporada_id','temporada_nome'
         ]);
 
       function changedKeys() {
@@ -292,8 +301,8 @@ service cloud.firestore {
 
     match /insignias/{id} {
       allow read: if true;
-      allow create: if (isSignedIn() &&
-        request.resource.data.usuario_uid == request.auth.uid) || isSuper();
+      // As insígnias são concedidas pela função após validar desafio concluído.
+      allow create: if isSuper();
       allow update, delete: if isSuper();
     }
 
@@ -365,16 +374,37 @@ service cloud.firestore {
         }
 
         // o docId = uid do líder; atualização idempotente por desafio
-        allow create, update: if
-          isSignedIn()
-          && request.auth.uid == uid
-          && onlyIncPontos()
-          && nonDecreasingPontos()
-          && newFromDesafio()
-          && validFromDesafio();
+        function validEnrollment() {
+          let camp = get(/databases/$(database)/documents/campeonatos_elite4/$(id));
+          let gym = get(/databases/$(database)/documents/ginasios/$(request.resource.data.ginasio_id));
+          return camp.exists() && camp.data.status == 'aberto' && gym.exists()
+            && gym.data.lider_uid == request.auth.uid
+            && gym.data.liga == request.resource.data.liga
+            && camp.data.liga == request.resource.data.liga;
+        }
+
+        allow create: if isSuper() || (isSignedIn() && request.auth.uid == uid
+          && request.resource.data.usuario_uid == uid
+          && request.resource.data.campeonato_id == id
+          && request.resource.data.pontos == 0
+          && request.resource.data.keys().hasOnly(['campeonato_id','usuario_uid','ginasio_id','liga','pontos','createdAt'])
+          && validEnrollment());
+
+        allow update: if isSuper() || (isSignedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['ginasio_id','pontos'])
+          && request.resource.data.pontos == 0
+          && request.resource.data.usuario_uid == uid
+          && request.resource.data.campeonato_id == id
+          && validEnrollment());
 
         allow delete: if isSuper();
       }
+    }
+
+    // Autoriza collectionGroup(participantes) apenas quando o filtro é do próprio usuário.
+    match /{path=**}/participantes/{uid} {
+      allow read: if isSignedIn() &&
+        (resource.data.usuario_uid == request.auth.uid || isSuper());
     }
 
     // COLEÇÃO LEGADA (plana) ainda lida por telas antigas/migração

@@ -3,18 +3,11 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { auth, db } from '@/lib/firebase'
+import { getFunctions, httpsCallable } from 'firebase/functions'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import {
-  addDoc,
-  collection,
   doc,
   getDoc,
-  getDocs,
-  increment,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
 } from 'firebase/firestore'
 
 // Mesmo ponto padrão da página /pp
@@ -164,40 +157,19 @@ export default function ScanClient() {
             return
           }
 
-          // 3) Confere se já ganhou ponto com este QR
-          const logsQ = query(
-            collection(db, 'pp_logs'),
-            where('userId', '==', user.uid),
-            where('qrId', '==', qrId)
-          )
-          const logsSnap = await getDocs(logsQ)
-
-          if (!logsSnap.empty) {
-            setStatus('alreadyGranted')
-            setMessage('Você já recebeu ponto de presença com este QR Code.')
-            return
-          }
-
-          // 4) Registra log e incrementa ponto
-          await addDoc(collection(db, 'pp_logs'), {
-            userId: user.uid,
-            qrId,
-            tipo: 'qr',
-            playerLat: lat,
-            playerLng: lng,
-            adminLat,
-            adminLng,
-            createdAt: serverTimestamp(),
-          })
-
-          await updateDoc(doc(db, 'usuarios', user.uid), {
-            pontosPresenca: increment(1),
-          })
+          // O servidor valida distância, uso único e soma o ponto numa transação.
+          const register = httpsCallable(getFunctions(undefined, 'southamerica-east1'), 'registerPresence')
+          await register({ qrId, lat, lng })
 
           setStatus('success')
           setMessage('Ponto de presença registrado com sucesso!')
         } catch (err) {
           console.error(err)
+          if ((err as any)?.code === 'functions/already-exists') {
+            setStatus('alreadyGranted')
+            setMessage('Você já recebeu ponto de presença com este QR Code.')
+            return
+          }
           setStatus('error')
           setMessage('Ocorreu um erro ao validar o QR Code. Tente novamente em instantes.')
         }
