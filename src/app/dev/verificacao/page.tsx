@@ -8,10 +8,13 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   updateDoc,
   Timestamp,
+  deleteField,
+  writeBatch,
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -53,6 +56,7 @@ export default function VerificacaoUsuariosPage() {
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [markVerified, setMarkVerified] = useState<Record<string, boolean>>({});
   const [busca, setBusca] = useState("");
+  const [limpandoEmails, setLimpandoEmails] = useState(false);
 
   // feedback “copiado”
   const [copiedFC, setCopiedFC] = useState<string | null>(null);
@@ -169,6 +173,35 @@ export default function VerificacaoUsuariosPage() {
         verificadoPor: uid,
         verificadoEm: serverTimestamp(),
       });
+    }
+  }
+
+  async function removerEmailsDosPerfisPublicos() {
+    if (limpandoEmails) return;
+    const confirma = window.confirm(
+      "Remover o campo e-mail dos perfis públicos? Os endereços continuarão na área privada da conta."
+    );
+    if (!confirma) return;
+
+    setLimpandoEmails(true);
+    try {
+      const snapshot = await getDocs(collection(db, "usuarios"));
+      const legados = snapshot.docs.filter((d) =>
+        Object.prototype.hasOwnProperty.call(d.data(), "email")
+      );
+      for (let offset = 0; offset < legados.length; offset += 450) {
+        const batch = writeBatch(db);
+        legados.slice(offset, offset + 450).forEach((d) => {
+          batch.update(d.ref, { email: deleteField() });
+        });
+        await batch.commit();
+      }
+      alert(`${legados.length} perfil(is) público(s) revisado(s).`);
+    } catch (error) {
+      console.error("Falha ao remover e-mails dos perfis públicos:", error);
+      alert("Não foi possível concluir a limpeza. Verifique sua conexão e suas permissões de administrador.");
+    } finally {
+      setLimpandoEmails(false);
     }
   }
 
@@ -344,6 +377,18 @@ export default function VerificacaoUsuariosPage() {
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">Admin · Verificação de usuários</h1>
+
+      <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+        <p>Faça a limpeza dos e-mails que possam ter ficado em perfis públicos antigos.</p>
+        <button
+          type="button"
+          onClick={removerEmailsDosPerfisPublicos}
+          disabled={limpandoEmails}
+          className="mt-2 rounded bg-amber-700 px-3 py-2 text-white hover:bg-amber-800"
+        >
+          {limpandoEmails ? "Removendo e-mails…" : "Remover e-mails dos perfis públicos"}
+        </button>
+      </div>
 
       <div className="flex items-center gap-2">
         <input

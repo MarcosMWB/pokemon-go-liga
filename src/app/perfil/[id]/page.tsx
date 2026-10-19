@@ -211,6 +211,9 @@ export default function PerfilPage() {
   /* Auth / user */
   const [logadoUid, setLogadoUid] = useState<string | null>(null);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
+  const [emailNotificationsLoading, setEmailNotificationsLoading] = useState(false);
+  const [emailNotificationsSaving, setEmailNotificationsSaving] = useState(false);
 
   /* Gym / disputes */
   const [ginasiosLider, setGinasiosLider] = useState<Ginasio[]>([]);
@@ -269,6 +272,7 @@ export default function PerfilPage() {
   /* Histórico */
   const [lideratos, setLideratos] = useState<Liderato[]>([]);
   const [eliteMandatos, setEliteMandatos] = useState<EliteMandato[]>([]);
+  const [hallDaFama, setHallDaFama] = useState<Array<{ id: string; liga?: string; temporada_nome?: string; createdAt?: number; equipe_snapshot?: { temporada_nome?: string; liga?: string; pokemon?: string[] } | null }>>([]);
   const [renunciando, setRenunciando] = useState<string | null>(null);
 
   /* PP para remover derrota (Wish) */
@@ -293,6 +297,54 @@ export default function PerfilPage() {
 
     return unsub;
   }, []);
+
+  useEffect(() => {
+    if (!ehMeuPerfil || !perfilUid) {
+      setEmailNotificationsEnabled(false);
+      setEmailNotificationsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setEmailNotificationsLoading(true);
+    getDoc(doc(db, 'usuarios_private', perfilUid))
+      .then((snapshot) => {
+        if (active) {
+          setEmailNotificationsEnabled(snapshot.data()?.email_notifications?.enabled === true);
+        }
+      })
+      .catch((error) => {
+        console.error('Não foi possível carregar a preferência de e-mail:', error);
+      })
+      .finally(() => {
+        if (active) setEmailNotificationsLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [ehMeuPerfil, perfilUid]);
+
+  async function salvarPreferenciaEmailNotifications(enabled: boolean) {
+    if (!ehMeuPerfil || !perfilUid || emailNotificationsSaving) return;
+    setEmailNotificationsSaving(true);
+    try {
+      await setDoc(doc(db, 'usuarios_private', perfilUid), {
+        email_notifications: {
+          enabled,
+          consentVersion: 'email-notifications-v1-2026-10-19',
+          updatedAt: serverTimestamp(),
+          ...(enabled
+            ? { consentAt: serverTimestamp() }
+            : { revokedAt: serverTimestamp() }),
+        },
+      }, { merge: true });
+      setEmailNotificationsEnabled(enabled);
+    } catch (error) {
+      console.error('Não foi possível salvar a preferência de e-mail:', error);
+      alert('Não foi possível salvar sua preferência. Tente novamente.');
+    } finally {
+      setEmailNotificationsSaving(false);
+    }
+  }
 
   /* Ligas */
   useEffect(() => {
@@ -688,6 +740,16 @@ export default function PerfilPage() {
       setEliteMandatos(list);
     });
     return () => unsub();
+  }, [perfilUid]);
+
+  useEffect(() => {
+    if (!perfilUid) { setHallDaFama([]); return; }
+    const qHall = query(collection(db, 'hall_da_fama'), where('usuario_uid', '==', perfilUid));
+    return onSnapshot(qHall, (snap) => {
+      const entries = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Array<{ id: string; liga?: string; temporada_nome?: string; createdAt?: number; equipe_snapshot?: { temporada_nome?: string; liga?: string; pokemon?: string[] } | null }>;
+      entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setHallDaFama(entries);
+    });
   }, [perfilUid]);
 
   useEffect(() => {
@@ -1181,6 +1243,27 @@ export default function PerfilPage() {
             Ver tutorial
           </button>
         </div>
+
+        {ehMeuPerfil && (
+          <section className="rounded border border-slate-200 bg-slate-50 p-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={emailNotificationsEnabled}
+                disabled={emailNotificationsLoading || emailNotificationsSaving}
+                onChange={(event) => salvarPreferenciaEmailNotifications(event.target.checked)}
+              />
+              <span>
+                <b>Receber avisos por e-mail</b>
+                <span className="mt-1 block text-xs text-slate-600">
+                  Novas batalhas/disputas, desafios recebidos e confirmação de insígnias. Você pode alterar esta opção quando quiser.
+                </span>
+              </span>
+            </label>
+            {emailNotificationsSaving && <p className="mt-2 text-xs text-slate-500">Salvando preferência…</p>}
+          </section>
+        )}
       </div>
 
       {/* ABAS */}
@@ -1333,9 +1416,10 @@ export default function PerfilPage() {
                   )}
                 </div>
 
-                <p className="text-[11px] text-gray-400 mt-3">
-                  Em breve: posições por campeonato e Hall of Fame com equipes usadas.
-                </p>
+                <div className="mt-4 rounded border p-3">
+                  <h3 className="font-semibold">Hall da Fama regional</h3>
+                  {hallDaFama.length ? <ul className="mt-2 space-y-3">{hallDaFama.map((entry) => <li key={entry.id} className="rounded bg-gray-50 p-3"><p className="text-sm font-medium">🏆 Campeão do Great Plateau{entry.liga ? ` · ${entry.liga}` : ''}{entry.temporada_nome ? ` · ${entry.temporada_nome}` : ''}</p>{entry.equipe_snapshot?.pokemon?.length ? <><p className="mt-2 text-xs text-gray-500">Equipe registrada para a disputa ({entry.equipe_snapshot.temporada_nome || entry.temporada_nome || 'temporada'}):</p><ul className="mt-1 flex flex-wrap gap-2">{entry.equipe_snapshot.pokemon.map((nome, i) => <li key={`${entry.id}-${i}`} className="rounded-full border bg-white px-2 py-1 text-xs">{nome}</li>)}</ul></> : <p className="mt-1 text-xs text-gray-500">Equipe histórica indisponível para este título.</p>}</li>)}</ul> : <p className="mt-1 text-sm text-gray-500">Nenhum título regional registrado.</p>}
+                </div>
               </section>
             </>
           )}

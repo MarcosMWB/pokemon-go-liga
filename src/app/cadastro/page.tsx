@@ -52,6 +52,7 @@ export default function CadastroPage() {
   // consentimentos obrigatórios
   const [aceitoDados, setAceitoDados] = useState(false);
   const [declaraFriendCode, setDeclaraFriendCode] = useState(false);
+  const [receberEmails, setReceberEmails] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,12 +92,19 @@ export default function CadastroPage() {
             createdAt: serverTimestamp(),
             createdAtMs: Date.now(),
             consentimentos: {
-              versao: "v1-2025-11-24",
+              versao: "v2-2026-10-19",
               dadosSensiveisEmail: true,
               declaracaoFriendCodeVerdadeiro: true,
               timestamp: serverTimestamp(),
               userAgent:
                 typeof navigator !== "undefined" ? navigator.userAgent : null,
+            },
+            email_notifications: {
+              enabled: receberEmails,
+              consentVersion: "email-notifications-v1-2026-10-19",
+              consentAt: receberEmails ? serverTimestamp() : null,
+              revokedAt: null,
+              updatedAt: serverTimestamp(),
             },
           },
           { merge: true }
@@ -231,8 +239,22 @@ export default function CadastroPage() {
         />
         <span>
           Autorizo o tratamento dos meus <b>dados pessoais (e-mail)</b> para
-          autenticação, comunicação da plataforma e segurança, conforme a
+          autenticação, segurança e funcionamento da conta, conforme a
           Política de Privacidade.
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 text-sm mb-4 rounded border border-slate-200 bg-slate-50 p-3">
+        <input
+          type="checkbox"
+          checked={receberEmails}
+          onChange={(e) => setReceberEmails(e.target.checked)}
+          className="mt-1"
+        />
+        <span>
+          Quero receber e-mails sobre novas batalhas/disputas, desafios recebidos e
+          insígnias conquistadas. Posso desativar esses avisos a qualquer momento
+          no meu perfil.
         </span>
       </label>
 

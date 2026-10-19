@@ -9,7 +9,7 @@ import {
   sendEmailVerification,
   signOut,
 } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, deleteField } from "firebase/firestore";
 import type { FirebaseError } from "firebase/app";
 
 function mapAuthError(err: unknown): string {
@@ -124,6 +124,9 @@ export default function LoginPage() {
         const [privSnap, pubSnap] = await Promise.all([getDoc(privRef), getDoc(pubRef)]);
         if (!pubSnap.exists()) {
           await setDoc(pubRef, pickPublicUser(privSnap.data()), { merge: false });
+        } else if (Object.prototype.hasOwnProperty.call(pubSnap.data(), "email")) {
+          // Migra o campo legado para fora do perfil que qualquer visitante pode ler.
+          await updateDoc(pubRef, { email: deleteField() });
         }
       } catch (e) {
         console.warn("Falha ao espelhar PUBLIC (prossegue).", e);

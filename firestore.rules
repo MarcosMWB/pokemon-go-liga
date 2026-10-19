@@ -91,10 +91,11 @@ service cloud.firestore {
       allow read: if true;
 
       // criar: próprio usuário ou super
-      allow create: if isOwner(uid) || isSuper();
+      // O e-mail deve existir somente em usuarios_private/{uid}.
+      allow create: if (isOwner(uid) || isSuper()) && !('email' in request.resource.data);
 
       // dono pode atualizar, com travas em campos sensíveis
-      allow update: if isSuper() ||
+      allow update: if !('email' in request.resource.data) && (isSuper() ||
         (
           isOwner(uid) &&
           (!('pontosPresenca' in request.resource.data) ||
@@ -103,7 +104,7 @@ service cloud.firestore {
             nonDecreasingInt(resource.data.pp_consumidos, request.resource.data.pp_consumidos)) &&
           (!('verificado' in request.resource.data) ||
             request.resource.data.verificado == resource.data.verificado)
-        );
+        ));
       // allow delete: if isSuper();
     }
 
@@ -324,6 +325,93 @@ service cloud.firestore {
     }
 
     match /elite4_mandatos/{id} {
+      allow read: if true;
+      allow create, update, delete: if isSuper();
+    }
+
+    /* ========== GREAT PLATEAU / LIGA RO ========== */
+    match /campeonatos_liga_ro/{id} {
+      allow read: if true;
+      allow create, update, delete: if isSuper();
+      match /participantes/{uid} {
+        allow read: if true;
+        allow create, update, delete: if isSuper();
+      }
+      match /rodadas/{roundId} {
+        allow read: if true;
+        allow create, update, delete: if isSuper();
+        match /partidas/{matchId} {
+          function isMatchPlayer() {
+            return isSignedIn() && request.auth.uid in [resource.data.uid_a, resource.data.uid_b];
+          }
+          allow read: if true;
+          allow create, delete: if isSuper();
+          allow update: if isSuper() || (isMatchPlayer() &&
+            request.resource.data.diff(resource.data).changedKeys().hasOnly([
+              request.auth.uid == resource.data.uid_a ? 'report_a' : 'report_b'
+            ]) &&
+            (request.resource.data.report_a == null || request.resource.data.report_a in [resource.data.uid_a, resource.data.uid_b, 'empate']) &&
+            (request.resource.data.report_b == null || request.resource.data.report_b in [resource.data.uid_a, resource.data.uid_b, 'empate']));
+          match /mensagens/{msgId} {
+            function isMatchPlayerByPath() {
+              let m = get(/databases/$(database)/documents/campeonatos_liga_ro/$(id)/rodadas/$(roundId)/partidas/$(matchId));
+              return isSignedIn() && request.auth.uid in [m.data.uid_a, m.data.uid_b];
+            }
+            allow read: if isMatchPlayerByPath() || isSuper();
+            allow create: if isMatchPlayerByPath() && request.resource.data.from == request.auth.uid
+              && request.resource.data.text is string && request.resource.data.text.size() > 0
+              && request.resource.data.text.size() <= 1000;
+            allow update, delete: if isSuper();
+          }
+        }
+      }
+    }
+
+    match /desafios_campeoes/{id} {
+      function ownsGreatPlateauTrophy() {
+        let badgeId = 'santo_antonio__' + request.resource.data.badge_tournament_id + '__' + request.auth.uid;
+        let badge = get(/databases/$(database)/documents/insignias/$(badgeId));
+        return badge.data.usuario_uid == request.auth.uid && badge.data.tipo == 'trofeu_great_plateau';
+      }
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.challenger_uid == request.auth.uid
+        && request.resource.data.status == 'solicitado'
+        && request.resource.data.badge_tournament_id is string
+        && request.resource.data.challenger_name is string
+        && request.resource.data.liga is string
+        && request.resource.data.stage == 0
+        && request.resource.data.keys().hasOnly(['challenger_uid','challenger_name','badge_tournament_id','liga','status','stage','createdAt'])
+        && ownsGreatPlateauTrophy();
+      allow update, delete: if isSuper() || (isSignedIn() && resource.data.status == 'em_andamento'
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['reports'])
+        && (
+          (request.auth.uid == resource.data.challenger_uid
+            && request.resource.data.reports.diff(resource.data.reports).changedKeys().hasOnly(['challenger'])
+            && request.resource.data.reports.challenger in [resource.data.challenger_uid, resource.data.stage == 4 ? resource.data.champion.uid : resource.data.elites[resource.data.stage].uid])
+          ||
+          (request.auth.uid == (resource.data.stage == 4 ? resource.data.champion.uid : resource.data.elites[resource.data.stage].uid)
+            && request.resource.data.reports.diff(resource.data.reports).changedKeys().hasOnly(['defender'])
+            && request.resource.data.reports.defender in [resource.data.challenger_uid, resource.data.stage == 4 ? resource.data.champion.uid : resource.data.elites[resource.data.stage].uid])
+        ));
+      match /mensagens/{msgId} {
+        function isChallengeChatPlayer() {
+          let c = get(/databases/$(database)/documents/desafios_campeoes/$(id));
+          return isSignedIn() && c.data.status == 'em_andamento' &&
+            (request.auth.uid == c.data.challenger_uid ||
+             request.auth.uid == (c.data.stage == 4 ? c.data.champion.uid : c.data.elites[c.data.stage].uid));
+        }
+        allow read: if isSuper() || isChallengeChatPlayer();
+        allow create: if isChallengeChatPlayer() && request.resource.data.from == request.auth.uid
+          && request.resource.data.text is string && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000;
+        allow update, delete: if isSuper();
+      }
+    }
+    match /regiao_campeao/{id} {
+      allow read: if true;
+      allow create, update, delete: if isSuper();
+    }
+    match /hall_da_fama/{id} {
       allow read: if true;
       allow create, update, delete: if isSuper();
     }

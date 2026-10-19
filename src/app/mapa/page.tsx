@@ -75,7 +75,7 @@ const regioes: RegiaoInfo[] = [
     nome: "Santo Antônio",
     coordenadas: { top: "20%", left: "58%" },
     imagem: "/Insignia/santoantonio.png",
-    descricao: "Liga Oceânica, onde a visão e estratégia são testadas.",
+    descricao: "Sede do Great Plateau: aqui se decide o Campeão da Região e a Elite 4.",
   },
   {
     nome: "Serra Grande",
@@ -126,6 +126,8 @@ type Liga = {
   nome: string;
 };
 
+type TituloRegional = { campeao?: string; elites: string[] };
+
 export default function MapaPage() {
   const [regiaoAtiva, setRegiaoAtiva] = useState<RegiaoInfo | null>(null);
   const [ginasioInfo, setGinasioInfo] = useState<GinasioExtra | null>(null);
@@ -133,6 +135,7 @@ export default function MapaPage() {
 
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>("Great");
+  const [tituloRegional, setTituloRegional] = useState<TituloRegional>({ elites: [] });
 
   // carrega ligas da coleção "ligas"
   useEffect(() => {
@@ -157,6 +160,29 @@ export default function MapaPage() {
     setRegiaoAtiva(regiao);
     setGinasioInfo(null);
     setLoadingInfo(true);
+
+    if (regiao.nome === "Santo Antônio") {
+      try {
+        const [champSnap, eliteSnap] = await Promise.all([
+          getDoc(doc(db, "regiao_campeao", "great_plateau")),
+          getDocs(query(collection(db, "elite4"), where("liga", "==", ligaSelecionada))),
+        ]);
+        const champ = champSnap.exists() ? champSnap.data() : null;
+        const eliteRows = eliteSnap.docs.map((d) => ({ id: d.id, data: d.data() })).sort((a, b) => Number(a.data.pos || 0) - Number(b.data.pos || 0)).slice(0, 4);
+        const elites = await Promise.all(eliteRows.map(async (d) => {
+          const data = d.data;
+          if (data.nome || data.usuario_nome) return String(data.nome || data.usuario_nome);
+          const uid = data.usuario_uid || data.uid;
+          if (!uid) return d.id;
+          const user = await getDoc(doc(db, "usuarios", uid));
+          return user.exists() ? String(user.data().nome || user.data().nick || uid) : uid;
+        }));
+        setTituloRegional({ campeao: champ?.campeao_nome, elites });
+      } catch (e) { console.warn("erro carregando campeões da região", e); setTituloRegional({ elites: [] }); }
+      setGinasioInfo(null);
+      setLoadingInfo(false);
+      return;
+    } else setTituloRegional({ elites: [] });
 
     try {
       // se NÃO tem liga selecionada, faz o que já fazia
@@ -337,6 +363,15 @@ export default function MapaPage() {
               className="mx-auto mb-4"
             />
             <p className="mb-4">{regiaoAtiva.descricao}</p>
+
+            {regiaoAtiva.nome === "Santo Antônio" && (
+              <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-left text-sm">
+                <p><b>Campeão da Região:</b> {tituloRegional.campeao || "Ainda não definido"}</p>
+                <p className="mt-2 font-semibold">Elite 4 — {ligaSelecionada}</p>
+                {tituloRegional.elites.length ? <ol className="list-decimal pl-5">{tituloRegional.elites.map((nome, i) => <li key={`${nome}-${i}`}>{nome}</li>)}</ol> : <p>Os quatro membros ainda não estão configurados para esta liga.</p>}
+                <a href="/desafio-dos-campeoes" className="mt-2 inline-block text-blue-700 underline">Ver Desafio dos Campeões</a>
+              </div>
+            )}
 
             {ligaSelecionada && (
               <p className="text-xs text-gray-500 mb-2">

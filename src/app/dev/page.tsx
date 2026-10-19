@@ -234,6 +234,7 @@ export default function DevHome() {
             href="/dev/campeonato-elite4"
             subtitle="Chaves, fases e resultados"
           />
+          <Card title="Great Plateau — Liga RO" href="/dev/campeonato-ro" subtitle="Classificação sazonal, rodadas e troféu Santo Antônio" />
           <Card
             title="Seed de Ginásios"
             href="/dev/seed-ginasios"

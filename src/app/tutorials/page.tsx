@@ -153,7 +153,7 @@ function TutorialLigaRO() {
 
       <ul className="list-disc pl-5 space-y-2 text-gray-800">
         <li>
-          <b>Qualificação:</b> para participar, o jogador deve possuir <b>ao menos 8 insígnias</b> válidas da temporada.
+          <b>Qualificação:</b> o jogador deve possuir <b>mais de 8 insígnias</b> válidas da temporada ativa (9 ou mais).
         </li>
         <li>
           <b>Formato:</b> Classificatória + Top Cut
@@ -164,7 +164,7 @@ function TutorialLigaRO() {
           Top Cut: Top 8 em eliminação simples em melhor de 3(MD3). Podem ser usados qualquer Pokémon, com qualquer golpes que forem aceitos na liga referente, desde que a espécie do Pokémon esteja devidamente cadastrada entre seus 6 Pokémon da temporada.
         </li>
         <li>
-          <b>Premiação e ranking:</b> O campeão da liga ganha um troféu e mais a chance de enfrentar a elite 4 e entrar para o <b>Salão da Fama</b>. Os demais participantes recebem o título no histórico com a posição que obtiveram no torneio
+          <b>Premiação e ranking:</b> o campeão recebe no perfil a insígnia digital do <b>Troféu Santo Antônio</b>. Ela valida o troféu impresso em 3D, que será enviado ao vencedor quando a final não acontecer presencialmente. A insígnia também libera o desafio à Elite 4 e ao Campeão da Região. Os participantes e colocações ficam registrados no histórico público.
         </li>
       </ul>
 

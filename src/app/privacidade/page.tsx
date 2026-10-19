@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-const LAST_UPDATED = "23/11/2025";
+const LAST_UPDATED = "19/10/2026";
 const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "defina NEXT_PUBLIC_SUPPORT_EMAIL";
 
 function H2({ children }: { children: React.ReactNode }) {
@@ -40,7 +40,8 @@ export default function PrivacyPage() {
 
       <H2>Dados que tratamos</H2>
       <Ul>
-        <li>Conta de acesso (e-mail, nome) via autenticação do Google/Firebase.</li>
+        <li>Conta de acesso (e-mail e credenciais de autenticação) para login e recuperação da conta. O e-mail fica em registro privado e não aparece no perfil público; nome e Friend Code podem ser exibidos no site.</li>
+        <li>Se você autorizar, usamos seu e-mail para avisos operacionais sobre batalhas/disputas, desafios recebidos e insígnias conquistadas. Essa autorização é opcional, pode ser revogada no perfil e não altera as demais funcionalidades da conta.</li>
         <li>Dados de jogo fornecidos por você (nickname, Friend Code, ligas, equipes, pontuação, presença).</li>
         <li>Registros de uso técnicos coletados automaticamente pelo provedor de hospedagem (p. ex., IP, user-agent) para segurança e estatísticas agregadas.</li>
         <li>Cookies/armazenamentos do navegador para manter a sessão e lembrar preferências de consentimento.</li>
