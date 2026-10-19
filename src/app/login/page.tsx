@@ -169,55 +169,58 @@ export default function LoginPage() {
   };
 
   return (
-    <form onSubmit={handleLogin} className="p-8 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-4">Login</h1>
+    <form onSubmit={handleLogin} className="mx-auto my-4 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+      <h1 className="mb-2 text-2xl font-bold text-slate-950">Entrar na sua conta</h1>
+      <p className="mb-6 text-base leading-7 text-slate-700">Use o e-mail e a senha que você cadastrou na Liga. Não compartilhe sua senha com ninguém.</p>
 
-      <label className="block text-sm mb-1">E-mail</label>
+      <label htmlFor="login-email" className="mb-1 block text-base font-semibold text-slate-800">E-mail da conta</label>
       <input
+        id="login-email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         type="email"
         placeholder="seuemail@dominio.com"
-        className="w-full border p-2 mb-3 text-black rounded"
+        className="mb-4 min-h-12 w-full rounded-lg border border-slate-400 p-3 text-base text-black"
         required
         autoComplete="email"
         inputMode="email"
       />
 
-      <label className="block text-sm mb-1">Senha</label>
+      <label htmlFor="login-password" className="mb-1 block text-base font-semibold text-slate-800">Senha</label>
       <input
+        id="login-password"
         value={senha}
         onChange={(e) => setSenha(e.target.value)}
         type="password"
         placeholder="Sua senha"
-        className="w-full border p-2 mb-4 text-black rounded"
+        className="mb-4 min-h-12 w-full rounded-lg border border-slate-400 p-3 text-base text-black"
         required
         autoComplete="current-password"
       />
 
       <button
         disabled={loading}
-        className={`w-full p-2 rounded text-white ${
+        className={`min-h-12 w-full rounded-lg p-3 text-base font-bold text-white ${
           loading ? "bg-blue-400" : "bg-blue-600 hover:bg-blue-700"
         }`}
       >
         {loading ? "Entrando..." : "Entrar"}
       </button>
 
-      <div className="flex items-center justify-between mt-3 text-sm">
+      <div className="mt-4 flex flex-col gap-2 text-base sm:flex-row sm:items-center sm:justify-between">
         <button
           type="button"
           onClick={handleReset}
-          className="text-blue-600 underline disabled:opacity-60"
+          className="min-h-11 self-start font-semibold text-blue-800 underline underline-offset-2 disabled:opacity-60"
           disabled={loading}
         >
-          Esqueci minha senha
+          Esqueci ou quero trocar minha senha
         </button>
 
         <button
           type="button"
           onClick={handleCadastro}
-          className="text-blue-600 underline disabled:opacity-60"
+          className="min-h-11 self-start font-semibold text-blue-800 underline underline-offset-2 disabled:opacity-60"
           disabled={loading}
         >
           Cadastro

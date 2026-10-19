@@ -25,71 +25,77 @@ const regioes: RegiaoInfo[] = [
     coordenadas: { top: "25%", left: "30%" },
     imagem: "/Insignia/cafuba.png",
     descricao:
-      "Uma região de recomeços e resiliência, com batalhas estratégicas e espírito comunitário.",
+      "Entre a lagoa e os caminhos que levam à Região Oceânica, a Insígnia do Cafubá celebra quem sabe ler o terreno, reunir aliados e transformar cada encontro em oportunidade.",
   },
   {
     nome: "Camboinhas",
     coordenadas: { top: "65%", left: "46%" },
     imagem: "/Insignia/camboinhas.png",
     descricao:
-      "À beira-mar, o ginásio representa estabilidade, coragem e domínio emocional.",
+      "Com o mar de um lado e a lagoa do outro, Camboinhas inspira batalhas de horizonte amplo: visão de equipe, calma para esperar o momento certo e coragem para avançar.",
   },
   {
     nome: "Engenho do Mato",
     coordenadas: { top: "8%", left: "95%" },
     imagem: "/Insignia/engenhodomato.png",
-    descricao: "Área rural com forte ligação à natureza e resistência física.",
+    descricao:
+      "No verde do Engenho do Mato, a pressa fica para trás. Esta insígnia é para treinadores pacientes, atentos aos detalhes e prontos para trilhar o próprio caminho.",
   },
   {
     nome: "Itacoatiara",
     coordenadas: { top: "90%", left: "70%" },
     imagem: "/Insignia/itacoatiara.png",
     descricao:
-      "Espírito esportivo e conexão com os elementos. Batalhas de alto risco e velocidade.",
+      "A imponência do Costão e a energia do mar dão o tom de Itacoatiara. Aqui, ousadia sem preparo não basta: é preciso escolher a hora de atacar e sustentar a estratégia.",
   },
   {
     nome: "Itaipu",
     coordenadas: { top: "81%", left: "66%" },
     imagem: "/Insignia/itaipu.png",
-    descricao: "Uma área serena onde batalhas são táticas e meditativas.",
+    descricao:
+      "Entre a praia, a lagoa e a história de Itaipu, esta insígnia homenageia quem mantém a cabeça fria e encontra força no equilíbrio, na experiência e na persistência.",
   },
   {
     nome: "Jacaré",
     coordenadas: { top: "7%", left: "50%" },
     imagem: "/Insignia/jacare.png",
-    descricao: "Região de adaptação e mobilidade, com batalhas rápidas.",
+    descricao:
+      "Inspirada nos caminhos e nas águas do Jacaré, a insígnia pede flexibilidade: observar o que muda, adaptar a equipe e nunca subestimar uma boa virada.",
   },
   {
     nome: "Maravista",
     coordenadas: { top: "45%", left: "65%" },
     imagem: "/Insignia/maravista.png",
-    descricao: "Ambiente voltado para equilíbrio, evolução e suporte mútuo.",
+    descricao:
+      "Maravista tem clima de jornada compartilhada. Sua insígnia valoriza quem evolui a cada desafio, aprende com a comunidade e constrói vitórias passo a passo.",
   },
   {
     nome: "Piratininga",
     coordenadas: { top: "55%", left: "19%" },
     imagem: "/Insignia/piratininga.png",
-    descricao: "Centro urbano e tecnológico, batalhas inteligentes e dinâmicas.",
+    descricao:
+      "Às margens da Lagoa de Piratininga e perto da orla, este ginásio combina movimento e estratégia. A insígnia é conquistada por quem enxerga oportunidades antes que a maré vire.",
   },
   {
     nome: "Santo Antônio",
     coordenadas: { top: "20%", left: "58%" },
     imagem: "/Insignia/santoantonio.png",
-    descricao: "Sede do Great Plateau: aqui se decide o Campeão da Região e a Elite 4.",
+    descricao:
+      "O grande palco da Região Oceânica. No Great Plateau, a jornada dos melhores treinadores ganha seu capítulo decisivo: aqui se coroa o Campeão da Região e se desafia a Elite 4.",
   },
   {
     nome: "Serra Grande",
     coordenadas: { top: "22%", left: "80%" },
     imagem: "/Insignia/serragrande.png",
     descricao:
-      "Região elevada com batalhas difíceis. Só os mais preparados vencem.",
+      "Serra Grande convida a olhar a jornada de cima: cada passo conta, cada recurso precisa ser bem usado. Esta insígnia celebra preparo, constância e visão de longo prazo.",
   },
   {
     nome: "Jardim Imbuí",
     coordenadas: { top: "38%", left: "7%" },
     imagem: "/Insignia/jardimimbui.png",
     descricao:
-      "Área montanhosa misteriosa, conhecida por embates técnicos e grande preparo mental.",
+      "Mais recolhido entre as paisagens da região, o Jardim Imbuí é o território de quem observa antes de agir. Sua insígnia recompensa leitura de jogo, criatividade e precisão.",
   },
 ];
 
@@ -136,6 +142,18 @@ export default function MapaPage() {
   const [ligas, setLigas] = useState<Liga[]>([]);
   const [ligaSelecionada, setLigaSelecionada] = useState<string>("Great");
   const [tituloRegional, setTituloRegional] = useState<TituloRegional>({ elites: [] });
+
+  useEffect(() => {
+    if (!regiaoAtiva) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setRegiaoAtiva(null);
+        setGinasioInfo(null);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [regiaoAtiva]);
 
   // carrega ligas da coleção "ligas"
   useEffect(() => {
@@ -282,14 +300,17 @@ export default function MapaPage() {
   };
 
   return (
-    <div className="relative w-full max-w-5xl mx-auto p-4 space-y-4">
+    <div className="relative w-full max-w-5xl mx-auto space-y-5 p-3 sm:p-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
         <h1 className="text-3xl font-bold text-center sm:text-left">
           Mapa da Liga - Região Oceânica
         </h1>
+        <p className="mt-2 max-w-2xl text-base leading-7 text-slate-700">Toque em uma insígnia no mapa ou escolha um bairro na lista para ver o ginásio, o líder e a situação da região.</p>
+        </div>
 
         <div>
-          <label className="text-xs block mb-1 text-gray-600">
+          <label className="block mb-1 text-sm font-semibold text-slate-700">
             Filtrar por liga
           </label>
           <select
@@ -300,8 +321,9 @@ export default function MapaPage() {
               setRegiaoAtiva(null);
               setGinasioInfo(null);
             }}
-            className="border rounded px-2 py-1 text-sm"
+            className="min-h-11 w-full rounded-lg border border-slate-400 bg-white px-3 text-base"
           >
+            <option value="">Todas as ligas</option>
             {ligas.map((l) => (
               <option key={l.id} value={l.nome}>
                 {l.nome}
@@ -324,7 +346,9 @@ export default function MapaPage() {
           <button
             key={i}
             onClick={() => handleAbrirRegiao(regiao)}
-            className="absolute bg-white/80 rounded-full p-1 hover:bg-yellow-200 shadow"
+            aria-label={`Ver informações de ${regiao.nome}`}
+            title={`Ver ${regiao.nome}`}
+            className="absolute flex min-h-12 min-w-12 items-center justify-center rounded-full bg-white shadow ring-2 ring-white hover:bg-yellow-100 focus-visible:z-10"
             style={{
               top: regiao.coordenadas.top,
               left: regiao.coordenadas.left,
@@ -342,19 +366,28 @@ export default function MapaPage() {
         ))}
       </div>
 
+      <section aria-labelledby="lista-bairros-heading" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h2 id="lista-bairros-heading" className="text-lg font-bold text-slate-950">Escolha pelo nome do bairro</h2>
+        <p className="mt-1 text-sm text-slate-700">Se for difícil tocar no ponto do mapa, use um destes botões.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          {regioes.map((regiao) => <button key={regiao.nome} type="button" onClick={() => handleAbrirRegiao(regiao)} className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left font-medium text-slate-900 hover:bg-blue-50 focus-visible:ring-2 focus-visible:ring-blue-700">{regiao.nome}</button>)}
+        </div>
+      </section>
+
       {regiaoAtiva && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-xl max-w-md text-center relative shadow-xl w-[90%] max-w-lg">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/60 p-4 z-50" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setRegiaoAtiva(null); setGinasioInfo(null); } }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="map-region-title" className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 text-center shadow-xl sm:p-6">
             <button
               onClick={() => {
                 setRegiaoAtiva(null);
                 setGinasioInfo(null);
               }}
-              className="absolute top-2 right-4 text-xl font-bold text-gray-500 hover:text-red-600"
+              aria-label="Fechar informações do bairro"
+              className="absolute right-3 top-3 flex min-h-11 min-w-11 items-center justify-center rounded-lg text-2xl font-bold text-slate-700 hover:bg-slate-100 hover:text-red-700"
             >
               ×
             </button>
-            <h2 className="text-2xl font-bold mb-2">{regiaoAtiva.nome}</h2>
+            <h2 id="map-region-title" className="pr-10 text-2xl font-bold mb-2">{regiaoAtiva.nome}</h2>
             <Image
               src={regiaoAtiva.imagem}
               alt={`Insígnia de ${regiaoAtiva.nome}`}

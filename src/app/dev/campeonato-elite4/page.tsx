@@ -16,6 +16,7 @@ import {
   query,
   setDoc,
   updateDoc,
+  runTransaction,
   where,
   writeBatch,
 } from "firebase/firestore";
@@ -29,12 +30,24 @@ type Participante = {
   usuario_uid: string;
   ginasio_id: string;
   pontos: number;
+  pontos_participacao: number;
+  pontos_vitoria: number;
+  pontos_admin: number;
+  tipo_participante: "lider" | "elite4";
+  elite4_pos?: number;
   nome?: string;
   ginasio_nome?: string;
   ginasio_tipo?: string;
 };
 type Elite4 = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string };
-type Ginasio = { id: string; nome: string; liga?: string; lider_uid?: string; tipo?: string };
+type PontoAdmin = { id: string; participante_nome: string; quantidade: number; motivo: string; createdAt: number };
+
+function ordenarParticipantes(a: Participante, b: Participante) {
+  return (b.pontos || 0) - (a.pontos || 0) ||
+    (b.pontos_vitoria || 0) - (a.pontos_vitoria || 0) ||
+    (b.pontos_participacao || 0) - (a.pontos_participacao || 0) ||
+    (a.nome || a.usuario_uid).localeCompare(b.nome || b.usuario_uid, "pt-BR");
+}
 
 /** Página */
 export default function DevCampeonatoElite4() {
@@ -49,6 +62,9 @@ export default function DevCampeonatoElite4() {
   const [elite4Atual, setElite4Atual] = useState<Record<number, Elite4 | undefined>>({});
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string>("");
+  const [pontosManuais, setPontosManuais] = useState<Record<string, string>>({});
+  const [motivosPontos, setMotivosPontos] = useState<Record<string, string>>({});
+  const [historicoPontos, setHistoricoPontos] = useState<PontoAdmin[]>([]);
 
   /** Auth + superusers */
   useEffect(() => {
@@ -117,13 +133,18 @@ export default function DevCampeonatoElite4() {
           usuario_uid: x.usuario_uid,
           ginasio_id: x.ginasio_id,
           pontos: x.pontos ?? 0,
+          pontos_participacao: x.pontos_participacao ?? 0,
+          pontos_vitoria: x.pontos_vitoria ?? 0,
+          pontos_admin: x.pontos_admin ?? 0,
+          tipo_participante: x.tipo_participante === "elite4" ? "elite4" : "lider",
+          elite4_pos: x.elite4_pos,
         };
         // Nome do usuário
         const u = await getDoc(doc(db, "usuarios", p.usuario_uid));
         if (u.exists()) p.nome = (u.data() as any).nome || (u.data() as any).email || p.usuario_uid;
         // Nome do ginásio
-        const g = await getDoc(doc(db, "ginasios", p.ginasio_id));
-        if (g.exists()) {
+        const g = p.ginasio_id ? await getDoc(doc(db, "ginasios", p.ginasio_id)) : null;
+        if (g?.exists()) {
           const gd = g.data() as any;
           p.ginasio_nome = gd?.nome || p.ginasio_id;
           p.ginasio_tipo = gd?.tipo || "";
@@ -144,7 +165,63 @@ export default function DevCampeonatoElite4() {
     return () => unsub();
   }, [campeonato]);
 
-  /** Criar campeonato e carregar participantes a partir dos líderes atuais da liga */
+  useEffect(() => {
+    if (!campeonato) { setHistoricoPontos([]); return; }
+    const qLogs = query(collection(db, "campeonatos_elite4_pontuacoes"), where("campeonato_id", "==", campeonato.id));
+    return onSnapshot(qLogs, (snap) => {
+      const rows = snap.docs.map((d) => {
+        const x = d.data() as any;
+        return { id: d.id, participante_nome: x.participante_nome || x.usuario_uid || "Treinador", quantidade: Number(x.quantidade || 0), motivo: String(x.motivo || ""), createdAt: Number(x.createdAt || 0) };
+      });
+      setHistoricoPontos(rows.sort((a, b) => b.createdAt - a.createdAt));
+    });
+  }, [campeonato]);
+
+  /** Inclui líderes e Elite 4 no ranking sem zerar pontuações que já existam. */
+  const sincronizarParticipantes = async (campId: string) => {
+    const [gs, e4] = await Promise.all([
+      getDocs(query(collection(db, "ginasios"), where("liga", "==", ligaSel))),
+      getDocs(query(collection(db, "elite4"), where("liga", "==", ligaSel))),
+    ]);
+    const entradas = new Map<string, Record<string, any>>();
+    for (const g of gs.docs) {
+      const data = g.data() as any;
+      const uid = String(data.lider_uid || "");
+      if (uid && !entradas.has(uid)) entradas.set(uid, { usuario_uid: uid, ginasio_id: g.id, tipo_participante: "lider" });
+    }
+    for (const e of e4.docs) {
+      const data = e.data() as any;
+      const uid = String(data.uid || "");
+      const pos = Number(data.pos);
+      if (uid && [1, 2, 3, 4].includes(pos)) {
+        entradas.set(uid, { ...(entradas.get(uid) || {}), usuario_uid: uid, tipo_participante: "elite4", elite4_pos: pos });
+      }
+    }
+    let adicionados = 0;
+    for (const [uid, dados] of entradas) {
+      const ref = doc(db, "campeonatos_elite4", campId, "participantes", uid);
+      const atual = await getDoc(ref);
+      if (atual.exists()) {
+        await updateDoc(ref, {
+          tipo_participante: dados.tipo_participante,
+          elite4_pos: dados.elite4_pos ?? null,
+          ...(dados.ginasio_id ? { ginasio_id: dados.ginasio_id } : {}),
+        });
+        continue;
+      }
+      await setDoc(ref, {
+        campeonato_id: campId, usuario_uid: uid, liga: ligaSel,
+        ginasio_id: dados.ginasio_id || "", tipo_participante: dados.tipo_participante,
+        ...(dados.elite4_pos ? { elite4_pos: dados.elite4_pos } : {}),
+        pontos: 0, pontos_participacao: 0, pontos_vitoria: 0, pontos_admin: 0,
+        createdAt: Date.now(),
+      });
+      adicionados++;
+    }
+    return adicionados;
+  };
+
+  /** Criar campeonato com os líderes e a Elite 4 atuais da liga */
   const criarCampeonato = async () => {
     if (!ligaSel) { setMsg("Selecione uma liga."); return; }
     setMsg(""); setSalvando(true);
@@ -156,30 +233,8 @@ export default function DevCampeonatoElite4() {
         createdAt: Date.now(),
       });
 
-      // coleta líderes atuais da liga (um por líder)
-      const gs = await getDocs(query(collection(db, "ginasios"), where("liga", "==", ligaSel), where("lider_uid", "not-in", ["", null])));
-      const seen = new Set<string>();
-      for (const g of gs.docs) {
-        const d = g.data() as any;
-        const uid = d.lider_uid as string;
-        if (!uid || seen.has(uid)) continue; // 1 por líder
-        seen.add(uid);
-
-        // Novo layout: subcoleção /participantes/{uid}
-        await setDoc(
-          doc(db, "campeonatos_elite4", campRef.id, "participantes", uid),
-          {
-            campeonato_id: campRef.id,
-            usuario_uid: uid,
-            ginasio_id: g.id,
-            liga: ligaSel,
-            pontos: 0,
-            createdAt: Date.now(),
-          },
-          { merge: true }
-        );
-      }
-      setMsg("Campeonato criado e participantes carregados.");
+      const quantidade = await sincronizarParticipantes(campRef.id);
+      setMsg(`Disputa criada com ${quantidade} participantes, incluindo líderes e Elite 4.`);
     } catch (e: any) {
       setMsg("Erro ao criar: " + e.message);
     } finally {
@@ -187,76 +242,63 @@ export default function DevCampeonatoElite4() {
     }
   };
 
-  /** Editar pontuação manualmente */
-  const atualizarPontos = async (p: Participante, novo: number) => {
-    setMsg("");
+  /** Pontos administrativos são somados à pontuação automática e ficam auditáveis. */
+  const concederPontos = async (p: Participante) => {
     if (!campeonato) return;
-    await updateDoc(doc(db, "campeonatos_elite4", campeonato.id, "participantes", p.id), { pontos: novo });
+    const quantidade = Math.trunc(Number(pontosManuais[p.id]));
+    const motivo = (motivosPontos[p.id] || "").trim();
+    if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > 1000) { setMsg("Informe de 1 a 1000 pontos."); return; }
+    if (motivo.length < 4) { setMsg("Informe o motivo da pontuação (mínimo de 4 caracteres)."); return; }
+    setMsg("");
+    try {
+      const ref = doc(db, "campeonatos_elite4", campeonato.id, "participantes", p.id);
+      const historicoRef = doc(collection(db, "campeonatos_elite4_pontuacoes"));
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error("Participante não encontrado.");
+        const atual = snap.data() as any;
+        tx.update(ref, { pontos: Number(atual.pontos || 0) + quantidade, pontos_admin: Number(atual.pontos_admin || 0) + quantidade, updatedAt: Date.now() });
+        tx.set(historicoRef, {
+          campeonato_id: campeonato.id, liga: ligaSel, usuario_uid: p.usuario_uid,
+          participante_nome: p.nome || p.usuario_uid, quantidade, motivo,
+          admin_uid: auth.currentUser?.uid || "", createdAt: Date.now(),
+        });
+      });
+      setPontosManuais((prev) => ({ ...prev, [p.id]: "" }));
+      setMotivosPontos((prev) => ({ ...prev, [p.id]: "" }));
+      setMsg(`${quantidade} ponto(s) registrado(s) para ${p.nome || p.usuario_uid}.`);
+    } catch (e: any) { setMsg("Não foi possível atribuir os pontos: " + e.message); }
   };
 
-  /** Finalizar e promover top-4 para ELITE4 */
-  const finalizarEPromover = async () => {
+  /** Fecha e arquiva a classificação sem alterar automaticamente a Elite 4. */
+  const encerrarDisputa = async () => {
     if (!campeonato) { setMsg("Nenhum campeonato aberto."); return; }
-    if (participantes.length < 4) { setMsg("Precisa de pelo menos 4 participantes."); return; }
+    if (participantes.filter((p) => p.tipo_participante === "lider").length < 4) { setMsg("Precisa de pelo menos 4 líderes participantes."); return; }
 
-    const ordenados = [...participantes].sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0));
-    const top4 = ordenados.slice(0, 4);
+    const ordenados = [...participantes].sort(ordenarParticipantes);
+    const top4 = ordenados.filter((p) => p.tipo_participante === "lider").slice(0, 4);
 
     if (!confirm(
-      `Confirmar promoção para ELITE 4 da liga "${ligaSel}"?\n` +
-      top4.map((p, i) => `${i + 1}º: ${p.nome} (${p.ginasio_nome})`).join("\n") +
-      `\nLíderes promovidos deixam seus ginásios vagos e os antigos E4 assumem esses ginásios (mesma posição).`
+      `Fechar a classificação da disputa da Elite 4 na liga "${ligaSel}"?\n` +
+      top4.map((p, i) => `${i + 1}º desafiante: ${p.nome} (${p.pontos} pts)`).join("\n") +
+      "\nO ranking será registrado sem alterar automaticamente os membros da Elite 4."
     )) return;
 
     setSalvando(true); setMsg("");
     try {
       const batch = writeBatch(db);
-
-      // carrega ginásios dos promovidos (uma vez)
-      const gCache = new Map<string, Ginasio>();
-      for (const p of top4) {
-        const g = await getDoc(doc(db, "ginasios", p.ginasio_id));
-        if (g.exists()) gCache.set(p.ginasio_id, { id: g.id, ...(g.data() as any) });
-      }
-
-      // aplica posição 1..4
-      for (let pos = 1; pos <= 4; pos++) {
-        const promoted = top4[pos - 1];
-        const demoted = elite4Atual[pos];
-
-        // 1) Atualiza/define ELITE 4 pos N
-        const eliteDocId = demoted?.id || `${ligaSel}_pos${pos}`;
-        batch.set(doc(db, "elite4", eliteDocId), {
-          liga: ligaSel,
-          pos,
-          uid: promoted.usuario_uid,
-          updatedAt: Date.now(),
-        });
-
-        // 2) Deixa o ginásio do promovido vago
-        batch.update(doc(db, "ginasios", promoted.ginasio_id), {
-          lider_uid: "",
-          em_disputa: false,
-          derrotas_seguidas: 0,
-        });
-
-        // 3) Se havia antigo E4 nessa posição, rebaixa para o ginásio do promovido
-        if (demoted?.uid) {
-          batch.update(doc(db, "ginasios", promoted.ginasio_id), {
-            lider_uid: demoted.uid,
-            em_disputa: false,
-            derrotas_seguidas: 0,
-          });
-        }
-      }
-
-      // fecha o campeonato
+      const resultadoRef = doc(collection(db, "campeonatos_elite4_resultados"));
       batch.update(doc(db, "campeonatos_elite4", campeonato.id), { status: "fechado", closedAt: Date.now() });
-
-      // histórico simples
-      await addDoc(collection(db, "campeonatos_elite4_resultados"), {
+      // histórico da disputa para consulta posterior
+      batch.set(resultadoRef, {
         campeonato_id: campeonato.id,
         liga: ligaSel,
+        ranking: ordenados.map((p, i) => ({
+          pos: i + 1, uid: p.usuario_uid, nome: p.nome || p.usuario_uid,
+          tipo_participante: p.tipo_participante, elite4_pos: p.elite4_pos || null,
+          ginasio_id: p.ginasio_id, ginasio_nome: p.ginasio_nome || "", pontos: p.pontos,
+          pontos_participacao: p.pontos_participacao, pontos_vitoria: p.pontos_vitoria, pontos_admin: p.pontos_admin,
+        })),
         top4: top4.map((p, i) => ({
           pos: i + 1,
           uid: p.usuario_uid,
@@ -267,11 +309,11 @@ export default function DevCampeonatoElite4() {
         })),
         appliedAt: Date.now(),
       });
-
       await batch.commit();
-      setMsg("Promoções aplicadas com sucesso.");
+
+      setMsg("Classificação encerrada e registrada. A Elite 4 não foi alterada; organize os desafios com base no ranking.");
     } catch (e: any) {
-      setMsg("Erro ao aplicar promoções: " + e.message);
+      setMsg("Erro ao encerrar a disputa: " + e.message);
     } finally {
       setSalvando(false);
     }
@@ -326,7 +368,7 @@ export default function DevCampeonatoElite4() {
   const emAberto = Boolean(campeonato && campeonato.status === "aberto");
 
   const topPreview = useMemo(() => {
-    return [...participantes].sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0)).slice(0, 4);
+    return participantes.filter((p) => p.tipo_participante === "lider").sort(ordenarParticipantes).slice(0, 4);
   }, [participantes]);
 
   if (isAdmin === null) return <p className="p-6">Carregando…</p>;
@@ -336,9 +378,9 @@ export default function DevCampeonatoElite4() {
     <div className="max-w-6xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Campeonato dos Líderes → ELITE 4</h1>
+        <h1 className="text-2xl font-bold">Disputa da Elite 4 — {ligaSel || "Liga"}</h1>
           <p className="text-sm text-gray-500">
-            Top-4 da liga selecionada sobe para a ELITE 4; antigos E4 assumem os ginásios dos promovidos.
+            Cada desafio concluído rende 1 ponto de participação; uma vitória do líder soma mais 2 (3 no total). A Elite 4 recebe pontos administrativos. O ranking orienta os desafios e não muda os cargos automaticamente.
           </p>
         </div>
         <button onClick={() => router.push("/dev")} className="text-sm text-blue-600 underline">Voltar ao painel</button>
@@ -367,7 +409,7 @@ export default function DevCampeonatoElite4() {
                 disabled={!ligaSel || salvando}
                 className="px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
               >
-                Criar campeonato (carregar líderes)
+                Iniciar disputa (líderes + Elite 4)
               </button>
               <button
                 onClick={migrarParticipantesAntigos}
@@ -380,13 +422,14 @@ export default function DevCampeonatoElite4() {
             </>
           ) : (
             <>
-              <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded">Campeonato ABERTO</span>
+              <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded">Disputa aberta</span>
+              <button onClick={async () => { if (!campeonato) return; setSalvando(true); try { const n = await sincronizarParticipantes(campeonato.id); setMsg(`${n} participante(s) novo(s) incluído(s). Pontuações anteriores foram preservadas.`); } catch (e: any) { setMsg("Erro ao sincronizar participantes: " + e.message); } finally { setSalvando(false); } }} disabled={salvando} className="px-3 py-2 rounded border text-sm disabled:opacity-50">Sincronizar líderes e Elite 4</button>
               <button
-                onClick={finalizarEPromover}
-                disabled={salvando || participantes.length < 4}
+                onClick={encerrarDisputa}
+                disabled={salvando || participantes.filter((p) => p.tipo_participante === "lider").length < 4}
                 className="px-3 py-2 rounded bg-purple-700 text-white text-sm disabled:opacity-50"
               >
-                Finalizar e promover (top-4)
+                Encerrar disputa e salvar ranking
               </button>
             </>
           )}
@@ -411,35 +454,42 @@ export default function DevCampeonatoElite4() {
       {/* Participantes e pontuação */}
       {emAberto && (
         <div className="bg-white p-4 rounded shadow">
-          <h2 className="text-lg font-semibold mb-3">Participantes (líderes desta liga)</h2>
+          <h2 className="text-lg font-semibold mb-3">Classificação da disputa (líderes + Elite 4)</h2>
           {participantes.length === 0 ? (
-            <p className="text-sm text-gray-500">Nenhum líder encontrado para esta liga.</p>
+            <p className="text-sm text-gray-500">Nenhum participante encontrado para esta liga.</p>
           ) : (
             <div className="overflow-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left border-b">
-                    <th className="py-2 pr-3">Líder</th>
+                    <th className="py-2 pr-3">Treinador</th>
                     <th className="py-2 pr-3">Ginásio</th>
-                    <th className="py-2 pr-3">Tipo</th>
-                    <th className="py-2 pr-3 w-32">Pontos</th>
+                    <th className="py-2 pr-3">Categoria</th>
+                    <th className="py-2 pr-3">Participação</th>
+                    <th className="py-2 pr-3">Bônus vitória</th>
+                    <th className="py-2 pr-3">Admin</th>
+                    <th className="py-2 pr-3">Total</th>
+                    <th className="py-2 pr-3">Atribuir pontos</th>
                   </tr>
                 </thead>
                 <tbody>
                   {participantes
-                    .sort((a, b) => (b.pontos ?? 0) - (a.pontos ?? 0))
+                    .sort(ordenarParticipantes)
                     .map((p) => (
                       <tr key={p.id} className="border-b">
                         <td className="py-2 pr-3">{p.nome || p.usuario_uid}</td>
-                        <td className="py-2 pr-3">{p.ginasio_nome || p.ginasio_id}</td>
-                        <td className="py-2 pr-3">{p.ginasio_tipo || "—"}</td>
-                        <td className="py-2 pr-3">
-                          <input
-                            type="number"
-                            value={p.pontos ?? 0}
-                            onChange={(e) => atualizarPontos(p, Number(e.target.value))}
-                            className="w-24 border rounded px-2 py-1"
-                          />
+                        <td className="py-2 pr-3">{p.ginasio_nome || "—"}</td>
+                        <td className="py-2 pr-3">{p.tipo_participante === "elite4" ? `Elite 4 · posição ${p.elite4_pos || "—"}` : `Líder · ${p.ginasio_tipo || "ginásio"}`}</td>
+                        <td className="py-2 pr-3">{p.pontos_participacao}</td>
+                        <td className="py-2 pr-3">{p.pontos_vitoria}</td>
+                        <td className="py-2 pr-3">{p.pontos_admin}</td>
+                        <td className="py-2 pr-3 font-semibold">{p.pontos}</td>
+                        <td className="min-w-64 py-2 pr-3">
+                          <div className="flex gap-1">
+                            <input type="number" min="1" max="1000" value={pontosManuais[p.id] || ""} onChange={(e) => setPontosManuais((prev) => ({ ...prev, [p.id]: e.target.value }))} className="w-16 rounded border px-2 py-1" aria-label={`Pontos para ${p.nome || p.usuario_uid}`} />
+                            <input type="text" maxLength={160} value={motivosPontos[p.id] || ""} onChange={(e) => setMotivosPontos((prev) => ({ ...prev, [p.id]: e.target.value }))} placeholder="Motivo" className="min-w-24 flex-1 rounded border px-2 py-1" />
+                            <button onClick={() => concederPontos(p)} className="rounded bg-blue-700 px-2 py-1 text-white" aria-label={`Atribuir pontos a ${p.nome || p.usuario_uid}`}>+</button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -450,12 +500,26 @@ export default function DevCampeonatoElite4() {
         </div>
       )}
 
+      {emAberto && historicoPontos.length > 0 && (
+        <section className="rounded bg-white p-4 shadow">
+          <h2 className="mb-2 text-lg font-semibold">Últimos pontos administrativos</h2>
+          <ul className="space-y-2 text-sm">
+            {historicoPontos.slice(0, 10).map((item) => (
+              <li key={item.id} className="flex flex-wrap justify-between gap-2 border-b pb-2">
+                <span><b>{item.participante_nome}</b> recebeu +{item.quantidade}: {item.motivo}</span>
+                <time className="text-xs text-slate-500">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ""}</time>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Pré-visualização do TOP-4 */}
       {emAberto && participantes.length > 0 && (
         <div className="bg-white p-4 rounded shadow">
-          <h2 className="text-lg font-semibold mb-2">Pré-via do TOP-4</h2>
+          <h2 className="text-lg font-semibold mb-2">Líderes mais bem pontuados</h2>
           <ol className="space-y-1">
-            {topPreview.map((p, i) => (
+            {topPreview.filter((p) => p.tipo_participante === "lider").slice(0, 4).map((p, i) => (
               <li key={p.id} className="text-sm">
                 {i + 1}º — <span className="font-medium">{p.nome || p.usuario_uid}</span>
                 {" · "} {p.ginasio_nome || p.ginasio_id}
@@ -464,8 +528,7 @@ export default function DevCampeonatoElite4() {
             ))}
           </ol>
           <p className="text-xs text-gray-500 mt-2">
-            Ao finalizar, estes 4 assumem as posições 1–4 da ELITE 4.
-            Os antigos E4 (se houver) assumem os ginásios dos promovidos.
+            Estes líderes podem ser selecionados para desafiar os membros da Elite 4. A classificação não promove nem rebaixa ninguém automaticamente.
           </p>
         </div>
       )}

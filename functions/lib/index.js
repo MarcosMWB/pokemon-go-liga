@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -8,6 +8,11 @@ const https_1 = require("firebase-functions/v2/https");
 // se existir um arquivo desafios.ts que exporta a trigger, mantenha:
 var desafios_1 = require("./desafios");
 Object.defineProperty(exports, "onDesafioResultadosWrite", { enumerable: true, get: function () { return desafios_1.onDesafioResultadosWrite; } });
+var notifications_1 = require("./notifications");
+Object.defineProperty(exports, "onGymChallengeNotification", { enumerable: true, get: function () { return notifications_1.onGymChallengeNotification; } });
+Object.defineProperty(exports, "onGymDisputeBattleNotification", { enumerable: true, get: function () { return notifications_1.onGymDisputeBattleNotification; } });
+Object.defineProperty(exports, "onTournamentBattleNotification", { enumerable: true, get: function () { return notifications_1.onTournamentBattleNotification; } });
+Object.defineProperty(exports, "onBadgeEarnedNotification", { enumerable: true, get: function () { return notifications_1.onBadgeEarnedNotification; } });
 const adminSdk_1 = require("./adminSdk");
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
 const COOLDOWN_DIAS = 7;
@@ -15,15 +20,6 @@ const COOLDOWN_MS = COOLDOWN_DIAS * 24 * 60 * 60 * 1000;
 function asInt(n) {
     const v = Number(n);
     return Number.isFinite(v) ? Math.trunc(v) : 0;
-}
-function calcElite4Points(w, l) {
-    // (vitórias * 2) - derrotas, com clamp: negativo = 0, zero = 1
-    const base = 2 * asInt(w) - asInt(l);
-    if (base < 0)
-        return 0;
-    if (base === 0)
-        return 1;
-    return base;
 }
 function toMillisAny(v) {
     if (!v)
@@ -149,20 +145,11 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         // =========================
         // FASE 1: TODAS AS LEITURAS
         // =========================
-        // (A) pré-leitura do líder para calcular ptsElite4
-        let ptsElite4 = 0;
-        let leaderSnapPre = null;
-        if (vencedorTag === "lider") {
-            leaderSnapPre = await tx.get(winRef); // winRef == liderUid quando líder vence
-            const w0 = leaderSnapPre.exists ? asInt(leaderSnapPre.get("statsVitorias")) : 0;
-            const l0 = leaderSnapPre.exists ? asInt(leaderSnapPre.get("statsDerrotas")) : 0;
-            ptsElite4 = calcElite4Points(w0 + 1, l0);
-        }
-        // (B) pré-leitura de campeonato + participante (SE for aplicar Elite4)
+        // Pré-leitura da classificação aberta e do participante líder.
         let campId = null;
         let partRef = null;
         let partSnap = null;
-        if (vencedorTag === "lider" && liga && ptsElite4 > 0) {
+        if (liga) {
             const campQuery = adminSdk_1.db.collection("campeonatos_elite4")
                 .where("liga", "==", liga)
                 .where("status", "==", "aberto")
@@ -240,29 +227,33 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         else if (gymData && vencedorTag === "lider") {
             tx.update(gymRef, { derrotas_seguidas: 0 });
         }
-        // 2) Elite4 (somente se líder venceu e achou campeonato)
-        if (vencedorTag === "lider" && liga && ptsElite4 > 0 && campId && partRef && partSnap) {
-            const applied = partSnap.exists ? (partSnap.get("wins_applied") || {}) : {};
+        // 2) Pontuação direta dos líderes: 1 ponto por participação concluída,
+        // mais 2 pontos de bônus quando o líder vence (total de 3 por vitória).
+        if (liga && campId && partRef) {
+            const applied = partSnap?.exists ? (partSnap.get("desafios_aplicados") || {}) : {};
             const jaAplicado = typeof applied === "object" && applied && applied[desafioId] != null;
             if (!jaAplicado) {
-                const patch = { [desafioId]: ptsElite4 };
-                if (!partSnap.exists) {
+                const participou = 1;
+                const bonusVitoria = vencedorTag === "lider" ? 2 : 0;
+                const scoreUpdate = {
+                    pontos: adminSdk_1.FieldValue.increment(participou + bonusVitoria),
+                    pontos_participacao: adminSdk_1.FieldValue.increment(participou),
+                    pontos_vitoria: adminSdk_1.FieldValue.increment(bonusVitoria),
+                    desafios_aplicados: { ...applied, [desafioId]: { participacao: participou, vitoria: bonusVitoria } },
+                    updatedAt: Date.now(),
+                };
+                if (!partSnap?.exists) {
                     tx.set(partRef, {
-                        campeonato_id: campId,
-                        usuario_uid: liderUid,
-                        ginasio_id: ginasioId,
-                        liga,
-                        pontos: ptsElite4,
-                        wins_applied: patch,
+                        campeonato_id: campId, usuario_uid: liderUid, ginasio_id: ginasioId,
+                        liga, tipo_participante: "lider", pontos_admin: 0,
+                        pontos: participou + bonusVitoria, pontos_participacao: participou,
+                        pontos_vitoria: bonusVitoria,
+                        desafios_aplicados: { [desafioId]: { participacao: participou, vitoria: bonusVitoria } },
                         createdAt: Date.now(),
                     }, { merge: true });
                 }
                 else {
-                    tx.update(partRef, {
-                        pontos: adminSdk_1.FieldValue.increment(ptsElite4),
-                        wins_applied: { ...applied, ...patch },
-                        updatedAt: Date.now(),
-                    });
+                    tx.update(partRef, scoreUpdate);
                 }
             }
         }

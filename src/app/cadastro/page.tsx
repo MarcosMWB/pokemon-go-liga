@@ -52,7 +52,7 @@ export default function CadastroPage() {
   // consentimentos obrigatórios
   const [aceitoDados, setAceitoDados] = useState(false);
   const [declaraFriendCode, setDeclaraFriendCode] = useState(false);
-  const [receberEmails, setReceberEmails] = useState(false);
+  const [receberNotificacoes, setReceberNotificacoes] = useState(true);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,11 +99,8 @@ export default function CadastroPage() {
               userAgent:
                 typeof navigator !== "undefined" ? navigator.userAgent : null,
             },
-            email_notifications: {
-              enabled: receberEmails,
-              consentVersion: "email-notifications-v1-2026-10-19",
-              consentAt: receberEmails ? serverTimestamp() : null,
-              revokedAt: null,
+            notifications: {
+              enabled: receberNotificacoes,
               updatedAt: serverTimestamp(),
             },
           },
@@ -158,69 +155,78 @@ export default function CadastroPage() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-8 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-4">Cadastro</h1>
+    <form onSubmit={handleSubmit} className="mx-auto my-4 w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+      <h1 className="mb-2 text-2xl font-bold text-slate-950">Criar conta na Liga</h1>
+      <p className="mb-6 text-base leading-7 text-slate-700">Preencha seus dados para participar dos desafios. Depois, confirme seu e-mail para acessar sua conta.</p>
 
+      <label htmlFor="cadastro-friend-code" className="mb-1 block text-base font-semibold text-slate-800">Código de amizade do Pokémon GO</label>
       <input
+        id="cadastro-friend-code"
         type="text"
         placeholder="Código do treinador: 9999 0000 9999"
         required
         value={friendCode}
         onChange={(e) => setFriendCode(e.target.value)}
-        className="w-full border p-2 mb-2"
+        className="mb-1 min-h-12 w-full rounded-lg border border-slate-400 p-3 text-base"
         autoComplete="off"
         inputMode="numeric"
       />
+      <p className="mb-4 text-sm leading-6 text-slate-600">No jogo, abra seu perfil, toque em “Amigos” e depois em “Adicionar amigo” para encontrar o código.</p>
 
+      <label htmlFor="cadastro-nome" className="mb-1 block text-base font-semibold text-slate-800">Como devemos chamar você?</label>
       <input
+        id="cadastro-nome"
         type="text"
         placeholder="Nome"
         required
         value={nome}
         onChange={(e) => setNome(e.target.value)}
-        className="w-full border p-2 mb-2"
+        className="mb-4 min-h-12 w-full rounded-lg border border-slate-400 p-3 text-base"
         autoComplete="name"
       />
 
+      <label htmlFor="cadastro-email" className="mb-1 block text-base font-semibold text-slate-800">Seu e-mail</label>
       <input
+        id="cadastro-email"
         type="email"
         placeholder="E-mail"
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="w-full border p-2 mb-2"
+        className="mb-4 min-h-12 w-full rounded-lg border border-slate-400 p-3 text-base"
         autoComplete="email"
         inputMode="email"
       />
 
-      <div className="relative w-full mb-2">
+      <label htmlFor="cadastro-senha" className="mb-1 block text-base font-semibold text-slate-800">Crie uma senha</label>
+      <div className="relative mb-4 w-full">
         <input
+          id="cadastro-senha"
           type={mostrarSenha ? "text" : "password"}
           placeholder="Senha"
           required
           value={senha}
           onChange={(e) => setSenha(e.target.value)}
-          className="w-full border p-2 pr-10"
+          className="min-h-12 w-full rounded-lg border border-slate-400 p-3 pr-14 text-base"
           autoComplete="new-password"
         />
         <button
           type="button"
           onClick={() => setMostrarSenha(!mostrarSenha)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600"
+          className="absolute right-1 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded text-slate-700 hover:bg-slate-100"
           aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
-          tabIndex={-1}
         >
           {mostrarSenha ? "🙈" : "👁️"}
         </button>
       </div>
 
       {/* Consentimentos */}
-      <label className="flex items-start gap-2 text-sm mb-2">
+      <label className="mb-3 flex min-h-11 items-start gap-3 text-base leading-6 text-slate-800">
         <input
           type="checkbox"
           checked={declaraFriendCode}
           onChange={(e) => setDeclaraFriendCode(e.target.checked)}
-          className="mt-1"
+          className="mt-1 h-5 w-5 shrink-0"
           required
         />
         <span>
@@ -229,12 +235,12 @@ export default function CadastroPage() {
         </span>
       </label>
 
-      <label className="flex items-start gap-2 text-sm mb-4">
+      <label className="mb-4 flex min-h-11 items-start gap-3 text-base leading-6 text-slate-800">
         <input
           type="checkbox"
           checked={aceitoDados}
           onChange={(e) => setAceitoDados(e.target.checked)}
-          className="mt-1"
+          className="mt-1 h-5 w-5 shrink-0"
           required
         />
         <span>
@@ -244,24 +250,23 @@ export default function CadastroPage() {
         </span>
       </label>
 
-      <label className="flex items-start gap-2 text-sm mb-4 rounded border border-slate-200 bg-slate-50 p-3">
+      <label className="mb-4 flex min-h-12 items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-base leading-6 text-slate-800">
         <input
           type="checkbox"
-          checked={receberEmails}
-          onChange={(e) => setReceberEmails(e.target.checked)}
-          className="mt-1"
+          checked={receberNotificacoes}
+          onChange={(e) => setReceberNotificacoes(e.target.checked)}
+          className="mt-1 h-5 w-5 shrink-0"
         />
         <span>
-          Quero receber e-mails sobre novas batalhas/disputas, desafios recebidos e
-          insígnias conquistadas. Posso desativar esses avisos a qualquer momento
-          no meu perfil.
+          Quero receber notificações no site sobre batalhas, desafios e insígnias.
+          Posso alterar essa opção no meu perfil.
         </span>
       </label>
 
       <button
         type="submit"
         disabled={loading}
-        className={`w-full text-white p-2 rounded ${
+        className={`min-h-12 w-full rounded-lg p-3 text-base font-bold text-white ${
           loading ? "bg-yellow-400" : "bg-yellow-500 hover:bg-yellow-600"
         }`}
       >

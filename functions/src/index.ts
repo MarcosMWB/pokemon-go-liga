@@ -6,12 +6,11 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 // se existir um arquivo desafios.ts que exporta a trigger, mantenha:
 export { onDesafioResultadosWrite } from "./desafios";
 export {
-  onGymChallengeEmail,
-  onGymDisputeBattleEmail,
-  onTournamentBattleEmail,
-  onBadgeEarnedEmail,
-} from "./emailNotifications";
-
+  onGymChallengeNotification,
+  onGymDisputeBattleNotification,
+  onTournamentBattleNotification,
+  onBadgeEarnedNotification,
+} from "./notifications";
 import { admin, db, FieldValue } from "./adminSdk";
 
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
@@ -22,14 +21,6 @@ const COOLDOWN_MS = COOLDOWN_DIAS * 24 * 60 * 60 * 1000;
 function asInt(n: any): number {
   const v = Number(n);
   return Number.isFinite(v) ? Math.trunc(v) : 0;
-}
-
-function calcElite4Points(w: number, l: number) {
-  // (vitórias * 2) - derrotas, com clamp: negativo = 0, zero = 1
-  const base = 2 * asInt(w) - asInt(l);
-  if (base < 0) return 0;
-  if (base === 0) return 1;
-  return base;
 }
 
 function toMillisAny(v: any): number | null {
@@ -174,23 +165,12 @@ export const onDesafioConcluido = onDocumentWritten(
       // FASE 1: TODAS AS LEITURAS
       // =========================
 
-      // (A) pré-leitura do líder para calcular ptsElite4
-      let ptsElite4 = 0;
-      let leaderSnapPre: FirebaseFirestore.DocumentSnapshot | null = null;
-
-      if (vencedorTag === "lider") {
-        leaderSnapPre = await tx.get(winRef); // winRef == liderUid quando líder vence
-        const w0 = leaderSnapPre.exists ? asInt((leaderSnapPre as any).get("statsVitorias")) : 0;
-        const l0 = leaderSnapPre.exists ? asInt((leaderSnapPre as any).get("statsDerrotas")) : 0;
-        ptsElite4 = calcElite4Points(w0 + 1, l0);
-      }
-
-      // (B) pré-leitura de campeonato + participante (SE for aplicar Elite4)
+      // Pré-leitura da classificação aberta e do participante líder.
       let campId: string | null = null;
       let partRef: FirebaseFirestore.DocumentReference | null = null;
       let partSnap: FirebaseFirestore.DocumentSnapshot | null = null;
 
-      if (vencedorTag === "lider" && liga && ptsElite4 > 0) {
+      if (liga) {
         const campQuery = db.collection("campeonatos_elite4")
           .where("liga", "==", liga)
           .where("status", "==", "aberto")
@@ -273,30 +253,32 @@ export const onDesafioConcluido = onDocumentWritten(
         tx.update(gymRef, { derrotas_seguidas: 0 });
       }
 
-      // 2) Elite4 (somente se líder venceu e achou campeonato)
-      if (vencedorTag === "lider" && liga && ptsElite4 > 0 && campId && partRef && partSnap) {
-        const applied = partSnap.exists ? ((partSnap as any).get("wins_applied") || {}) : {};
+      // 2) Pontuação direta dos líderes: 1 ponto por participação concluída,
+      // mais 2 pontos de bônus quando o líder vence (total de 3 por vitória).
+      if (liga && campId && partRef) {
+        const applied = partSnap?.exists ? ((partSnap as any).get("desafios_aplicados") || {}) : {};
         const jaAplicado = typeof applied === "object" && applied && applied[desafioId] != null;
-
         if (!jaAplicado) {
-          const patch = { [desafioId]: ptsElite4 } as any;
-
-          if (!partSnap.exists) {
+          const participou = 1;
+          const bonusVitoria = vencedorTag === "lider" ? 2 : 0;
+          const scoreUpdate = {
+            pontos: FieldValue.increment(participou + bonusVitoria),
+            pontos_participacao: FieldValue.increment(participou),
+            pontos_vitoria: FieldValue.increment(bonusVitoria),
+            desafios_aplicados: { ...applied, [desafioId]: { participacao: participou, vitoria: bonusVitoria } },
+            updatedAt: Date.now(),
+          };
+          if (!partSnap?.exists) {
             tx.set(partRef, {
-              campeonato_id: campId,
-              usuario_uid: liderUid,
-              ginasio_id: ginasioId,
-              liga,
-              pontos: ptsElite4,
-              wins_applied: patch,
+              campeonato_id: campId, usuario_uid: liderUid, ginasio_id: ginasioId,
+              liga, tipo_participante: "lider", pontos_admin: 0,
+              pontos: participou + bonusVitoria, pontos_participacao: participou,
+              pontos_vitoria: bonusVitoria,
+              desafios_aplicados: { [desafioId]: { participacao: participou, vitoria: bonusVitoria } },
               createdAt: Date.now(),
             }, { merge: true });
           } else {
-            tx.update(partRef, {
-              pontos: FieldValue.increment(ptsElite4),
-              wins_applied: { ...applied, ...patch },
-              updatedAt: Date.now(),
-            });
+            tx.update(partRef, scoreUpdate);
           }
         }
       }

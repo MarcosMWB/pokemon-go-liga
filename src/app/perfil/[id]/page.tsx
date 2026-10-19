@@ -211,9 +211,9 @@ export default function PerfilPage() {
   /* Auth / user */
   const [logadoUid, setLogadoUid] = useState<string | null>(null);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
-  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
-  const [emailNotificationsLoading, setEmailNotificationsLoading] = useState(false);
-  const [emailNotificationsSaving, setEmailNotificationsSaving] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsSaving, setNotificationsSaving] = useState(false);
 
   /* Gym / disputes */
   const [ginasiosLider, setGinasiosLider] = useState<Ginasio[]>([]);
@@ -300,49 +300,45 @@ export default function PerfilPage() {
 
   useEffect(() => {
     if (!ehMeuPerfil || !perfilUid) {
-      setEmailNotificationsEnabled(false);
-      setEmailNotificationsLoading(false);
+      setNotificationsEnabled(false);
+      setNotificationsLoading(false);
       return;
     }
 
     let active = true;
-    setEmailNotificationsLoading(true);
+    setNotificationsLoading(true);
     getDoc(doc(db, 'usuarios_private', perfilUid))
       .then((snapshot) => {
         if (active) {
-          setEmailNotificationsEnabled(snapshot.data()?.email_notifications?.enabled === true);
+          setNotificationsEnabled(snapshot.data()?.notifications?.enabled === true);
         }
       })
       .catch((error) => {
-        console.error('Não foi possível carregar a preferência de e-mail:', error);
+        console.error('Não foi possível carregar a preferência de notificações:', error);
       })
       .finally(() => {
-        if (active) setEmailNotificationsLoading(false);
+        if (active) setNotificationsLoading(false);
       });
 
     return () => { active = false; };
   }, [ehMeuPerfil, perfilUid]);
 
-  async function salvarPreferenciaEmailNotifications(enabled: boolean) {
-    if (!ehMeuPerfil || !perfilUid || emailNotificationsSaving) return;
-    setEmailNotificationsSaving(true);
+  async function salvarPreferenciaNotifications(enabled: boolean) {
+    if (!ehMeuPerfil || !perfilUid || notificationsSaving) return;
+    setNotificationsSaving(true);
     try {
       await setDoc(doc(db, 'usuarios_private', perfilUid), {
-        email_notifications: {
+        notifications: {
           enabled,
-          consentVersion: 'email-notifications-v1-2026-10-19',
           updatedAt: serverTimestamp(),
-          ...(enabled
-            ? { consentAt: serverTimestamp() }
-            : { revokedAt: serverTimestamp() }),
         },
       }, { merge: true });
-      setEmailNotificationsEnabled(enabled);
+      setNotificationsEnabled(enabled);
     } catch (error) {
-      console.error('Não foi possível salvar a preferência de e-mail:', error);
+      console.error('Não foi possível salvar a preferência de notificações:', error);
       alert('Não foi possível salvar sua preferência. Tente novamente.');
     } finally {
-      setEmailNotificationsSaving(false);
+      setNotificationsSaving(false);
     }
   }
 
@@ -1250,18 +1246,18 @@ export default function PerfilPage() {
               <input
                 type="checkbox"
                 className="mt-1"
-                checked={emailNotificationsEnabled}
-                disabled={emailNotificationsLoading || emailNotificationsSaving}
-                onChange={(event) => salvarPreferenciaEmailNotifications(event.target.checked)}
+                checked={notificationsEnabled}
+                disabled={notificationsLoading || notificationsSaving}
+                onChange={(event) => salvarPreferenciaNotifications(event.target.checked)}
               />
               <span>
-                <b>Receber avisos por e-mail</b>
+                <b>Receber notificações no site</b>
                 <span className="mt-1 block text-xs text-slate-600">
                   Novas batalhas/disputas, desafios recebidos e confirmação de insígnias. Você pode alterar esta opção quando quiser.
                 </span>
               </span>
             </label>
-            {emailNotificationsSaving && <p className="mt-2 text-xs text-slate-500">Salvando preferência…</p>}
+            {notificationsSaving && <p className="mt-2 text-xs text-slate-500">Salvando preferência…</p>}
           </section>
         )}
       </div>

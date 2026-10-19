@@ -811,7 +811,7 @@ export default function GinasiosPage() {
       ? equipesUsuariosLiga[`${userUid}::${selectedLiga}`] || []
       : [];
 
-  if (loading) return <p className="p-8">Carregando...</p>;
+  if (loading) return <p role="status" className="p-8 text-base">Carregando ginásios…</p>;
 
   const ginasiosFiltrados =
     selectedLiga && selectedLiga !== ''
@@ -819,26 +819,26 @@ export default function GinasiosPage() {
       : ginasios;
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-4">
-      <div className="flex items-center justify-between mb-4 gap-2">
-        <h1 className="text-2xl font-bold">Ginásios</h1>
+    <div className="mx-auto max-w-4xl space-y-4 p-3 sm:p-6">
+      <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div><h1 className="text-2xl font-bold text-slate-950">Ginásios</h1><p className="mt-1 max-w-xl text-base leading-7 text-slate-700">Escolha um ginásio para ver o líder, as regras e como iniciar um desafio.</p></div>
         {ligas.length > 0 && (
-          <select
+          <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">Filtrar por liga<select
             value={selectedLiga}
             onChange={(e) => setSelectedLiga(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
+            className="min-h-11 rounded-lg border border-slate-400 bg-white px-3 text-base"
           >
             {ligas.map((l) => (
               <option key={l.id} value={l.nome}>
                 {l.nome}
               </option>
             ))}
-          </select>
+          </select></label>
         )}
         <button
           type="button"
-          onClick={() => router.push(`/tutorials`)}
-          className="bg-purple-600 text-white px-3 py-2 rounded text-sm"
+          onClick={() => router.push(`/tutorials?t=desafios-ginasio`)}
+          className="min-h-11 rounded-lg bg-purple-700 px-4 py-2 text-base font-semibold text-white hover:bg-purple-800"
         >
           Ver tutorial
         </button>

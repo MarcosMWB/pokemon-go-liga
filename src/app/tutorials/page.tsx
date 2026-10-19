@@ -12,11 +12,11 @@ type TutorialKey =
   | "guia-iniciante";
 
 const OPTIONS: { key: TutorialKey; label: string }[] = [
+  { key: "guia-iniciante", label: "Começando do zero — guia para iniciantes" },
   { key: "desafios-ginasio", label: "Tutorial: Desafios de Ginásio" },
   { key: "liga-ro", label: "Tutorial: Campeonato Liga RO" },
   { key: "desafio-dos-campeoes", label: "Tutorial: Desafio dos Campeões" },
   { key: "lideranca-ginasio", label: "Tutorial: Liderança de Ginásio" },
-  { key: "guia-iniciante", label: "Tutorial: Guia completo para iniciante" },
 ];
 
 const GOOGLE_DOC_ID = "1PVgZXgDatS4TdPD8zZ2_7c15r_YmxrgE_UkTr67itXg";
@@ -28,11 +28,13 @@ export default function TutorialsPage() {
   const search = useSearchParams();
   const router = useRouter();
 
-  const initialKey = (search.get("t") as TutorialKey) || "desafios-ginasio";
+  const requested = search.get("t");
+  const initialKey = OPTIONS.some((option) => option.key === requested) ? requested as TutorialKey : "guia-iniciante";
   const [selected, setSelected] = useState<TutorialKey>(initialKey);
 
   useEffect(() => {
-    const q = (search.get("t") as TutorialKey) || "desafios-ginasio";
+    const requestedKey = search.get("t");
+    const q = OPTIONS.some((option) => option.key === requestedKey) ? requestedKey as TutorialKey : "guia-iniciante";
     if (q !== selected) setSelected(q);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
@@ -48,15 +50,15 @@ export default function TutorialsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
+    <div className="mx-auto max-w-4xl space-y-5 p-3 sm:p-6">
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <h1 className="text-2xl font-bold">{Title}</h1>
-        <label className="flex items-center gap-2">
-          <span className="text-sm text-gray-600">Selecionar tutorial:</span>
+        <div><h1 className="text-2xl font-bold text-slate-950">{Title}</h1><p className="mt-2 max-w-2xl text-base leading-7 text-slate-700">Aqui você encontra instruções passo a passo. Escolha um assunto e siga a lista na ordem.</p></div>
+        <label className="flex flex-col gap-1 md:min-w-64">
+          <span className="text-sm font-semibold text-slate-700">Qual assunto você precisa?</span>
           <select
             value={selected}
             onChange={(e) => onChange(e.target.value as TutorialKey)}
-            className="border rounded px-3 py-2 text-sm"
+            className="min-h-12 rounded-lg border border-slate-400 bg-white px-3 text-base"
           >
             {OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>

@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
 
 type Elite = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string };
 type HistoricoItem = {
@@ -13,6 +13,7 @@ type HistoricoItem = {
   appliedAt: number; // ms
   top4: Array<{ pos: number; uid: string; nome?: string; pontos?: number }>;
 };
+type RankingItem = { id: string; uid: string; nome: string; tipo: "lider" | "elite4"; posElite?: number; pontos: number; participacao: number; vitorias: number; admin: number };
 
 function toMillis(v: any): number {
   if (!v) return 0;
@@ -28,6 +29,8 @@ function toMillis(v: any): number {
 export default function PlacarClient({ liga }: { liga: string }) {
   const [elite, setElite] = useState<Elite[]>([]);
   const [historico, setHistorico] = useState<HistoricoItem[]>([]);
+  const [campeonatoAbertoId, setCampeonatoAbertoId] = useState<string | null>(null);
+  const [ranking, setRanking] = useState<RankingItem[]>([]);
 
   useEffect(() => {
     // Elite atual (ordenado por pos)
@@ -72,11 +75,33 @@ export default function PlacarClient({ liga }: { liga: string }) {
       setHistorico(arr);
     });
 
+    const qAtivo = query(collection(db, "campeonatos_elite4"), where("liga", "==", liga), where("status", "==", "aberto"), orderBy("createdAt", "desc"));
+    const unsubAtivo = onSnapshot(qAtivo, (snap) => setCampeonatoAbertoId(snap.docs[0]?.id || null));
+
     return () => {
       unsubE();
       unsubH();
+      unsubAtivo();
     };
   }, [liga]);
+
+  useEffect(() => {
+    if (!campeonatoAbertoId) { setRanking([]); return; }
+    return onSnapshot(collection(db, "campeonatos_elite4", campeonatoAbertoId, "participantes"), async (snap) => {
+      const rows = await Promise.all(snap.docs.map(async (d) => {
+        const x = d.data() as any;
+        const uid = String(x.usuario_uid || d.id);
+        const user = await getDoc(doc(db, "usuarios", uid));
+        return {
+          id: d.id, uid, nome: String(user.data()?.nome || user.data()?.nick || uid),
+          tipo: x.tipo_participante === "elite4" ? "elite4" as const : "lider" as const,
+          posElite: Number(x.elite4_pos) || undefined, pontos: Number(x.pontos || 0),
+          participacao: Number(x.pontos_participacao || 0), vitorias: Number(x.pontos_vitoria || 0), admin: Number(x.pontos_admin || 0),
+        };
+      }));
+      setRanking(rows.sort((a, b) => b.pontos - a.pontos || b.vitorias - a.vitorias || b.participacao - a.participacao || a.nome.localeCompare(b.nome, "pt-BR")));
+    });
+  }, [campeonatoAbertoId]);
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -100,6 +125,13 @@ export default function PlacarClient({ liga }: { liga: string }) {
             );
           })}
         </ol>
+      </div>
+
+      <div className="bg-white p-4 rounded shadow">
+        <h2 className="text-lg font-semibold mb-2">Disputa da Elite 4 — classificação atual</h2>
+        {!campeonatoAbertoId ? <p className="text-sm text-gray-500">Não há disputa aberta nesta liga.</p> : ranking.length === 0 ? <p className="text-sm text-gray-500">Carregando participantes…</p> : (
+          <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">#</th><th>Treinador</th><th>Categoria</th><th>Participação</th><th>Bônus vitória</th><th>Admin</th><th>Total</th></tr></thead><tbody>{ranking.map((p, i) => <tr key={p.id} className="border-b"><td className="p-2">{i + 1}</td><td>{p.nome}</td><td>{p.tipo === "elite4" ? `Elite 4 · posição ${p.posElite || "—"}` : "Líder de ginásio"}</td><td>{p.participacao}</td><td>{p.vitorias}</td><td>{p.admin}</td><td className="font-semibold">{p.pontos}</td></tr>)}</tbody></table></div>
+        )}
       </div>
 
       <div className="bg-white p-4 rounded shadow">

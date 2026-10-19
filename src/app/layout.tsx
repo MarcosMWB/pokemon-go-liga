@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from "next";
 import { Header } from "@/components/Header";
 import ConsentBanner from "@/components/ConsentBanner";
 import Script from "next/script";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://pokemon-go-liga.vercel.app"),
@@ -85,8 +86,70 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(120,119,198,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(120,119,198,0.12)_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(900px_600px_at_30%_10%,black,transparent_70%)]" />
           </div>
 
+          <a href="#conteudo-principal" className="skip-link">Pular para o conteúdo principal</a>
           <Header />
-          <main className="relative max-w-6xl mx-auto px-4 py-6">{children}</main>
+          <main id="conteudo-principal" tabIndex={-1} className="relative max-w-6xl mx-auto px-4 py-6 outline-none">{children}</main>
+          <footer className="site-footer relative isolate mt-12 overflow-hidden px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-12 text-white sm:pt-16">
+            <div aria-hidden="true" className="site-footer__glow site-footer__glow--one" />
+            <div aria-hidden="true" className="site-footer__glow site-footer__glow--two" />
+            <div className="relative z-10 mx-auto max-w-6xl">
+              <div className="grid gap-10 border-b border-white/10 pb-10 md:grid-cols-[1.4fr_1fr_1fr_1fr] md:gap-8 md:pb-12">
+                <div className="max-w-sm">
+                  <Link href="/" className="site-footer__brand inline-flex min-h-12 items-center gap-3 rounded-xl focus-visible:outline-white">
+                    <span aria-hidden="true" className="site-footer__emblem">
+                      <svg viewBox="0 0 40 40" fill="none" className="h-7 w-7" role="img">
+                        <circle cx="20" cy="20" r="15" stroke="currentColor" strokeWidth="3" />
+                        <path d="M5.8 17h28.4" stroke="currentColor" strokeWidth="3" />
+                        <circle cx="20" cy="20" r="4.5" fill="currentColor" />
+                        <circle cx="20" cy="20" r="2" fill="#172033" />
+                      </svg>
+                    </span>
+                    <span>
+                      <span className="block text-base font-extrabold tracking-tight">Liga Oceânica</span>
+                      <span className="block text-xs font-medium text-cyan-100/70">Pokémon GO · Niterói</span>
+                    </span>
+                  </Link>
+                  <p className="mt-4 max-w-xs text-sm leading-6 text-slate-300">
+                    Uma comunidade para jogar, se encontrar e celebrar cada conquista na Região Oceânica.
+                  </p>
+                  <Link href="/cadastro" className="site-footer__join mt-5 inline-flex min-h-11 items-center gap-2 rounded-full px-5 text-sm font-bold">
+                    Faça parte da liga <span aria-hidden="true">→</span>
+                  </Link>
+                </div>
+
+                <nav aria-label="Explorar o site">
+                  <h2 className="site-footer__heading">Explore</h2>
+                  <ul className="site-footer__links">
+                    <li><Link href="/mapa">Mapa da região</Link></li>
+                    <li><Link href="/ginasios/visitante">Ginásios</Link></li>
+                    <li><Link href="/loja">Loja da comunidade</Link></li>
+                  </ul>
+                </nav>
+
+                <nav aria-label="Jogar e competir">
+                  <h2 className="site-footer__heading">Jogue com a gente</h2>
+                  <ul className="site-footer__links">
+                    <li><Link href="/campeonato-ro">Campeonato regional</Link></li>
+                    <li><Link href="/elite4/placar?liga=Great">Placar da Elite 4</Link></li>
+                    <li><Link href="/tutorials?t=guia-iniciante">Tutoriais e regras</Link></li>
+                  </ul>
+                </nav>
+
+                <nav aria-label="Ajuda e informações">
+                  <h2 className="site-footer__heading">Ajuda</h2>
+                  <ul className="site-footer__links">
+                    <li><Link href="/tutorials?t=guia-iniciante">Como começar</Link></li>
+                    <li><Link href="/privacidade">Privacidade</Link></li>
+                  </ul>
+                </nav>
+              </div>
+
+              <div className="flex flex-col gap-3 pt-5 text-xs leading-5 text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                <p>Feito com carinho para quem joga na Região Oceânica.</p>
+                <p>Pokémon GO é uma marca de seus respectivos proprietários.</p>
+              </div>
+            </div>
+          </footer>
 
           {/* AdSense Auto Ads (deixa afterInteractive mesmo) */}
           <Script
