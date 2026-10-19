@@ -146,6 +146,7 @@ export default function DisputaGinasioPage() {
   const [participantes, setParticipantes] = useState<Participante[]>([]);
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [ocupados, setOcupados] = useState<string[]>([]);
+  const [tiposEliteOcupados, setTiposEliteOcupados] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [salvandoTipo, setSalvandoTipo] = useState(false);
   const [declarando, setDeclarando] = useState(false);
@@ -474,16 +475,15 @@ export default function DisputaGinasioPage() {
     return () => unsub();
   }, [disputa]);
 
-  // 5) tipos ocupados na liga
+  // 5) tipos já usados por ginásios e pela Elite 4 da mesma liga
   useEffect(() => {
     if (!disputa) return;
 
     const ligaDaDisputa = disputa.liga || disputa.liga_nome || "";
-    const unsub = onSnapshot(collection(db, "ginasios"), (snap) => {
+    const unsubGinasios = onSnapshot(collection(db, "ginasios"), (snap) => {
       const v: string[] = [];
       snap.forEach((g) => {
         const d = g.data() as any;
-        if (g.id === disputa.ginasio_id) return;
         const ligaDoGinasio = d.liga || d.liga_nome || "";
         if (ligaDaDisputa) {
           if (!ligaDoGinasio) return;
@@ -493,8 +493,14 @@ export default function DisputaGinasioPage() {
       });
       setOcupados(v);
     });
+    const qElite = ligaDaDisputa
+      ? query(collection(db, "elite4"), where("liga", "==", ligaDaDisputa))
+      : collection(db, "elite4");
+    const unsubElite = onSnapshot(qElite, (snap) => {
+      setTiposEliteOcupados(snap.docs.map((m) => String(m.data().tipo || "")).filter(Boolean));
+    });
 
-    return () => unsub();
+    return () => { unsubGinasios(); unsubElite(); };
   }, [disputa]);
 
   const disputaTravada = disputa?.status === "batalhando";
@@ -617,7 +623,7 @@ export default function DisputaGinasioPage() {
         return;
 
       const escolhido = meuParticipante.tipo_escolhido;
-      const ocupou = ocupados.includes(escolhido);
+      const ocupou = ocupados.includes(escolhido) || tiposEliteOcupados.includes(escolhido);
       if (ocupou) {
         try {
           await updateDoc(
@@ -638,7 +644,7 @@ export default function DisputaGinasioPage() {
       }
     };
     invalidarSeOcupou();
-  }, [disputa, userUid, meuParticipante?.id, meuParticipante?.tipo_escolhido, ocupados]);
+  }, [disputa, userUid, meuParticipante?.id, meuParticipante?.tipo_escolhido, ocupados, tiposEliteOcupados]);
 
   // PONTOS: inclui WO automático quando disputa está finalizada
   const pontos = useMemo(() => {
@@ -927,7 +933,7 @@ export default function DisputaGinasioPage() {
 
   const tiposPermitidos = TIPOS.filter((t) => {
     if (!disputa) return true;
-    return !ocupados.includes(t);
+    return !ocupados.includes(t) && !tiposEliteOcupados.includes(t);
   });
 
   const pendentesParaMim =

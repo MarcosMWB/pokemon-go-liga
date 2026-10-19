@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { db } from "@/lib/firebase";
+import { TYPE_ICONS } from "@/utils/typeIcons";
 import {
   collection,
   query,
@@ -99,28 +100,6 @@ const regioes: RegiaoInfo[] = [
   },
 ];
 
-// mapa tipo -> ícone
-const TYPE_ICONS: Record<string, string> = {
-  normal: "/Type/48px-Normal_icon_SwSh.png",
-  fire: "/Type/48px-Fire_icon_SwSh.png",
-  water: "/Type/48px-Water_icon_SwSh.png",
-  grass: "/Type/48px-Grass_icon_SwSh.png",
-  electric: "/Type/48px-Electric_icon_SwSh.png",
-  ice: "/Type/48px-Ice_icon_SwSh.png",
-  fighting: "/Type/48px-Fighting_icon_SwSh.png",
-  poison: "/Type/48px-Poison_icon_SwSh.png",
-  ground: "/Type/48px-Ground_icon_SwSh.png",
-  flying: "/Type/48px-Flying_icon_SwSh.png",
-  psychic: "/Type/48px-Psychic_icon_SwSh.png",
-  bug: "/Type/48px-Bug_icon_SwSh.png",
-  rock: "/Type/48px-Rock_icon_SwSh.png",
-  ghost: "/Type/48px-Ghost_icon_SwSh.png",
-  dragon: "/Type/48px-Dragon_icon_SwSh.png",
-  dark: "/Type/48px-Dark_icon_SwSh.png",
-  steel: "/Type/48px-Steel_icon_SwSh.png",
-  fairy: "/Type/48px-Fairy_icon_SwSh.png",
-};
-
 type GinasioExtra = {
   tipo?: string;
   liderNome?: string;
@@ -132,7 +111,8 @@ type Liga = {
   nome: string;
 };
 
-type TituloRegional = { campeao?: string; elites: string[] };
+type MembroEliteMapa = { nome: string; tipo?: string };
+type TituloRegional = { campeao?: string; elites: MembroEliteMapa[] };
 
 export default function MapaPage() {
   const [regiaoAtiva, setRegiaoAtiva] = useState<RegiaoInfo | null>(null);
@@ -189,12 +169,12 @@ export default function MapaPage() {
         const eliteRows = eliteSnap.docs.map((d) => ({ id: d.id, data: d.data() })).sort((a, b) => Number(a.data.pos || 0) - Number(b.data.pos || 0)).slice(0, 4);
         const elites = await Promise.all(eliteRows.map(async (d) => {
           const data = d.data;
-          if (data.nome || data.usuario_nome) return `${String(data.nome || data.usuario_nome)}${data.tipo ? ` · ${data.tipo}` : ""}`;
+          if (data.nome || data.usuario_nome) return { nome: String(data.nome || data.usuario_nome), tipo: data.tipo ? String(data.tipo) : undefined };
           const uid = data.usuario_uid || data.uid;
-          if (!uid) return d.id;
+          if (!uid) return { nome: d.id, tipo: data.tipo ? String(data.tipo) : undefined };
           const user = await getDoc(doc(db, "usuarios", uid));
           const nome = user.exists() ? String(user.data().nome || user.data().nick || uid) : uid;
-          return `${nome}${data.tipo ? ` · ${data.tipo}` : ""}`;
+          return { nome, tipo: data.tipo ? String(data.tipo) : undefined };
         }));
         setTituloRegional({ campeao: champ?.campeao_nome, elites });
       } catch (e) { console.warn("erro carregando campeões da região", e); setTituloRegional({ elites: [] }); }
@@ -402,7 +382,7 @@ export default function MapaPage() {
               <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-left text-sm">
                 <p><b>Campeão da Região:</b> {tituloRegional.campeao || "Ainda não definido"}</p>
                 <p className="mt-2 font-semibold">Elite 4 — {ligaSelecionada}</p>
-                {tituloRegional.elites.length ? <ol className="list-decimal pl-5">{tituloRegional.elites.map((nome, i) => <li key={`${nome}-${i}`}>{nome}</li>)}</ol> : <p>Os quatro membros ainda não estão configurados para esta liga.</p>}
+                {tituloRegional.elites.length ? <ol className="list-decimal pl-5">{tituloRegional.elites.map((membro, i) => <li key={`${membro.nome}-${i}`} className="py-0.5"><span>{membro.nome}</span>{membro.tipo && <span className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-0.5 align-middle capitalize"><span>{membro.tipo}</span>{TYPE_ICONS[membro.tipo] && <Image src={TYPE_ICONS[membro.tipo]} alt={`Tipo ${membro.tipo}`} width={22} height={22} />}</span>}</li>)}</ol> : <p>Os quatro membros ainda não estão configurados para esta liga.</p>}
                 <a href="/desafio-dos-campeoes" className="mt-2 inline-block text-blue-700 underline">Ver Desafio dos Campeões</a>
               </div>
             )}
