@@ -47,10 +47,18 @@ export default function SeedGinasiosUI() {
       setMsg('Escolha uma liga.');
       return;
     }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setMsg('Sua sessão expirou. Entre novamente.');
+      return;
+    }
     setMsg('Enviando...');
     const r = await fetch('/api/seed-ginasios', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${await currentUser.getIdToken()}`,
+      },
       body: JSON.stringify({ liga: ligaSelecionada }),
     });
     const j = await r.json();

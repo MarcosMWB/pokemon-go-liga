@@ -59,13 +59,13 @@ service cloud.firestore {
     /* ================ CONTAS / CADASTROS BÁSICOS ================ */
 
     match /superusers/{id} {
-      allow read: if isSignedIn();
+      allow read: if isOwner(id) || isSuper();
       allow create, update, delete: if isSuper();
     }
 
-    // PERFIL PÚBLICO (visível)
+    // Dados privados da conta (inclui e-mail).
     match /usuarios_private/{uid} {
-      allow read: if true;
+      allow read: if isOwner(uid) || isSuper();
       allow create: if isOwner(uid) || isSuper();
 
       // dono pode atualizar, mas sem elevar privilégios/campos sensíveis
@@ -134,7 +134,17 @@ service cloud.firestore {
     /* ========== DISPUTAS DE GINÁSIO (formato “evento/tabela”) ========== */
     match /disputas_ginasio/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() || isSuper();
+      allow create: if isSuper() || (
+        isSignedIn()
+        && request.resource.data.origem == 'renuncia'
+        && request.resource.data.status == 'inscricoes'
+        && request.resource.data.ginasio_id is string
+        && gymLeaderUid(request.resource.data.ginasio_id) == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'ginasio_id','status','tipo_original','lider_anterior_uid',
+          'temporada_id','temporada_nome','liga','origem','createdAt'
+        ])
+      );
       allow update, delete: if isSuper();
     }
 
@@ -294,7 +304,7 @@ service cloud.firestore {
 
     match /alertas_conflito/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isSuper();
       allow update, delete: if isSuper();
     }
 
@@ -312,9 +322,7 @@ service cloud.firestore {
       // FALTAVA ISTO:
       match /participantes/{uid} {
         allow read: if isSignedIn();
-        allow create: if (isSignedIn() && request.resource.data.usuario_uid == request.auth.uid) || isSuper();
-        allow update: if isSignedIn() && (resource.data.usuario_uid == request.auth.uid || isSuper());
-        allow delete: if isSuper();
+        allow create, update, delete: if isSuper();
       }
       
     match /campeonatos_elite4/{id} {
@@ -377,17 +385,33 @@ service cloud.firestore {
 
     /* ===================== TROCAS / RTS ===================== */
     match /trocas_ofertas/{id} {
-      allow read, create, update: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     match /trocas_swipes/{id} {
-      allow read, create, update: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.fromUserId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.fromUserId == request.auth.uid
+        && request.resource.data.fromUserId == resource.data.fromUserId;
+      allow delete: if isSignedIn() && resource.data.fromUserId == request.auth.uid;
     }
 
     match /trocas_matches/{matchId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isMatchParticipant(matchId);
+      allow create: if isSignedIn()
+        && request.resource.data.users is list
+        && request.resource.data.users.size() == 2
+        && request.resource.data.users[0] != request.resource.data.users[1]
+        && request.auth.uid in request.resource.data.users;
+      allow update: if isMatchParticipant(matchId)
+        && request.resource.data.users == resource.data.users
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'invalid','updatedAt','lastActivityAt'
+        ]);
 
       match /mensagens/{msgId} {
         allow read, create, delete: if isMatchParticipant(matchId);
@@ -480,17 +504,32 @@ service cloud.firestore {
     }
 
     /* ===================== OUTROS ===================== */
-    // coleção genérica 'participantes' (se ainda existir em telas antigas)
-    match /{path=**}/participantes/{uid} {
+    match /participacoes/{id} {
       allow read: if isSignedIn();
-      allow create: if (isSignedIn() && request.resource.data.usuario_uid == request.auth.uid) || isSuper();
-      allow update: if isSignedIn() && (resource.data.usuario_uid == request.auth.uid || isSuper());
-      allow delete: if isSuper();
+      allow create: if isSignedIn() && request.resource.data.usuario_id == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.usuario_id == request.auth.uid
+        && request.resource.data.usuario_id == resource.data.usuario_id;
+      allow delete: if isSignedIn() && resource.data.usuario_id == request.auth.uid;
     }
 
-    match /participacoes/{id} { allow read, write: if isSignedIn(); }
-    match /pokemon/{id}       { allow read, write: if isSignedIn(); }
-    match /mensagens/{id}     { allow read, create, update: if isSignedIn(); }
+    match /pokemon/{id} {
+      function ownsParticipation(participacaoId) {
+        let participation = get(/databases/$(database)/documents/participacoes/$(participacaoId));
+        return isSignedIn() && participation.data.usuario_id == request.auth.uid;
+      }
+      allow read: if isSignedIn();
+      allow create: if request.resource.data.participacao_id is string
+        && ownsParticipation(request.resource.data.participacao_id);
+      allow update: if false;
+      allow delete: if resource.data.participacao_id is string
+        && ownsParticipation(resource.data.participacao_id);
+    }
+
+    // Coleção legada: não há cliente atual que dependa de escritas diretas.
+    match /mensagens/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSuper();
+    }
 
     match /produtos_loja/{id} {
       allow read: if true;
