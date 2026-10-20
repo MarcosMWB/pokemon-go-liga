@@ -48,7 +48,13 @@ exports.createElite4Challenge = (0, https_1.onCall)({ region: REGION }, async (r
         const targetIsLeader = targetData.tipo_participante !== "elite4" && targetData.optou_participar === true;
         let challengerRole;
         let targetRole;
-        if (myIsLeader && eliteTarget && targetData.tipo_participante === "elite4") {
+        if (myIsLeader && targetIsLeader) {
+            if (!leaders.slice(0, 4).some((p) => p.id === targetUid))
+                throw new https_1.HttpsError("failed-precondition", "Líderes podem desafiar somente um dos quatro líderes mais bem colocados.");
+            challengerRole = "lider";
+            targetRole = "lider";
+        }
+        else if (myIsLeader && eliteTarget && targetData.tipo_participante === "elite4") {
             if (leaders[0]?.id !== uid)
                 throw new https_1.HttpsError("failed-precondition", "Só o líder com mais pontos pode desafiar a Elite 4.");
             challengerRole = "lider";

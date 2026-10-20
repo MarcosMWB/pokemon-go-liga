@@ -51,6 +51,7 @@ export default function PlacarClient({ liga }: { liga: string }) {
 
   const leaders = useMemo(() => ranking.filter((p) => p.tipo === "lider"), [ranking]);
   const myElite = elite.some((e) => e.uid === uid);
+  const myLeader = leaders.find((p) => p.uid === uid);
   const myPendingDefense = challenges.find((c) => c.target_uid === uid && c.status === "pendente");
   const act = async (label: string, name: string, data: Record<string, unknown>) => {
     setBusy(true); setNotice("");
@@ -64,6 +65,8 @@ export default function PlacarClient({ liga }: { liga: string }) {
   const challengeButtons = (p: RankingItem) => {
     if (!uid || !campeonatoAbertoId) return null;
     if (p.tipo === "elite4" && leaders[0]?.uid === uid && uid !== p.uid)
+      return <button disabled={busy} onClick={() => startChallenge(p.uid)} className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Desafiar</button>;
+    if (p.tipo === "lider" && myLeader && leaders.slice(0, 4).some((x) => x.uid === p.uid) && uid !== p.uid)
       return <button disabled={busy} onClick={() => startChallenge(p.uid)} className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Desafiar</button>;
     if (p.tipo === "lider" && myElite && leaders.slice(0, 4).some((x) => x.uid === p.uid))
       return <button disabled={busy} onClick={() => startChallenge(p.uid)} className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Desafiar</button>;
@@ -82,9 +85,10 @@ export default function PlacarClient({ liga }: { liga: string }) {
 
       <section className="rounded-xl border bg-white p-4 shadow-sm">
         <h2 className="mb-1 text-lg font-semibold">Pontuação da disputa</h2>
-        <p className="mb-3 text-sm text-slate-600">Líderes pontuam por vitórias e participações. A Elite 4 recebe pontos definidos pela administração e pode desafiar os quatro primeiros líderes.</p>
+        <p className="mb-3 text-sm text-slate-600">Líderes pontuam por vitórias e participações. Líderes participantes podem desafiar outros entre os quatro primeiros colocados; o líder com mais pontos também pode desafiar a Elite 4. A Elite 4 recebe pontos definidos pela administração e pode desafiar os quatro primeiros líderes.</p>
         {!campeonatoAbertoId ? <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Não há disputa aberta nesta liga. Quando a administração iniciar uma temporada, a classificação e os desafios aparecerão aqui.</p> : ranking.length === 0 ? <p className="text-sm text-slate-500">Carregando classificação…</p> : <div className="overflow-x-auto"><table className="min-w-[720px] w-full text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="p-2">#</th><th>Treinador</th><th>Categoria</th><th>Participação</th><th>Vitórias</th><th>Admin</th><th>Desafios</th><th>Total</th><th>Ação</th></tr></thead><tbody>{ranking.map((p, i) => <tr key={p.id} className="border-b last:border-0"><td className="p-2">{i + 1}</td><td className="font-medium">{p.nome}</td><td>{p.tipo === "elite4" ? `Elite 4 · posição ${p.posElite || "—"}` : "Líder de ginásio"}</td><td>{p.participacao}</td><td>{p.vitorias}</td><td>{p.admin}</td><td>{p.desafios}</td><td className="font-semibold">{p.pontos}</td><td>{challengeButtons(p)}</td></tr>)}</tbody></table></div>}
-        {campeonatoAbertoId && uid && leaders[0]?.uid !== uid && !myElite && <p className="mt-3 text-xs text-slate-500">O desafio contra a Elite 4 é liberado para o líder com maior pontuação.</p>}
+        {campeonatoAbertoId && uid && !myLeader && !myElite && <p className="mt-3 text-xs text-slate-500">Para desafiar, você precisa ser líder inscrito na disputa ou membro da Elite 4.</p>}
+        {campeonatoAbertoId && uid && myLeader && <p className="mt-3 text-xs text-slate-500">Você pode desafiar outros líderes entre os quatro primeiros. Se estiver em primeiro lugar, também pode desafiar um membro da Elite 4.</p>}
         {campeonatoAbertoId && uid && myElite && <p className="mt-3 text-xs text-slate-500">Você pode desafiar um dos quatro líderes mais bem colocados.</p>}
       </section>
 
