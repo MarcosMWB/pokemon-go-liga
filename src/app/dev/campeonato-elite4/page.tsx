@@ -136,7 +136,7 @@ export default function DevCampeonatoElite4() {
   const campeonatoIdAtual = campeonato?.id;
   useEffect(() => {
     if (!isAdmin || !campeonatoIdAtual) { setDesafiosContestados([]); return; }
-    return onSnapshot(query(collection(db, "desafios_elite4"), where("campeonato_id", "==", campeonatoIdAtual), where("status", "==", "contestado")), (snap) => {
+    return onSnapshot(query(collection(db, "desafios_elite4"), where("campeonato_id", "==", campeonatoIdAtual), where("status", "in", ["contestado", "contestado_expirado"])), (snap) => {
       setDesafiosContestados(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DesafioContestado)));
     });
   }, [isAdmin, campeonatoIdAtual]);
@@ -281,7 +281,45 @@ export default function DevCampeonatoElite4() {
       });
 
       const quantidade = await sincronizarParticipantes(campRef.id);
-      setMsg(`Disputa criada com ${quantidade} registros. Líderes começam sem participar; cada um deve escolher seu ginásio na página de participação. A Elite 4 atual permanece no ranking.`);
+      const pending = await getDocs(query(
+        collection(db, "elite4_pontos_pendentes"),
+        where("liga", "==", ligaSel), where("status", "==", "pendente"),
+      ));
+      let applied = 0;
+      for (const pendingDoc of pending.docs) {
+        const pendingData = pendingDoc.data();
+        const uid = String(pendingData.usuario_uid || "");
+        if (!uid) continue;
+        const participantRef = doc(db, "campeonatos_elite4", campRef.id, "participantes", uid);
+        const historyRef = doc(db, "campeonatos_elite4_pontuacoes", `campeao_${pendingDoc.id}`);
+        const wasApplied = await runTransaction(db, async (tx) => {
+          const [pendingSnap, participantSnap, historySnap] = await Promise.all([
+            tx.get(doc(db, "elite4_pontos_pendentes", pendingDoc.id)),
+            tx.get(participantRef), tx.get(historyRef),
+          ]);
+          if (!pendingSnap.exists() || pendingSnap.data().status !== "pendente" || !participantSnap.exists()) return false;
+          const points = Math.max(0, Math.trunc(Number(pendingSnap.data().quantidade || 100)));
+          if (!historySnap.exists()) {
+            const participant = participantSnap.data();
+            tx.update(participantRef, {
+              pontos: Number(participant.pontos || 0) + points,
+              pontos_desafios: Number(participant.pontos_desafios || 0) + points,
+              updatedAt: Date.now(),
+            });
+            tx.set(historyRef, {
+              campeonato_id: campRef.id, liga: ligaSel, usuario_uid: uid,
+              participante_nome: pendingSnap.data().participante_nome || uid,
+              quantidade: points,
+              motivo: `vitória na defesa da Elite 4 contra desafio ${pendingDoc.id}`,
+              desafio_campeoes_id: pendingDoc.id, createdAt: Date.now(),
+            });
+          }
+          tx.update(doc(db, "elite4_pontos_pendentes", pendingDoc.id), { status: "aplicado", campeonato_id: campRef.id, aplicadoAt: Date.now() });
+          return true;
+        });
+        if (wasApplied) applied++;
+      }
+      setMsg(`Disputa criada com ${quantidade} registros. ${applied ? `${applied} defesa(s) da Elite 4 receberam pontos pendentes. ` : ""}Líderes começam sem participar; cada um deve escolher seu ginásio na página de participação. A Elite 4 atual permanece no ranking.`);
     } catch (e: any) {
       setMsg("Erro ao criar: " + e.message);
     } finally {

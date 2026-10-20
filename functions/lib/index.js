@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.processExpiredGymChallenges = exports.onVitoriaDeclaradaPeloDesafiante = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.registerGreatPlateauParticipant = exports.openGreatPlateauRegistrationsOnSeasonStart = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.processExpiredGymChallenges = exports.onVitoriaDeclaradaPeloDesafiante = exports.onDesafioConcluido = exports.onGymDisputeResultCreatedSetDeadline = exports.onDesafioCriadoCriarBloqueio = exports.processExpiredChampionChallenges = exports.advanceChampionChallenge = exports.reportChampionChallengeResult = exports.requestChampionChallenge = exports.processExpiredVacancyGymResults = exports.processExpiredGreatPlateauMatches = exports.reportGreatPlateauMatch = exports.registerGreatPlateauParticipant = exports.openGreatPlateauRegistrationsOnSeasonStart = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.processExpiredElite4Challenges = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -17,6 +17,7 @@ Object.defineProperty(exports, "acceptElite4Challenge", { enumerable: true, get:
 Object.defineProperty(exports, "reportElite4ChallengeResult", { enumerable: true, get: function () { return elite4Challenges_1.reportElite4ChallengeResult; } });
 Object.defineProperty(exports, "claimElite4Walkover", { enumerable: true, get: function () { return elite4Challenges_1.claimElite4Walkover; } });
 Object.defineProperty(exports, "adminResolveElite4Challenge", { enumerable: true, get: function () { return elite4Challenges_1.adminResolveElite4Challenge; } });
+Object.defineProperty(exports, "processExpiredElite4Challenges", { enumerable: true, get: function () { return elite4Challenges_1.processExpiredElite4Challenges; } });
 var notifications_1 = require("./notifications");
 Object.defineProperty(exports, "onGymChallengeNotification", { enumerable: true, get: function () { return notifications_1.onGymChallengeNotification; } });
 Object.defineProperty(exports, "onGymDisputeBattleNotification", { enumerable: true, get: function () { return notifications_1.onGymDisputeBattleNotification; } });
@@ -26,6 +27,15 @@ Object.defineProperty(exports, "onElite4ChallengeNotification", { enumerable: tr
 var greatPlateau_1 = require("./greatPlateau");
 Object.defineProperty(exports, "openGreatPlateauRegistrationsOnSeasonStart", { enumerable: true, get: function () { return greatPlateau_1.openGreatPlateauRegistrationsOnSeasonStart; } });
 Object.defineProperty(exports, "registerGreatPlateauParticipant", { enumerable: true, get: function () { return greatPlateau_1.registerGreatPlateauParticipant; } });
+var battleDeadlines_1 = require("./battleDeadlines");
+Object.defineProperty(exports, "reportGreatPlateauMatch", { enumerable: true, get: function () { return battleDeadlines_1.reportGreatPlateauMatch; } });
+Object.defineProperty(exports, "processExpiredGreatPlateauMatches", { enumerable: true, get: function () { return battleDeadlines_1.processExpiredGreatPlateauMatches; } });
+Object.defineProperty(exports, "processExpiredVacancyGymResults", { enumerable: true, get: function () { return battleDeadlines_1.processExpiredVacancyGymResults; } });
+var championChallenges_1 = require("./championChallenges");
+Object.defineProperty(exports, "requestChampionChallenge", { enumerable: true, get: function () { return championChallenges_1.requestChampionChallenge; } });
+Object.defineProperty(exports, "reportChampionChallengeResult", { enumerable: true, get: function () { return championChallenges_1.reportChampionChallengeResult; } });
+Object.defineProperty(exports, "advanceChampionChallenge", { enumerable: true, get: function () { return championChallenges_1.advanceChampionChallenge; } });
+Object.defineProperty(exports, "processExpiredChampionChallenges", { enumerable: true, get: function () { return championChallenges_1.processExpiredChampionChallenges; } });
 const adminSdk_1 = require("./adminSdk");
 const elite4Plan_1 = require("./elite4Plan");
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
@@ -98,6 +108,23 @@ exports.onDesafioCriadoCriarBloqueio = (0, firestore_1.onDocumentWritten)({ docu
             cooldownApplied: true,
             cooldownAppliedAt: adminSdk_1.FieldValue.serverTimestamp(),
             server_created_at_ms: serverCreatedAtMs,
+            server_deadline_at: adminSdk_1.admin.firestore.Timestamp.fromMillis(serverCreatedAtMs + GYM_CHALLENGE_RESPONSE_MS),
+        });
+    });
+});
+/** Guarda um prazo confiável para W.O. em batalhas de disputa de ginásio. */
+exports.onGymDisputeResultCreatedSetDeadline = (0, firestore_1.onDocumentWritten)({ document: "disputas_ginasio_resultados/{resultId}", region: "southamerica-east1" }, async (event) => {
+    if (event.data?.before?.exists || !event.data?.after?.exists)
+        return;
+    const ref = adminSdk_1.db.doc(`disputas_ginasio_resultados/${event.params.resultId}`);
+    const createdAtMs = toMillisAny(event.data?.after?.createTime) ?? Date.now();
+    await adminSdk_1.db.runTransaction(async (tx) => {
+        const result = await tx.get(ref);
+        if (!result.exists || result.get("server_created_at_ms"))
+            return;
+        tx.update(ref, {
+            server_created_at_ms: createdAtMs,
+            server_deadline_at: adminSdk_1.admin.firestore.Timestamp.fromMillis(createdAtMs + GYM_CHALLENGE_RESPONSE_MS),
         });
     });
 });
@@ -322,15 +349,13 @@ exports.onVitoriaDeclaradaPeloDesafiante = (0, firestore_1.onDocumentWritten)({ 
     });
 });
 /** Encerra desafios sem resultado após sete dias e aplica derrota por silêncio ao líder. */
-exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "every 5 minutes", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 }, async () => {
+exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "0 0 * * *", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 }, async () => {
     const now = Date.now();
     const cutoff = now - GYM_CHALLENGE_RESPONSE_MS;
+    // Também inclui desafios antigos sem timestamp do servidor, usando createTime.
     const pending = await adminSdk_1.db.collection("desafios_ginasio")
-        .where("status", "==", "pendente")
+        .where("status", "in", ["pendente", "conflito"])
         .where("disputa_id", "==", null)
-        .where("server_created_at_ms", "<=", cutoff)
-        .orderBy("server_created_at_ms", "asc")
-        .limit(100)
         .get();
     for (const challenge of pending.docs) {
         const createdAtMs = toMillisAny(challenge.get("server_created_at_ms")) ?? toMillisAny(challenge.createTime) ?? 0;
@@ -339,11 +364,18 @@ exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "e
         await adminSdk_1.db.runTransaction(async (tx) => {
             const ref = challenge.ref;
             const current = await tx.get(ref);
-            if (!current.exists || current.get("status") !== "pendente" || current.get("disputa_id"))
+            if (!current.exists || !["pendente", "conflito"].includes(String(current.get("status"))) || current.get("disputa_id"))
                 return;
             const currentCreatedAt = toMillisAny(current.get("server_created_at_ms")) ?? toMillisAny(current.createTime) ?? 0;
             if (!currentCreatedAt || currentCreatedAt > cutoff)
                 return;
+            if (current.get("status") === "conflito") {
+                tx.update(ref, {
+                    status: "encerrado_sem_resultado", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                    encerramento_motivo: "relatos_divergentes_sem_resolucao_apos_prazo",
+                });
+                return;
+            }
             const challengerResult = current.get("resultado_desafiante");
             const leaderResult = current.get("resultado_lider");
             if (challengerResult && leaderResult && challengerResult === leaderResult) {
@@ -355,11 +387,25 @@ exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "e
                 });
                 return;
             }
-            if (challengerResult === "desafiante" && !leaderResult) {
+            if (challengerResult && !leaderResult) {
+                const winnerTag = challengerResult;
+                const isWalkover = winnerTag === "desafiante";
                 tx.update(ref, {
-                    status: "concluido", vencedor: "desafiante", vencedor_uid: current.get("desafiante_uid"),
+                    status: "concluido", vencedor: winnerTag,
+                    vencedor_uid: winnerTag === "lider" ? current.get("lider_uid") : current.get("desafiante_uid"),
                     fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
-                    autoVictoryByChallenger: true, encerramento_motivo: "wo_desafiante_apos_prazo",
+                    autoVictoryByWo: isWalkover, encerramento_motivo: isWalkover ? "wo_relato_unilateral_apos_prazo" : "vitoria_concedida_apos_prazo",
+                });
+                return;
+            }
+            if (leaderResult && !challengerResult) {
+                const winnerTag = leaderResult;
+                const isWalkover = winnerTag === "lider";
+                tx.update(ref, {
+                    status: "concluido", vencedor: winnerTag,
+                    vencedor_uid: winnerTag === "lider" ? current.get("lider_uid") : current.get("desafiante_uid"),
+                    fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                    autoVictoryByWo: isWalkover, encerramento_motivo: isWalkover ? "wo_relato_unilateral_apos_prazo" : "vitoria_concedida_apos_prazo",
                 });
                 return;
             }
@@ -394,6 +440,28 @@ exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "e
                 status: "encerrado_sem_resultado", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
                 encerramento_motivo: penaltyApplies ? "lider_sem_resposta" : leaderResult ? "empate_tecnico_sem_confirmacao" : "sem_resultado_confirmado",
                 derrota_lider_aplicada: penaltyApplies,
+            });
+        });
+    }
+    // Os chats vinculados às disputas de vaga também expiram, embora o resultado
+    // competitivo dessas partidas seja registrado na coleção de resultados.
+    const linkedChallenges = await adminSdk_1.db.collection("desafios_ginasio").where("status", "==", "pendente").get();
+    for (const challenge of linkedChallenges.docs) {
+        if (!challenge.get("disputa_id"))
+            continue;
+        const createdAtMs = toMillisAny(challenge.get("server_created_at_ms")) ?? toMillisAny(challenge.createTime) ?? 0;
+        if (!createdAtMs || createdAtMs > cutoff)
+            continue;
+        await adminSdk_1.db.runTransaction(async (tx) => {
+            const current = await tx.get(challenge.ref);
+            if (!current.exists || current.get("status") !== "pendente" || !current.get("disputa_id"))
+                return;
+            const currentCreatedAt = toMillisAny(current.get("server_created_at_ms")) ?? toMillisAny(current.createTime) ?? 0;
+            if (!currentCreatedAt || currentCreatedAt > cutoff)
+                return;
+            tx.update(challenge.ref, {
+                status: "encerrado_sem_resultado", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                encerramento_motivo: "chat_de_disputa_expirado",
             });
         });
     }

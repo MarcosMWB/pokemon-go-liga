@@ -127,6 +127,25 @@
       "density": "SPARSE_ALL"
     },
     {
+      "collectionGroup": "desafios_elite4",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "campeonato_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
       "collectionGroup": "disputas_ginasio_resultados",
       "queryScope": "COLLECTION",
       "fields": [

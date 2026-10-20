@@ -328,7 +328,7 @@ export default function PerfilPage() {
   /* Histórico */
   const [lideratos, setLideratos] = useState<Liderato[]>([]);
   const [eliteMandatos, setEliteMandatos] = useState<EliteMandato[]>([]);
-  const [hallDaFama, setHallDaFama] = useState<Array<{ id: string; liga?: string; temporada_nome?: string; createdAt?: number; equipe_snapshot?: { temporada_nome?: string; liga?: string; pokemon?: string[] } | null }>>([]);
+  const [hallDaFama, setHallDaFama] = useState<Array<{ id: string; nome?: string; liga?: string; temporada_nome?: string; createdAt?: number; data_inicio?: number; data_fim?: number | null; equipe_snapshot?: { temporada_nome?: string; liga?: string; pokemon?: string[] } | null }>>([]);
   const [renunciando, setRenunciando] = useState<string | null>(null);
 
   /* PP para remover derrota (Wish) */
@@ -757,7 +757,7 @@ export default function PerfilPage() {
     if (!perfilUid) { setHallDaFama([]); return; }
     const qHall = query(collection(db, 'hall_da_fama'), where('usuario_uid', '==', perfilUid));
     return onSnapshot(qHall, (snap) => {
-      const entries = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Array<{ id: string; liga?: string; temporada_nome?: string; createdAt?: number; equipe_snapshot?: { temporada_nome?: string; liga?: string; pokemon?: string[] } | null }>;
+      const entries = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Array<{ id: string; nome?: string; liga?: string; temporada_nome?: string; createdAt?: number; data_inicio?: number; data_fim?: number | null; equipe_snapshot?: { temporada_nome?: string; liga?: string; pokemon?: string[] } | null }>;
       entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setHallDaFama(entries);
     });
@@ -1429,7 +1429,7 @@ export default function PerfilPage() {
 
                 <div className="mt-4 rounded border p-3">
                   <h3 className="font-semibold">Hall da Fama regional</h3>
-                  {hallDaFama.length ? <ul className="mt-2 space-y-3">{hallDaFama.map((entry) => <li key={entry.id} className="rounded bg-gray-50 p-3"><p className="text-sm font-medium">🏆 Campeão do Great Plateau{entry.liga ? ` · ${entry.liga}` : ''}{entry.temporada_nome ? ` · ${entry.temporada_nome}` : ''}</p>{entry.equipe_snapshot?.pokemon?.length ? <><p className="mt-2 text-xs text-gray-500">Equipe registrada para a disputa ({entry.equipe_snapshot.temporada_nome || entry.temporada_nome || 'temporada'}):</p><ul className="mt-1 flex flex-wrap gap-2">{entry.equipe_snapshot.pokemon.map((nome, i) => <li key={`${entry.id}-${i}`} className="rounded-full border bg-white px-2 py-1 text-xs">{nome}</li>)}</ul></> : <p className="mt-1 text-xs text-gray-500">Equipe histórica indisponível para este título.</p>}</li>)}</ul> : <p className="mt-1 text-sm text-gray-500">Nenhum título regional registrado.</p>}
+                  {hallDaFama.length ? <ul className="mt-2 space-y-3">{hallDaFama.map((entry) => { const inicio = Number(entry.data_inicio || entry.createdAt || 0); const fim = Number(entry.data_fim || 0); return <li key={entry.id} className="rounded bg-gray-50 p-3"><p className="text-sm font-medium">🏆 Campeão do Great Plateau{entry.liga ? ` · ${entry.liga}` : ''}{entry.temporada_nome ? ` · ${entry.temporada_nome}` : ''}</p><p className="mt-1 text-xs text-gray-600">Reinado: {inicio ? new Date(inicio).toLocaleDateString('pt-BR') : 'data não registrada'} – {fim ? new Date(fim).toLocaleDateString('pt-BR') : 'atual'}</p>{entry.equipe_snapshot?.pokemon?.length ? <><p className="mt-2 text-xs text-gray-500">Equipe registrada para a disputa ({entry.equipe_snapshot.temporada_nome || entry.temporada_nome || 'temporada'}):</p><ul className="mt-1 flex flex-wrap gap-2">{entry.equipe_snapshot.pokemon.map((nome, i) => <li key={`${entry.id}-${i}`} className="rounded-full border bg-white px-2 py-1 text-xs">{nome}</li>)}</ul></> : <p className="mt-1 text-xs text-gray-500">Equipe histórica indisponível para este título.</p>}</li>; })}</ul> : <p className="mt-1 text-sm text-gray-500">Nenhum título regional registrado.</p>}
                 </div>
               </section>
             </>

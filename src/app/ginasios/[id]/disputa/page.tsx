@@ -87,6 +87,7 @@ type Resultado = {
   declarado_por: string;
   status: "pendente" | "confirmado" | "contestado";
   createdAt: number;
+  server_created_at_ms?: number;
 };
 
 type Usuario = {
@@ -710,7 +711,7 @@ export default function DisputaGinasioPage() {
         if (confirmados.length > 0) return;
 
         // SÓ faz WO se houver EXATAMENTE 1 pendente no par
-        if (pendentes.length === 1) {
+        if (pendentes.length === 1 && Date.now() - Number(pendentes[0].server_created_at_ms || pendentes[0].createdAt || 0) >= 7 * 24 * 60 * 60 * 1000) {
           paraConfirmar.push(pendentes[0]);
         }
       });

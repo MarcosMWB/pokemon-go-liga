@@ -1,11 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = void 0;
+exports.processExpiredElite4Challenges = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = void 0;
 const https_1 = require("firebase-functions/v2/https");
+const scheduler_1 = require("firebase-functions/v2/scheduler");
 const adminSdk_1 = require("./adminSdk");
 const REGION = "southamerica-east1";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const ACTIVE = new Set(["pendente", "aceito", "resultado_parcial", "contestado"]);
+const ACTIVE = new Set(["pendente", "aceito", "resultado_parcial"]);
+const RESOLVABLE = new Set([...ACTIVE, "contestado", "contestado_expirado"]);
 const number = (v) => Number.isFinite(Number(v)) ? Math.max(0, Math.trunc(Number(v))) : 0;
 function rank(a, b) {
     const x = a.data(), y = b.data();
@@ -130,7 +132,7 @@ async function finalizarResultado(tx, challenge, ref, winnerUid, method, callerU
     const status = String(challenge.get("status"));
     if (status === "finalizado")
         return { ok: true, jaFinalizado: true };
-    if (!ACTIVE.has(status))
+    if (!RESOLVABLE.has(status))
         throw new https_1.HttpsError("failed-precondition", "Este desafio não pode mais ser encerrado.");
     const transfer = number(loser.get("pontos"));
     const winnerData = winner.data() || {};
@@ -148,7 +150,7 @@ async function finalizarResultado(tx, challenge, ref, winnerUid, method, callerU
         tx.create(pointsLogRef, {
             campeonato_id: eventId, desafio_id: challenge.id, liga: challenge.get("liga"),
             usuario_uid: winnerUid, adversario_uid: loserUid, quantidade: transfer,
-            motivo: method === "wo" ? "vitoria_elite4_wo_transferencia_pontos" : "vitoria_elite4_transferencia_pontos",
+            motivo: method === "wo" ? "vitoria_elite4_wo_transferencia_pontos" : method === "concessao" ? "vitoria_elite4_concessao_transferencia_pontos" : "vitoria_elite4_transferencia_pontos",
             createdAt: Date.now(),
         });
     const awardedPP = method === "batalha" && !ppLog.exists;
@@ -178,8 +180,8 @@ exports.reportElite4ChallengeResult = (0, https_1.onCall)({ region: REGION }, as
         const challenge = await tx.get(ref);
         if (!challenge.exists || ![challenge.get("challenger_uid"), challenge.get("target_uid")].includes(uid))
             throw new https_1.HttpsError("permission-denied", "Você não participa deste desafio.");
-        if (!["aceito", "resultado_parcial"].includes(String(challenge.get("status"))))
-            throw new https_1.HttpsError("failed-precondition", "O adversário precisa aceitar o desafio antes de declarar o resultado.");
+        if (!["pendente", "aceito", "resultado_parcial"].includes(String(challenge.get("status"))))
+            throw new https_1.HttpsError("failed-precondition", "Este desafio não está mais aberto para resultado.");
         if (Date.now() > number(challenge.get("deadline_at_ms")))
             throw new https_1.HttpsError("deadline-exceeded", "O prazo de uma semana expirou. O desafiante pode pedir W.O.");
         if (![challenge.get("challenger_uid"), challenge.get("target_uid")].includes(winnerUid))
@@ -214,6 +216,9 @@ exports.claimElite4Walkover = (0, https_1.onCall)({ region: REGION }, async (req
             throw new https_1.HttpsError("failed-precondition", "Este desafio já foi encerrado.");
         if (Date.now() < number(challenge.get("deadline_at_ms")))
             throw new https_1.HttpsError("failed-precondition", "O prazo de uma semana ainda não terminou.");
+        const challengerReport = (challenge.get("reports") || {})[uid];
+        if (challengerReport !== uid)
+            throw new https_1.HttpsError("failed-precondition", "Para pedir W.O., registre primeiro sua vitória. O encerramento automático também verificará os relatos ao fim do prazo.");
         const targetReport = (challenge.get("reports") || {})[String(challenge.get("target_uid"))];
         if (targetReport)
             throw new https_1.HttpsError("failed-precondition", "O adversário já declarou um resultado. Um administrador precisa resolver o registro.");
@@ -232,8 +237,51 @@ exports.adminResolveElite4Challenge = (0, https_1.onCall)({ region: REGION }, as
     return adminSdk_1.db.runTransaction(async (tx) => {
         const ref = adminSdk_1.db.doc(`desafios_elite4/${id}`);
         const challenge = await tx.get(ref);
-        if (!challenge.exists || challenge.get("status") !== "contestado")
+        if (!challenge.exists || !["contestado", "contestado_expirado"].includes(String(challenge.get("status"))))
             throw new https_1.HttpsError("failed-precondition", "Só é possível resolver resultados contestados.");
         return finalizarResultado(tx, challenge, ref, winnerUid, "batalha", uid);
     });
+});
+/** Encerra cada desafio da Elite 4 uma semana após sua criação, sem depender de ação manual. */
+exports.processExpiredElite4Challenges = (0, scheduler_1.onSchedule)({ schedule: "0 0 * * *", timeZone: "America/Sao_Paulo", region: REGION, maxInstances: 1 }, async () => {
+    const now = Date.now();
+    const snapshot = await adminSdk_1.db.collection("desafios_elite4")
+        .where("status", "in", [...ACTIVE, "contestado"]).get();
+    for (const item of snapshot.docs) {
+        await adminSdk_1.db.runTransaction(async (tx) => {
+            const ref = item.ref;
+            const challenge = await tx.get(ref);
+            if (!challenge.exists)
+                return;
+            const status = String(challenge.get("status"));
+            if (![...ACTIVE, "contestado"].includes(status))
+                return;
+            const created = number(challenge.get("created_at_ms")) || number(challenge.get("deadline_at_ms")) - WEEK_MS;
+            const deadline = number(challenge.get("deadline_at_ms")) || created + WEEK_MS;
+            if (!created || now < deadline)
+                return;
+            if (status === "contestado") {
+                tx.update(ref, { status: "contestado_expirado", metodo_resultado: "divergencia_sem_resolucao_no_prazo", finalized_at_ms: now });
+                return;
+            }
+            const reports = (challenge.get("reports") || {});
+            const challengerUid = String(challenge.get("challenger_uid") || "");
+            const targetUid = String(challenge.get("target_uid") || "");
+            const challengerReport = reports[challengerUid];
+            const targetReport = reports[targetUid];
+            if (challengerReport && targetReport && challengerReport !== targetReport) {
+                tx.update(ref, { status: "contestado_expirado", metodo_resultado: "divergencia_sem_resolucao_no_prazo", finalized_at_ms: now });
+                return;
+            }
+            if (!challengerReport && !targetReport) {
+                tx.update(ref, { status: "finalizado", winner_uid: null, loser_uid: null, pontos_transferidos: 0,
+                    metodo_resultado: "sem_resultado", finalized_at_ms: now, finalized_by: "expiracao_automatica" });
+                return;
+            }
+            const reporterUid = challengerReport ? challengerUid : targetUid;
+            const winnerUid = challengerReport || targetReport;
+            const method = challengerReport && targetReport ? "batalha" : winnerUid === reporterUid ? "wo" : "concessao";
+            await finalizarResultado(tx, challenge, ref, winnerUid, method, "expiracao_automatica");
+        });
+    }
 });

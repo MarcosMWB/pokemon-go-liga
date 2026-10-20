@@ -12,6 +12,7 @@ export {
   reportElite4ChallengeResult,
   claimElite4Walkover,
   adminResolveElite4Challenge,
+  processExpiredElite4Challenges,
 } from "./elite4Challenges";
 export {
   onGymChallengeNotification,
@@ -21,6 +22,8 @@ export {
   onElite4ChallengeNotification,
 } from "./notifications";
 export { openGreatPlateauRegistrationsOnSeasonStart, registerGreatPlateauParticipant } from "./greatPlateau";
+export { reportGreatPlateauMatch, processExpiredGreatPlateauMatches, processExpiredVacancyGymResults } from "./battleDeadlines";
+export { requestChampionChallenge, reportChampionChallengeResult, advanceChampionChallenge, processExpiredChampionChallenges } from "./championChallenges";
 import { admin, db, FieldValue } from "./adminSdk";
 import { podePontuarGinasio } from "./elite4Plan";
 
@@ -107,9 +110,28 @@ export const onDesafioCriadoCriarBloqueio = onDocumentWritten(
         cooldownApplied: true,
         cooldownAppliedAt: FieldValue.serverTimestamp(),
         server_created_at_ms: serverCreatedAtMs,
+        server_deadline_at: admin.firestore.Timestamp.fromMillis(serverCreatedAtMs + GYM_CHALLENGE_RESPONSE_MS),
       });
     });
   }
+);
+
+/** Guarda um prazo confiável para W.O. em batalhas de disputa de ginásio. */
+export const onGymDisputeResultCreatedSetDeadline = onDocumentWritten(
+  { document: "disputas_ginasio_resultados/{resultId}", region: "southamerica-east1" },
+  async (event: any) => {
+    if (event.data?.before?.exists || !event.data?.after?.exists) return;
+    const ref = db.doc(`disputas_ginasio_resultados/${event.params.resultId}`);
+    const createdAtMs = toMillisAny(event.data?.after?.createTime) ?? Date.now();
+    await db.runTransaction(async (tx) => {
+      const result = await tx.get(ref);
+      if (!result.exists || result.get("server_created_at_ms")) return;
+      tx.update(ref, {
+        server_created_at_ms: createdAtMs,
+        server_deadline_at: admin.firestore.Timestamp.fromMillis(createdAtMs + GYM_CHALLENGE_RESPONSE_MS),
+      });
+    });
+  },
 );
 
 export const onDesafioConcluido = onDocumentWritten(
@@ -349,16 +371,14 @@ export const onVitoriaDeclaradaPeloDesafiante = onDocumentWritten(
 
 /** Encerra desafios sem resultado após sete dias e aplica derrota por silêncio ao líder. */
 export const processExpiredGymChallenges = onSchedule(
-  { schedule: "every 5 minutes", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 },
+  { schedule: "0 0 * * *", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 },
   async () => {
     const now = Date.now();
     const cutoff = now - GYM_CHALLENGE_RESPONSE_MS;
+    // Também inclui desafios antigos sem timestamp do servidor, usando createTime.
     const pending = await db.collection("desafios_ginasio")
-      .where("status", "==", "pendente")
+      .where("status", "in", ["pendente", "conflito"])
       .where("disputa_id", "==", null)
-      .where("server_created_at_ms", "<=", cutoff)
-      .orderBy("server_created_at_ms", "asc")
-      .limit(100)
       .get();
 
     for (const challenge of pending.docs) {
@@ -368,9 +388,17 @@ export const processExpiredGymChallenges = onSchedule(
       await db.runTransaction(async (tx) => {
         const ref = challenge.ref;
         const current = await tx.get(ref);
-        if (!current.exists || current.get("status") !== "pendente" || current.get("disputa_id")) return;
+        if (!current.exists || !["pendente", "conflito"].includes(String(current.get("status"))) || current.get("disputa_id")) return;
         const currentCreatedAt = toMillisAny(current.get("server_created_at_ms")) ?? toMillisAny(current.createTime) ?? 0;
         if (!currentCreatedAt || currentCreatedAt > cutoff) return;
+
+        if (current.get("status") === "conflito") {
+          tx.update(ref, {
+            status: "encerrado_sem_resultado", fechadoEm: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+            encerramento_motivo: "relatos_divergentes_sem_resolucao_apos_prazo",
+          });
+          return;
+        }
 
         const challengerResult = current.get("resultado_desafiante");
         const leaderResult = current.get("resultado_lider");
@@ -383,11 +411,25 @@ export const processExpiredGymChallenges = onSchedule(
           });
           return;
         }
-        if (challengerResult === "desafiante" && !leaderResult) {
+        if (challengerResult && !leaderResult) {
+          const winnerTag = challengerResult;
+          const isWalkover = winnerTag === "desafiante";
           tx.update(ref, {
-            status: "concluido", vencedor: "desafiante", vencedor_uid: current.get("desafiante_uid"),
+            status: "concluido", vencedor: winnerTag,
+            vencedor_uid: winnerTag === "lider" ? current.get("lider_uid") : current.get("desafiante_uid"),
             fechadoEm: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
-            autoVictoryByChallenger: true, encerramento_motivo: "wo_desafiante_apos_prazo",
+            autoVictoryByWo: isWalkover, encerramento_motivo: isWalkover ? "wo_relato_unilateral_apos_prazo" : "vitoria_concedida_apos_prazo",
+          });
+          return;
+        }
+        if (leaderResult && !challengerResult) {
+          const winnerTag = leaderResult;
+          const isWalkover = winnerTag === "lider";
+          tx.update(ref, {
+            status: "concluido", vencedor: winnerTag,
+            vencedor_uid: winnerTag === "lider" ? current.get("lider_uid") : current.get("desafiante_uid"),
+            fechadoEm: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+            autoVictoryByWo: isWalkover, encerramento_motivo: isWalkover ? "wo_relato_unilateral_apos_prazo" : "vitoria_concedida_apos_prazo",
           });
           return;
         }
@@ -424,6 +466,25 @@ export const processExpiredGymChallenges = onSchedule(
           status: "encerrado_sem_resultado", fechadoEm: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
           encerramento_motivo: penaltyApplies ? "lider_sem_resposta" : leaderResult ? "empate_tecnico_sem_confirmacao" : "sem_resultado_confirmado",
           derrota_lider_aplicada: penaltyApplies,
+        });
+      });
+    }
+
+    // Os chats vinculados às disputas de vaga também expiram, embora o resultado
+    // competitivo dessas partidas seja registrado na coleção de resultados.
+    const linkedChallenges = await db.collection("desafios_ginasio").where("status", "==", "pendente").get();
+    for (const challenge of linkedChallenges.docs) {
+      if (!challenge.get("disputa_id")) continue;
+      const createdAtMs = toMillisAny(challenge.get("server_created_at_ms")) ?? toMillisAny(challenge.createTime) ?? 0;
+      if (!createdAtMs || createdAtMs > cutoff) continue;
+      await db.runTransaction(async (tx) => {
+        const current = await tx.get(challenge.ref);
+        if (!current.exists || current.get("status") !== "pendente" || !current.get("disputa_id")) return;
+        const currentCreatedAt = toMillisAny(current.get("server_created_at_ms")) ?? toMillisAny(current.createTime) ?? 0;
+        if (!currentCreatedAt || currentCreatedAt > cutoff) return;
+        tx.update(challenge.ref, {
+          status: "encerrado_sem_resultado", fechadoEm: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+          encerramento_motivo: "chat_de_disputa_expirado",
         });
       });
     }

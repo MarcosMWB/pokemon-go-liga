@@ -11,7 +11,7 @@ type RankingItem = { id: string; uid: string; nome: string; tipo: "lider" | "eli
 type Challenge = { id: string; campeonato_id: string; liga: string; challenger_uid: string; challenger_nome: string; challenger_role: "lider" | "elite4"; target_uid: string; target_nome: string; target_role: "lider" | "elite4"; elite4_uid: string; status: string; reports?: Record<string, string>; deadline_at_ms: number; winner_uid?: string; pontos_transferidos?: number; metodo_resultado?: string; elite4_pp_atribuido?: boolean };
 
 const functions = getFunctions(undefined, "southamerica-east1");
-const statusLabel: Record<string, string> = { pendente: "Aguardando aceite", aceito: "Batalha aceita", resultado_parcial: "Aguardando confirmação do resultado", contestado: "Resultado em análise pelo administrador", finalizado: "Finalizado" };
+const statusLabel: Record<string, string> = { pendente: "Aguardando aceite", aceito: "Batalha aceita", resultado_parcial: "Aguardando confirmação do resultado", contestado: "Resultado em análise pelo administrador", contestado_expirado: "Encerrado após uma semana; revisão administrativa disponível", finalizado: "Finalizado" };
 const callable = (name: string) => httpsCallable(functions, name);
 const dateLabel = (ms: number) => ms ? new Date(ms).toLocaleString("pt-BR") : "—";
 
@@ -94,20 +94,20 @@ export default function PlacarClient({ liga }: { liga: string }) {
 
       <section className="rounded-xl border bg-white p-4 shadow-sm">
         <h2 className="mb-1 text-lg font-semibold">Desafios</h2>
-        <p className="mb-3 text-sm text-slate-600">O adversário tem uma semana para aceitar. Depois da batalha, os dois confirmam o vencedor. Se o prazo terminar sem resposta do adversário, quem iniciou pode solicitar W.O.</p>
+        <p className="mb-3 text-sm text-slate-600">Cada desafio termina automaticamente sete dias após ser criado. Se só um lado declarar vitória, o sistema registra W.O. para esse lado. Sem relatos ou com relatos divergentes, encerra sem transferir pontos; divergências ficam disponíveis para revisão administrativa.</p>
         {!campeonatoAbertoId || challenges.length === 0 ? <p className="text-sm text-slate-500">Ainda não há desafios nesta disputa.</p> : <ul className="space-y-3">{challenges.map((c) => {
           const participant = c.challenger_uid === uid || c.target_uid === uid;
           const isTarget = c.target_uid === uid;
           const deadlinePassed = Date.now() >= c.deadline_at_ms;
-          const canReport = participant && ["aceito", "resultado_parcial"].includes(c.status) && !deadlinePassed;
+          const canReport = participant && ["pendente", "aceito", "resultado_parcial"].includes(c.status) && !deadlinePassed;
           const claimed = !!(c.reports || {})[uid || ""];
           return <li key={c.id} className="rounded-lg border bg-slate-50 p-3">
             <div className="flex flex-col justify-between gap-2 sm:flex-row"><div><p className="font-semibold">{c.challenger_nome} <span className="font-normal text-slate-500">({c.challenger_role === "elite4" ? "Elite 4" : "Líder"}) desafia</span> {c.target_nome} <span className="font-normal text-slate-500">({c.target_role === "elite4" ? "Elite 4" : "Líder"})</span></p><p className="mt-1 text-xs text-slate-600">{statusLabel[c.status] || c.status} · prazo: {dateLabel(c.deadline_at_ms)}</p></div>
               {isTarget && c.status === "pendente" && <button disabled={busy || deadlinePassed} onClick={() => act("Desafio aceito. Combine a batalha com o adversário.", "acceptElite4Challenge", { challengeId: c.id })} className="h-fit rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Aceitar desafio</button>}
             </div>
             {canReport && <div className="mt-3"><p className="mb-2 text-sm">Quem venceu a batalha?</p><div className="flex flex-wrap gap-2"><button disabled={busy || claimed} onClick={() => report(c, c.challenger_uid)} className="rounded-lg border bg-white px-3 py-2 text-sm disabled:opacity-50">Vitória de {c.challenger_nome}</button><button disabled={busy || claimed} onClick={() => report(c, c.target_uid)} className="rounded-lg border bg-white px-3 py-2 text-sm disabled:opacity-50">Vitória de {c.target_nome}</button></div>{claimed && <p className="mt-2 text-xs text-slate-600">Sua confirmação foi registrada; aguardando o adversário.</p>}</div>}
-            {participant && c.challenger_uid === uid && deadlinePassed && c.status !== "finalizado" && !((c.reports || {})[c.target_uid]) && <button disabled={busy} onClick={() => act("W.O. registrado. Os pontos do adversário foram transferidos.", "claimElite4Walkover", { challengeId: c.id })} className="mt-3 rounded-lg bg-amber-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Solicitar vitória por W.O.</button>}
-            {c.status === "finalizado" && <p className="mt-3 rounded-lg bg-white p-2 text-sm">Vencedor: <strong>{c.winner_uid === c.challenger_uid ? c.challenger_nome : c.target_nome}</strong>. {c.pontos_transferidos || 0} pontos transferidos{c.metodo_resultado === "wo" ? " por W.O." : ""}.{c.elite4_pp_atribuido ? " Elite 4 recebeu 10 PP." : ""}</p>}
+            {participant && c.challenger_uid === uid && deadlinePassed && c.status !== "finalizado" && (c.reports || {})[uid] === uid && !((c.reports || {})[c.target_uid]) && <button disabled={busy} onClick={() => act("W.O. registrado. Os pontos do adversário foram transferidos.", "claimElite4Walkover", { challengeId: c.id })} className="mt-3 rounded-lg bg-amber-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Solicitar vitória por W.O.</button>}
+            {c.status === "finalizado" && <p className="mt-3 rounded-lg bg-white p-2 text-sm">{c.winner_uid ? <>Vencedor: <strong>{c.winner_uid === c.challenger_uid ? c.challenger_nome : c.target_nome}</strong>. {c.pontos_transferidos || 0} pontos transferidos{c.metodo_resultado === "wo" ? " por W.O." : c.metodo_resultado === "concessao" ? " por concessão." : ""}.{c.elite4_pp_atribuido ? " Elite 4 recebeu 10 PP." : ""}</> : "Desafio encerrado sem resultado; nenhum ponto foi transferido."}</p>}
             {c.status === "contestado" && participant && <p className="mt-3 text-sm text-amber-800">Os resultados informados não coincidem ({c.challenger_nome}: {c.reports?.[c.challenger_uid] === c.challenger_uid ? c.challenger_nome : c.target_nome}; {c.target_nome}: {c.reports?.[c.target_uid] === c.challenger_uid ? c.challenger_nome : c.target_nome}). Um administrador precisa revisar o resultado.</p>}
           </li>;
         })}</ul>}

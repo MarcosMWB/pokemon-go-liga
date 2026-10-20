@@ -1,9 +1,11 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { db, FieldValue } from "./adminSdk";
 
 const REGION = "southamerica-east1";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const ACTIVE = new Set(["pendente", "aceito", "resultado_parcial", "contestado"]);
+const ACTIVE = new Set(["pendente", "aceito", "resultado_parcial"]);
+const RESOLVABLE = new Set([...ACTIVE, "contestado", "contestado_expirado"]);
 const number = (v: unknown) => Number.isFinite(Number(v)) ? Math.max(0, Math.trunc(Number(v))) : 0;
 
 type Participant = FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>;
@@ -101,7 +103,7 @@ export const acceptElite4Challenge = onCall({ region: REGION }, async (request) 
   });
 });
 
-async function finalizarResultado(tx: FirebaseFirestore.Transaction, challenge: ChallengeDoc, ref: FirebaseFirestore.DocumentReference, winnerUid: string, method: "batalha" | "wo", callerUid: string) {
+async function finalizarResultado(tx: FirebaseFirestore.Transaction, challenge: ChallengeDoc, ref: FirebaseFirestore.DocumentReference, winnerUid: string, method: "batalha" | "wo" | "concessao", callerUid: string) {
   if (!challenge.exists || ![challenge.get("challenger_uid"), challenge.get("target_uid")].includes(winnerUid)) throw new HttpsError("invalid-argument", "O vencedor não faz parte deste desafio.");
   const challengerUid = String(challenge.get("challenger_uid"));
   const targetUid = String(challenge.get("target_uid"));
@@ -119,7 +121,7 @@ async function finalizarResultado(tx: FirebaseFirestore.Transaction, challenge: 
   if (!winner.exists || !loser.exists) throw new HttpsError("failed-precondition", "A pontuação de um dos jogadores não está disponível.");
   const status = String(challenge.get("status"));
   if (status === "finalizado") return { ok: true, jaFinalizado: true };
-  if (!ACTIVE.has(status)) throw new HttpsError("failed-precondition", "Este desafio não pode mais ser encerrado.");
+  if (!RESOLVABLE.has(status)) throw new HttpsError("failed-precondition", "Este desafio não pode mais ser encerrado.");
   const transfer = number(loser.get("pontos"));
   const winnerData = winner.data() || {};
   const loserData = loser.data() || {};
@@ -135,7 +137,7 @@ async function finalizarResultado(tx: FirebaseFirestore.Transaction, challenge: 
   if (!pointsLog.exists) tx.create(pointsLogRef, {
     campeonato_id: eventId, desafio_id: challenge.id, liga: challenge.get("liga"),
     usuario_uid: winnerUid, adversario_uid: loserUid, quantidade: transfer,
-    motivo: method === "wo" ? "vitoria_elite4_wo_transferencia_pontos" : "vitoria_elite4_transferencia_pontos",
+    motivo: method === "wo" ? "vitoria_elite4_wo_transferencia_pontos" : method === "concessao" ? "vitoria_elite4_concessao_transferencia_pontos" : "vitoria_elite4_transferencia_pontos",
     createdAt: Date.now(),
   });
   const awardedPP = method === "batalha" && !ppLog.exists;
@@ -162,7 +164,7 @@ export const reportElite4ChallengeResult = onCall({ region: REGION }, async (req
     const ref = db.doc(`desafios_elite4/${id}`);
     const challenge = await tx.get(ref);
     if (!challenge.exists || ![challenge.get("challenger_uid"), challenge.get("target_uid")].includes(uid)) throw new HttpsError("permission-denied", "Você não participa deste desafio.");
-    if (!["aceito", "resultado_parcial"].includes(String(challenge.get("status")))) throw new HttpsError("failed-precondition", "O adversário precisa aceitar o desafio antes de declarar o resultado.");
+    if (!["pendente", "aceito", "resultado_parcial"].includes(String(challenge.get("status")))) throw new HttpsError("failed-precondition", "Este desafio não está mais aberto para resultado.");
     if (Date.now() > number(challenge.get("deadline_at_ms"))) throw new HttpsError("deadline-exceeded", "O prazo de uma semana expirou. O desafiante pode pedir W.O.");
     if (![challenge.get("challenger_uid"), challenge.get("target_uid")].includes(winnerUid)) throw new HttpsError("invalid-argument", "O vencedor deve ser um dos dois participantes.");
     const reports = { ...(challenge.get("reports") || {}), [uid]: winnerUid } as Record<string, string>;
@@ -191,6 +193,8 @@ export const claimElite4Walkover = onCall({ region: REGION }, async (request) =>
     if (!challenge.exists || challenge.get("challenger_uid") !== uid) throw new HttpsError("permission-denied", "Somente quem iniciou o desafio pode pedir W.O.");
     if (!ACTIVE.has(String(challenge.get("status")))) throw new HttpsError("failed-precondition", "Este desafio já foi encerrado.");
     if (Date.now() < number(challenge.get("deadline_at_ms"))) throw new HttpsError("failed-precondition", "O prazo de uma semana ainda não terminou.");
+    const challengerReport = (challenge.get("reports") || {})[uid];
+    if (challengerReport !== uid) throw new HttpsError("failed-precondition", "Para pedir W.O., registre primeiro sua vitória. O encerramento automático também verificará os relatos ao fim do prazo.");
     const targetReport = (challenge.get("reports") || {})[String(challenge.get("target_uid"))];
     if (targetReport) throw new HttpsError("failed-precondition", "O adversário já declarou um resultado. Um administrador precisa resolver o registro.");
     return finalizarResultado(tx, challenge, ref, uid, "wo", uid);
@@ -207,7 +211,51 @@ export const adminResolveElite4Challenge = onCall({ region: REGION }, async (req
   return db.runTransaction(async (tx) => {
     const ref = db.doc(`desafios_elite4/${id}`);
     const challenge = await tx.get(ref);
-    if (!challenge.exists || challenge.get("status") !== "contestado") throw new HttpsError("failed-precondition", "Só é possível resolver resultados contestados.");
+    if (!challenge.exists || !["contestado", "contestado_expirado"].includes(String(challenge.get("status")))) throw new HttpsError("failed-precondition", "Só é possível resolver resultados contestados.");
     return finalizarResultado(tx, challenge, ref, winnerUid, "batalha", uid);
   });
 });
+
+/** Encerra cada desafio da Elite 4 uma semana após sua criação, sem depender de ação manual. */
+export const processExpiredElite4Challenges = onSchedule(
+  { schedule: "0 0 * * *", timeZone: "America/Sao_Paulo", region: REGION, maxInstances: 1 },
+  async () => {
+    const now = Date.now();
+    const snapshot = await db.collection("desafios_elite4")
+      .where("status", "in", [...ACTIVE, "contestado"]).get();
+    for (const item of snapshot.docs) {
+      await db.runTransaction(async (tx) => {
+        const ref = item.ref;
+        const challenge = await tx.get(ref);
+        if (!challenge.exists) return;
+        const status = String(challenge.get("status"));
+        if (![...ACTIVE, "contestado"].includes(status)) return;
+        const created = number(challenge.get("created_at_ms")) || number(challenge.get("deadline_at_ms")) - WEEK_MS;
+        const deadline = number(challenge.get("deadline_at_ms")) || created + WEEK_MS;
+        if (!created || now < deadline) return;
+        if (status === "contestado") {
+          tx.update(ref, { status: "contestado_expirado", metodo_resultado: "divergencia_sem_resolucao_no_prazo", finalized_at_ms: now });
+          return;
+        }
+        const reports = (challenge.get("reports") || {}) as Record<string, string>;
+        const challengerUid = String(challenge.get("challenger_uid") || "");
+        const targetUid = String(challenge.get("target_uid") || "");
+        const challengerReport = reports[challengerUid];
+        const targetReport = reports[targetUid];
+        if (challengerReport && targetReport && challengerReport !== targetReport) {
+          tx.update(ref, { status: "contestado_expirado", metodo_resultado: "divergencia_sem_resolucao_no_prazo", finalized_at_ms: now });
+          return;
+        }
+        if (!challengerReport && !targetReport) {
+          tx.update(ref, { status: "finalizado", winner_uid: null, loser_uid: null, pontos_transferidos: 0,
+            metodo_resultado: "sem_resultado", finalized_at_ms: now, finalized_by: "expiracao_automatica" });
+          return;
+        }
+        const reporterUid = challengerReport ? challengerUid : targetUid;
+        const winnerUid = challengerReport || targetReport;
+        const method = challengerReport && targetReport ? "batalha" : winnerUid === reporterUid ? "wo" : "concessao";
+        await finalizarResultado(tx, challenge, ref, winnerUid, method, "expiracao_automatica");
+      });
+    }
+  },
+);

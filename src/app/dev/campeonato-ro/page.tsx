@@ -11,17 +11,18 @@ import {
 
 type Tournament = {
   id: string; temporada_id: string; temporada_nome: string; liga: string; createdAt?: number; participantes_count?: number;
-  status: "inscricoes" | "suico" | "cut_pendente" | "top_cut" | "aguardando_trofeu" | "finalizado";
+  status: "inscricoes" | "suico" | "cut_pendente" | "top_cut" | "aguardando_trofeu" | "finalizado" | "finalizado_sem_campeao";
   rodadas_suico: number; rodadas_suico_criadas: number; rodada_cut: number;
   cut_size: number; vencedor_uid?: string; vencedor_nome?: string; inicio_batalhas_em?: number;
 };
 type Participant = GPParticipant & { vitorias: number; empates: number; derrotas: number; insignias_count: number };
 type Match = {
   id: string; uid_a: string; uid_b: string; nome_a: string; nome_b: string;
-  report_a?: string | null; report_b?: string | null; winner_uid?: string | null;
-  ordem: number; seed_a?: number; seed_b?: number; tipo?: "suico" | "top_cut";
+  report_a?: string | null; report_b?: string | null; winner_uid?: string | null; status?: string;
+  ordem: number; seed_a?: number; seed_b?: number; tipo?: "suico" | "top_cut"; deadline_at_ms?: number; metodo_resultado?: string; is_bye?: boolean;
 };
 type Round = { id: string; tipo: "suico" | "top_cut"; numero: number; status: string; bye_uid?: string };
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 function errorText(e: unknown) { return e instanceof Error ? e.message : "Ocorreu um erro inesperado."; }
 
@@ -192,7 +193,7 @@ export default function DevCampeonatoROPage() {
       doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", id, "partidas", `partida_${String(index + 1).padStart(2, "0")}`),
       { uid_a: a.uid, uid_b: b.uid, nome_a: a.nome, nome_b: b.nome,
         report_a: null, report_b: null, winner_uid: null, status: "agendada",
-        ordem: index + 1, seed_a: seedA || a.seed, seed_b: seedB || b.seed, tipo: type, createdAt: Date.now() }
+        ordem: index + 1, seed_a: seedA || a.seed, seed_b: seedB || b.seed, tipo: type, createdAt: Date.now(), deadline_at_ms: Date.now() + WEEK_MS }
     ));
     if (bye) {
       const p = standings.find((item) => item.uid === bye.uid)!;
@@ -218,16 +219,18 @@ export default function DevCampeonatoROPage() {
     const scored = new Map(standings.map((p) => [p.uid, { ...p }]));
     for (const m of matches) {
       if (m.id === "bye") continue;
-      if (!m.report_a || !m.report_b || m.report_a !== m.report_b) {
+      if (m.status === "encerrada_sem_resultado") continue;
+      if (m.status !== "confirmada" && (!m.report_a || !m.report_b || m.report_a !== m.report_b)) {
         throw new Error(`A partida ${m.nome_a} × ${m.nome_b} ainda não tem resultado confirmado pelos dois jogadores.`);
       }
-      if (round.tipo === "top_cut" && m.report_a === "empate") throw new Error("O Top Cut não aceita empate; resolva a partida antes de avançar.");
+      const result = m.status === "confirmada" ? (m.winner_uid || (m.report_a === "empate" ? "empate" : "")) : m.report_a;
+      if (round.tipo === "top_cut" && result === "empate") throw new Error("O Top Cut não aceita empate; resolva a partida antes de avançar.");
       const a = scored.get(m.uid_a); const b = scored.get(m.uid_b);
       if (!a || !b) throw new Error("Participante da partida não encontrado.");
       if (round.tipo === "suico") {
-        if (m.report_a === "empate") { a.pontos += 1; b.pontos += 1; a.empates += 1; b.empates += 1; }
-        else if (m.report_a === m.uid_a) { a.pontos += 3; a.vitorias += 1; b.derrotas += 1; }
-        else if (m.report_a === m.uid_b) { b.pontos += 3; b.vitorias += 1; a.derrotas += 1; }
+        if (result === "empate") { a.pontos += 1; b.pontos += 1; a.empates += 1; b.empates += 1; }
+        else if (result === m.uid_a) { a.pontos += 3; a.vitorias += 1; b.derrotas += 1; }
+        else if (result === m.uid_b) { b.pontos += 3; b.vitorias += 1; a.derrotas += 1; }
         a.opponents = [...a.opponents, b.uid]; b.opponents = [...b.opponents, a.uid];
       }
     }
@@ -247,9 +250,8 @@ export default function DevCampeonatoROPage() {
         for (const p of current) batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "participantes", p.uid), {
           pontos: p.pontos, vitorias: p.vitorias, empates: p.empates, derrotas: p.derrotas, opponents: p.opponents,
         });
-        settled.matches.forEach((m) => batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", currentRound.id, "partidas", m.id), {
-          status: "confirmada", winner_uid: m.report_a, resolvedAt: Date.now(),
-        }));
+        settled.matches.forEach((m) => batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", currentRound.id, "partidas", m.id),
+          m.status === "encerrada_sem_resultado" ? { resolvedAt: Date.now() } : { status: "confirmada", winner_uid: m.winner_uid || (m.report_a === m.report_b ? m.report_a : null), resolvedAt: Date.now() }));
         batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", currentRound.id), { status: "finalizada", closedAt: Date.now() });
         await batch.commit();
       }
@@ -283,9 +285,8 @@ export default function DevCampeonatoROPage() {
         pontos: p.pontos, vitorias: p.vitorias, empates: p.empates, derrotas: p.derrotas, opponents: p.opponents,
         colocacao_suico: current.findIndex((x) => x.uid === p.uid) + 1,
       });
-      settled.matches.forEach((m) => batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", finalSwiss.id, "partidas", m.id), {
-        status: "confirmada", winner_uid: m.report_a, resolvedAt: Date.now(),
-      }));
+      settled.matches.forEach((m) => batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", finalSwiss.id, "partidas", m.id),
+          m.status === "encerrada_sem_resultado" ? { resolvedAt: Date.now() } : { status: "confirmada", winner_uid: m.winner_uid || (m.report_a === m.report_b ? m.report_a : null), resolvedAt: Date.now() }));
       batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", finalSwiss.id), { status: "finalizada", closedAt: Date.now() });
       batch.update(doc(db, "campeonatos_liga_ro", torneio.id), { cut_size: cutSize, status: "top_cut", rodada_cut: 1 });
       for (let i = 0; i < pairings.length; i++) {
@@ -294,7 +295,7 @@ export default function DevCampeonatoROPage() {
         batch.set(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", "topcut_1", "partidas", partidaId), {
           uid_a: pairing.a.uid, uid_b: pairing.b.uid, nome_a: pairing.a.nome, nome_b: pairing.b.nome,
           report_a: null, report_b: null, winner_uid: null, status: "agendada", ordem: i + 1,
-          seed_a: pairing.seedA, seed_b: pairing.seedB, tipo: "top_cut", createdAt: Date.now(),
+          seed_a: pairing.seedA, seed_b: pairing.seedB, tipo: "top_cut", createdAt: Date.now(), deadline_at_ms: Date.now() + WEEK_MS,
         });
       }
       batch.set(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", "topcut_1"), {
@@ -314,18 +315,24 @@ export default function DevCampeonatoROPage() {
       if (!round) throw new Error("Rodada do Top Cut não encontrada.");
       const snap = await getDocs(collection(db, "campeonatos_liga_ro", torneio.id, "rodadas", round.id, "partidas"));
       const matches = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Match[];
-      if (matches.some((m) => m.report_a !== m.report_b || !m.report_a || m.report_a === "empate")) {
+      if (matches.some((m) => m.status !== "encerrada_sem_resultado" && (m.status !== "confirmada" || !m.winner_uid || m.winner_uid === "empate"))) {
         throw new Error("Todas as partidas precisam de resultados iguais informados pelos dois jogadores.");
       }
-      const winners = matches.sort((a, b) => a.ordem - b.ordem).map((m) => ({
-        uid: m.report_a!, name: m.report_a === m.uid_a ? m.nome_a : m.nome_b,
-        seed: m.report_a === m.uid_a ? (m.seed_a || 0) : (m.seed_b || 0),
+      const winners = matches.filter((m) => m.status !== "encerrada_sem_resultado").sort((a, b) => a.ordem - b.ordem).map((m) => ({
+        uid: m.winner_uid!, name: m.winner_uid === m.uid_a ? m.nome_a : m.nome_b,
+        seed: m.winner_uid === m.uid_a ? (m.seed_a || 0) : (m.seed_b || 0),
       }));
       const batch = writeBatch(db);
       matches.forEach((m) => batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", round.id, "partidas", m.id), {
-        status: "confirmada", winner_uid: m.report_a, resolvedAt: Date.now(),
+        ...(m.status === "encerrada_sem_resultado" ? {} : { status: "confirmada", winner_uid: m.winner_uid || (m.report_a === m.report_b ? m.report_a : null), resolvedAt: Date.now() }),
       }));
       batch.update(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", round.id), { status: "finalizada", closedAt: Date.now() });
+      if (winners.length === 0) {
+        batch.update(doc(db, "campeonatos_liga_ro", torneio.id), { status: "finalizado_sem_campeao", finalizadoAt: Date.now(), motivo_finalizacao: "todas_as_partidas_sem_resultado" });
+        await batch.commit();
+        setMessage("Todas as partidas terminaram sem resultado válido. O torneio foi encerrado sem campeão.");
+        return;
+      }
       if (winners.length === 1) {
         batch.update(doc(db, "campeonatos_liga_ro", torneio.id), {
           status: "aguardando_trofeu", vencedor_uid: winners[0].uid, vencedor_nome: winners[0].name,
@@ -337,12 +344,18 @@ export default function DevCampeonatoROPage() {
       }
       const nextNumber = torneio.rodada_cut + 1;
       batch.update(doc(db, "campeonatos_liga_ro", torneio.id), { rodada_cut: nextNumber });
+      const nextBye = winners.length % 2 === 1 ? [...winners].sort((a, b) => a.seed - b.seed)[0] : null;
+      const pairableWinners = nextBye ? winners.filter((winner) => winner.uid !== nextBye.uid) : winners;
       const nextPairs = [];
-      for (let i = 0; i < winners.length; i += 2) nextPairs.push({ a: winners[i], b: winners[i + 1] });
+      for (let i = 0; i < pairableWinners.length; i += 2) nextPairs.push({ a: pairableWinners[i], b: pairableWinners[i + 1] });
+      if (nextBye) batch.set(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", `topcut_${nextNumber}`, "partidas", "bye"), {
+        uid_a: nextBye.uid, uid_b: "", nome_a: nextBye.name, nome_b: "Folga", report_a: nextBye.uid, report_b: nextBye.uid,
+        winner_uid: nextBye.uid, status: "confirmada", is_bye: true, ordem: 0, seed_a: nextBye.seed, tipo: "top_cut", createdAt: Date.now(), deadline_at_ms: Date.now() + WEEK_MS,
+      });
       nextPairs.forEach(({ a, b }, i) => batch.set(
         doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", `topcut_${nextNumber}`, "partidas", `partida_${String(i + 1).padStart(2, "0")}`),
         { uid_a: a.uid, uid_b: b.uid, nome_a: a.name, nome_b: b.name, report_a: null, report_b: null,
-          winner_uid: null, status: "agendada", ordem: i + 1, seed_a: a.seed, seed_b: b.seed, tipo: "top_cut", createdAt: Date.now() }
+          winner_uid: null, status: "agendada", ordem: i + 1, seed_a: a.seed, seed_b: b.seed, tipo: "top_cut", createdAt: Date.now(), deadline_at_ms: Date.now() + WEEK_MS }
       ));
       batch.set(doc(db, "campeonatos_liga_ro", torneio.id, "rodadas", `topcut_${nextNumber}`), {
         tipo: "top_cut", numero: nextNumber, status: "aberta", createdAt: Date.now(),
