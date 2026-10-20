@@ -7,10 +7,18 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 export { onDesafioResultadosWrite } from "./desafios";
 export { adminFinalizeElite4, setElite4Participation } from "./elite4";
 export {
+  createElite4Challenge,
+  acceptElite4Challenge,
+  reportElite4ChallengeResult,
+  claimElite4Walkover,
+  adminResolveElite4Challenge,
+} from "./elite4Challenges";
+export {
   onGymChallengeNotification,
   onGymDisputeBattleNotification,
   onTournamentBattleNotification,
   onBadgeEarnedNotification,
+  onElite4ChallengeNotification,
 } from "./notifications";
 import { admin, db, FieldValue } from "./adminSdk";
 import { podePontuarGinasio } from "./elite4Plan";

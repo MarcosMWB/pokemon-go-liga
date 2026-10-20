@@ -512,6 +512,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Disputas de pontuação da Elite 4: leitura autenticada; alterações somente pelas callable functions.
+    match /desafios_elite4/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
     // Autoriza collectionGroup(participantes) apenas quando o filtro é do próprio usuário.
     match /{path=**}/participantes/{uid} {
       allow read: if isSignedIn() &&

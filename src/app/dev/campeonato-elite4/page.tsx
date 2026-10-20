@@ -34,6 +34,7 @@ type Participante = {
   pontos_participacao: number;
   pontos_vitoria: number;
   pontos_admin: number;
+  pontos_desafios: number;
   tipo_participante: "lider" | "elite4";
   optou_participar: boolean;
   elite4_pos?: number;
@@ -44,6 +45,7 @@ type Participante = {
 type Elite4 = { id: string; liga: string; pos: 1 | 2 | 3 | 4; uid: string; nome?: string; tipo: string; ginasio_origem_id?: string; ginasio_origem_nome?: string };
 type ResultadoPendente = { campeonato_id: string; top4: Array<{ uid: string; nome?: string; pontos?: number }> };
 type PontoAdmin = { id: string; participante_nome: string; quantidade: number; motivo: string; createdAt: number };
+type DesafioContestado = { id: string; challenger_uid: string; challenger_nome: string; target_uid: string; target_nome: string; reports?: Record<string, string> };
 
 function ordenarParticipantes(a: Participante, b: Participante) {
   return (b.pontos || 0) - (a.pontos || 0) ||
@@ -70,6 +72,7 @@ export default function DevCampeonatoElite4() {
   const [historicoPontos, setHistoricoPontos] = useState<PontoAdmin[]>([]);
   const [resultadoPendente, setResultadoPendente] = useState<ResultadoPendente | null>(null);
   const [selecionados, setSelecionados] = useState<string[] | null>(null);
+  const [desafiosContestados, setDesafiosContestados] = useState<DesafioContestado[]>([]);
 
   /** Auth + superusers */
   useEffect(() => {
@@ -130,6 +133,23 @@ export default function DevCampeonatoElite4() {
     return () => { unsubCamp(); unsubElite(); };
   }, [isAdmin, ligaSel]);
 
+  const campeonatoIdAtual = campeonato?.id;
+  useEffect(() => {
+    if (!isAdmin || !campeonatoIdAtual) { setDesafiosContestados([]); return; }
+    return onSnapshot(query(collection(db, "desafios_elite4"), where("campeonato_id", "==", campeonatoIdAtual), where("status", "==", "contestado")), (snap) => {
+      setDesafiosContestados(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DesafioContestado)));
+    });
+  }, [isAdmin, campeonatoIdAtual]);
+
+  async function resolverDesafio(desafio: DesafioContestado, vencedorUid: string) {
+    setSalvando(true); setMsg("");
+    try {
+      await httpsCallable(getFunctions(undefined, "southamerica-east1"), "adminResolveElite4Challenge")({ challengeId: desafio.id, winnerUid: vencedorUid });
+      setMsg("Resultado resolvido e pontos transferidos para o vencedor.");
+    } catch (error: any) { setMsg(error?.message || "Não foi possível resolver o desafio."); }
+    finally { setSalvando(false); }
+  }
+
   useEffect(() => { setSelecionados(null); }, [campeonato?.id, ligaSel]);
 
   // Resultados antigos podem ter sido arquivados sem executar a promoção.
@@ -160,6 +180,7 @@ export default function DevCampeonatoElite4() {
           pontos_participacao: x.pontos_participacao ?? 0,
           pontos_vitoria: x.pontos_vitoria ?? 0,
           pontos_admin: x.pontos_admin ?? 0,
+          pontos_desafios: x.pontos_desafios ?? 0,
           tipo_participante: x.tipo_participante === "elite4" ? "elite4" : "lider",
           optou_participar: x.optou_participar === true,
           ginasio_tipo: x.ginasio_tipo || "",
@@ -238,7 +259,7 @@ export default function DevCampeonatoElite4() {
         ginasio_id: "", ginasio_nome: "", ginasio_tipo: dados.ginasio_tipo || "", tipo_participante: dados.tipo_participante,
         optou_participar: dados.optou_participar === true,
         ...(dados.elite4_pos ? { elite4_pos: dados.elite4_pos } : {}),
-        pontos: 0, pontos_participacao: 0, pontos_vitoria: 0, pontos_admin: 0,
+        pontos: 0, pontos_participacao: 0, pontos_vitoria: 0, pontos_admin: 0, pontos_desafios: 0,
         createdAt: Date.now(),
       });
       adicionados++;
@@ -450,6 +471,19 @@ export default function DevCampeonatoElite4() {
         </div>
       </div>
 
+      {desafiosContestados.length > 0 && (
+        <section className="rounded bg-amber-50 p-4 shadow">
+          <h2 className="mb-2 text-lg font-semibold text-amber-950">Resultados contestados de desafios</h2>
+          <p className="mb-3 text-sm text-amber-900">Escolha o resultado confirmado após revisar o relato dos participantes. A confirmação transfere todos os pontos do perdedor.</p>
+          <ul className="space-y-3">{desafiosContestados.map((desafio) => (
+            <li key={desafio.id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-amber-200 bg-white p-3">
+              <span className="text-sm"><b>{desafio.challenger_nome}</b> × <b>{desafio.target_nome}</b><span className="block text-xs text-slate-600">{desafio.challenger_nome} declarou vitória de {desafio.reports?.[desafio.challenger_uid] === desafio.challenger_uid ? desafio.challenger_nome : desafio.target_nome}; {desafio.target_nome} declarou vitória de {desafio.reports?.[desafio.target_uid] === desafio.challenger_uid ? desafio.challenger_nome : desafio.target_nome}.</span></span>
+              <span className="flex gap-2"><button disabled={salvando} onClick={() => resolverDesafio(desafio, desafio.challenger_uid)} className="rounded bg-amber-800 px-3 py-2 text-sm text-white disabled:opacity-50">Vitória de {desafio.challenger_nome}</button><button disabled={salvando} onClick={() => resolverDesafio(desafio, desafio.target_uid)} className="rounded bg-amber-800 px-3 py-2 text-sm text-white disabled:opacity-50">Vitória de {desafio.target_nome}</button></span>
+            </li>
+          ))}</ul>
+        </section>
+      )}
+
       {/* Elite 4 atual */}
       <div className="bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">ELITE 4 atual — {ligaSel || "—"}</h2>
@@ -483,6 +517,7 @@ export default function DevCampeonatoElite4() {
                     <th className="py-2 pr-3">Pontos de batalha</th>
                     <th className="py-2 pr-3">Bônus vitória</th>
                     <th className="py-2 pr-3">Admin</th>
+                    <th className="py-2 pr-3">Desafios</th>
                     <th className="py-2 pr-3">Total</th>
                     <th className="py-2 pr-3">Atribuir pontos</th>
                   </tr>
@@ -499,6 +534,7 @@ export default function DevCampeonatoElite4() {
                         <td className="py-2 pr-3">{p.pontos_participacao}</td>
                         <td className="py-2 pr-3">{p.pontos_vitoria}</td>
                         <td className="py-2 pr-3">{p.pontos_admin}</td>
+                        <td className="py-2 pr-3">{p.pontos_desafios}</td>
                         <td className="py-2 pr-3 font-semibold">{p.pontos}</td>
                         <td className="min-w-64 py-2 pr-3">
                           <div className="flex gap-1">

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -11,11 +11,18 @@ Object.defineProperty(exports, "onDesafioResultadosWrite", { enumerable: true, g
 var elite4_1 = require("./elite4");
 Object.defineProperty(exports, "adminFinalizeElite4", { enumerable: true, get: function () { return elite4_1.adminFinalizeElite4; } });
 Object.defineProperty(exports, "setElite4Participation", { enumerable: true, get: function () { return elite4_1.setElite4Participation; } });
+var elite4Challenges_1 = require("./elite4Challenges");
+Object.defineProperty(exports, "createElite4Challenge", { enumerable: true, get: function () { return elite4Challenges_1.createElite4Challenge; } });
+Object.defineProperty(exports, "acceptElite4Challenge", { enumerable: true, get: function () { return elite4Challenges_1.acceptElite4Challenge; } });
+Object.defineProperty(exports, "reportElite4ChallengeResult", { enumerable: true, get: function () { return elite4Challenges_1.reportElite4ChallengeResult; } });
+Object.defineProperty(exports, "claimElite4Walkover", { enumerable: true, get: function () { return elite4Challenges_1.claimElite4Walkover; } });
+Object.defineProperty(exports, "adminResolveElite4Challenge", { enumerable: true, get: function () { return elite4Challenges_1.adminResolveElite4Challenge; } });
 var notifications_1 = require("./notifications");
 Object.defineProperty(exports, "onGymChallengeNotification", { enumerable: true, get: function () { return notifications_1.onGymChallengeNotification; } });
 Object.defineProperty(exports, "onGymDisputeBattleNotification", { enumerable: true, get: function () { return notifications_1.onGymDisputeBattleNotification; } });
 Object.defineProperty(exports, "onTournamentBattleNotification", { enumerable: true, get: function () { return notifications_1.onTournamentBattleNotification; } });
 Object.defineProperty(exports, "onBadgeEarnedNotification", { enumerable: true, get: function () { return notifications_1.onBadgeEarnedNotification; } });
+Object.defineProperty(exports, "onElite4ChallengeNotification", { enumerable: true, get: function () { return notifications_1.onElite4ChallengeNotification; } });
 const adminSdk_1 = require("./adminSdk");
 const elite4Plan_1 = require("./elite4Plan");
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";

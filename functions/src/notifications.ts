@@ -44,6 +44,19 @@ export const onGymChallengeNotification = onDocumentCreated(
   },
 );
 
+export const onElite4ChallengeNotification = onDocumentCreated(
+  { document: "desafios_elite4/{challengeId}", region: REGION },
+  async (event) => {
+    const challenge = event.data?.data();
+    if (!challenge || challenge.status !== "pendente") return;
+    await createNotification(
+      String(challenge.target_uid || ""), event.id, "desafio_elite4", "Você recebeu um desafio da Elite 4",
+      `${challenge.challenger_nome || "Um treinador"} desafiou você na liga ${challenge.liga || "Pokémon GO"}. Você tem uma semana para aceitar e combinar a batalha.`,
+      "/elite4/placar?liga=" + encodeURIComponent(String(challenge.liga || "Great")),
+    );
+  },
+);
+
 export const onGymDisputeBattleNotification = onDocumentUpdated(
   { document: "disputas_ginasio/{disputeId}", region: REGION },
   async (event) => {

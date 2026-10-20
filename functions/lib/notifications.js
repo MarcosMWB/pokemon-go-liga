@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = void 0;
+exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onElite4ChallengeNotification = exports.onGymChallengeNotification = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const adminSdk_1 = require("./adminSdk");
 const REGION = "southamerica-east1";
@@ -32,6 +32,12 @@ exports.onGymChallengeNotification = (0, firestore_1.onDocumentCreated)({ docume
     const gymName = gymSnap?.data()?.nome || "um ginásio";
     const league = challenge.liga ? `, na liga ${challenge.liga}` : "";
     await createNotification(String(challenge.lider_uid), event.id, "desafio_ginasio", "Você recebeu um desafio de ginásio", `Você recebeu um novo desafio para ${gymName}${league}. Acesse o site para ver os detalhes e combinar a batalha.`, challenge.ginasio_id ? `/ginasios/${encodeURIComponent(challenge.ginasio_id)}` : "/ginasios");
+});
+exports.onElite4ChallengeNotification = (0, firestore_1.onDocumentCreated)({ document: "desafios_elite4/{challengeId}", region: REGION }, async (event) => {
+    const challenge = event.data?.data();
+    if (!challenge || challenge.status !== "pendente")
+        return;
+    await createNotification(String(challenge.target_uid || ""), event.id, "desafio_elite4", "Você recebeu um desafio da Elite 4", `${challenge.challenger_nome || "Um treinador"} desafiou você na liga ${challenge.liga || "Pokémon GO"}. Você tem uma semana para aceitar e combinar a batalha.`, "/elite4/placar?liga=" + encodeURIComponent(String(challenge.liga || "Great")));
 });
 exports.onGymDisputeBattleNotification = (0, firestore_1.onDocumentUpdated)({ document: "disputas_ginasio/{disputeId}", region: REGION }, async (event) => {
     const before = event.data?.before.data();

@@ -58,6 +58,10 @@ export async function aplicarPromocaoElite4(campeonatoId: string, adminUid: stri
     if (!camp.exists) throw new HttpsError("not-found", "Disputa não encontrada.");
     if (camp.get("promocao_aplicada") === true) return { ok: true, jaAplicada: true, top4: camp.get("elite4_definida") || [], ginasiosLiberados: camp.get("ginasios_liberados") || [], ginasiosTransferidos: camp.get("ginasios_transferidos") || [] };
     if (!["aberto", "fechado"].includes(camp.get("status"))) throw new HttpsError("failed-precondition", "Estado da disputa inválido.");
+    const desafiosEliteAbertos = await tx.get(db.collection("desafios_elite4")
+      .where("campeonato_id", "==", campeonatoId)
+      .where("status", "in", ["pendente", "aceito", "resultado_parcial", "contestado"]));
+    if (!desafiosEliteAbertos.empty) throw new HttpsError("failed-precondition", "Resolva ou aguarde o encerramento de todos os desafios da Elite 4 antes de finalizar a temporada.");
     const liga = String(camp.get("liga") || "");
     if (!liga) throw new HttpsError("failed-precondition", "A disputa não tem liga definida.");
     const [partSnap, resultSnap, atuais, mandatos, gyms, temporadas, config, outros] = await Promise.all([
