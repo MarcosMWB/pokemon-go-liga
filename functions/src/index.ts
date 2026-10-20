@@ -20,6 +20,7 @@ export {
   onBadgeEarnedNotification,
   onElite4ChallengeNotification,
 } from "./notifications";
+export { openGreatPlateauRegistrationsOnSeasonStart, registerGreatPlateauParticipant } from "./greatPlateau";
 import { admin, db, FieldValue } from "./adminSdk";
 import { podePontuarGinasio } from "./elite4Plan";
 

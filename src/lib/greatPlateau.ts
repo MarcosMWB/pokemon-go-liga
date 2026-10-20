@@ -26,12 +26,14 @@ export function swissPairings(items: GPParticipant[], round: number): {
     pool = pool.filter((p) => p.uid !== bye!.uid);
   }
 
-  // Embaralha apenas a primeira rodada; depois o pareamento respeita a pontuação suíça.
+  // A primeira rodada fica previsível durante as inscrições: metade superior
+  // contra metade inferior. Isso permite mostrar uma prévia estável do chaveamento.
   if (round === 1) {
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
+    const half = Math.ceil(pool.length / 2);
+    const upper = pool.slice(0, half);
+    const lower = pool.slice(half);
+    const firstRound = upper.map((a, index) => ({ a, b: lower[index] })).filter((pair): pair is GPPairing => Boolean(pair.b));
+    return { pairings: firstRound, bye };
   }
 
   const pairings: GPPairing[] = [];

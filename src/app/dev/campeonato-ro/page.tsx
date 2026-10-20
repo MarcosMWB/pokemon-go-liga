@@ -6,15 +6,14 @@ import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { rankParticipants, swissPairings, topCutOpeningOrder, topCutSize, type GPParticipant } from "@/lib/greatPlateau";
 import {
-  addDoc, collection, doc, getDoc, getDocs, onSnapshot, query,
-  setDoc, updateDoc, where, writeBatch,
+  collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 
 type Tournament = {
   id: string; temporada_id: string; temporada_nome: string; liga: string; createdAt?: number; participantes_count?: number;
-  status: "suico" | "cut_pendente" | "top_cut" | "aguardando_trofeu" | "finalizado";
+  status: "inscricoes" | "suico" | "cut_pendente" | "top_cut" | "aguardando_trofeu" | "finalizado";
   rodadas_suico: number; rodadas_suico_criadas: number; rodada_cut: number;
-  cut_size: number; vencedor_uid?: string; vencedor_nome?: string;
+  cut_size: number; vencedor_uid?: string; vencedor_nome?: string; inicio_batalhas_em?: number;
 };
 type Participant = GPParticipant & { vitorias: number; empates: number; derrotas: number; insignias_count: number };
 type Match = {
@@ -39,6 +38,8 @@ export default function DevCampeonatoROPage() {
   const [partidas, setPartidas] = useState<Match[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [dataInicio, setDataInicio] = useState("");
+  const [agora, setAgora] = useState(() => Date.now());
 
   const torneio = torneios.find((t) => t.id === torneioId) || null;
   const rodadaAtualId = torneio?.status === "suico"
@@ -46,6 +47,18 @@ export default function DevCampeonatoROPage() {
     : torneio?.status === "top_cut" ? `topcut_${torneio.rodada_cut}` : "";
   const rodadaAtual = rodadas.find((r) => r.id === rodadaAtualId) || null;
   const ranking = useMemo(() => rankParticipants(participantes), [participantes]);
+  const chaveamentoPrevio = useMemo(() => swissPairings(participantes, 1), [participantes]);
+
+  useEffect(() => {
+    if (!torneio?.inicio_batalhas_em) { setDataInicio(""); return; }
+    const local = new Date(torneio.inicio_batalhas_em - new Date().getTimezoneOffset() * 60000);
+    setDataInicio(local.toISOString().slice(0, 16));
+  }, [torneio?.id, torneio?.inicio_batalhas_em]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setAgora(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => auth.onAuthStateChanged(async (user: User | null) => {
     if (!user) { setIsAdmin(false); router.replace("/login"); return; }
@@ -93,60 +106,78 @@ export default function DevCampeonatoROPage() {
     return () => unsub();
   }, [isAdmin, torneioId, rodadaAtualId]);
 
-  async function iniciarTorneio() {
-    if (!temporada) { setMessage("Marque uma temporada como ativa antes de iniciar o campeonato."); return; }
+  function idDoTorneio(seasonId: string, league: string) {
+    return `${seasonId}__${encodeURIComponent(league).replaceAll("%", "_")}`;
+  }
+
+  async function abrirInscricoes() {
+    if (!temporada) { setMessage("Marque uma temporada como ativa antes de abrir as inscrições."); return; }
     setBusy(true); setMessage("");
     try {
-      const badgeSnap = await getDocs(query(collection(db, "insignias"), where("temporada_id", "==", temporada.id)));
-      const counts = new Map<string, Set<string>>();
-      for (const d of badgeSnap.docs) {
-        const b = d.data();
-        if (!b.usuario_uid || !b.ginasio_id || b.tipo === "trofeu_great_plateau" || b.ginasio_id === "santo-antonio") continue;
-        if (!counts.has(b.usuario_uid)) counts.set(b.usuario_uid, new Set());
-        counts.get(b.usuario_uid)!.add(b.ginasio_id);
-      }
-      const eligible = [...counts.entries()].filter(([, gyms]) => gyms.size > 8)
-        .map(([uid, gyms]) => ({ uid, badges: gyms.size }));
-      if (eligible.length < 2) {
-        setMessage(`Só ${eligible.length} jogador(es) têm mais de 8 insígnias nesta temporada; são necessários pelo menos 2.`);
+      const id = idDoTorneio(temporada.id, liga);
+      const ref = doc(db, "campeonatos_liga_ro", id);
+      const existing = await getDoc(ref);
+      if (existing.exists()) {
+        setTorneioId(id);
+        setMessage("As inscrições para esta temporada já estão abertas.");
         return;
       }
-
-      const users = await Promise.all(eligible.map(async (p) => {
-        const snap = await getDoc(doc(db, "usuarios", p.uid));
-        const data = snap.exists() ? snap.data() : {};
-        return { ...p, nome: data.nome || data.nick || p.uid };
-      }));
-      users.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-      const created = await addDoc(collection(db, "campeonatos_liga_ro"), {
-        nome: `Liga RO — ${temporada.nome}`,
-        temporada_id: temporada.id,
-        temporada_nome: temporada.nome,
-        liga,
-        status: "suico",
-        formato: "suico_top8_md3",
-        rodadas_suico: users.length >= 16 ? 5 : 4,
-        rodadas_suico_criadas: 0,
-        rodada_cut: 0,
-        cut_size: 0,
-        participantes_count: users.length,
-        regra_insignias: "mais_de_8",
-        createdAt: Date.now(),
-        createdBy: auth.currentUser?.uid || "",
+      await runTransaction(db, async (transaction) => {
+        const current = await transaction.get(ref);
+        if (current.exists()) return;
+        transaction.set(ref, {
+          nome: `Liga RO — ${temporada.nome}`,
+          temporada_id: temporada.id,
+          temporada_nome: temporada.nome,
+          liga,
+          status: "inscricoes",
+          formato: "suico_top8_md3",
+          rodadas_suico: 4,
+          rodadas_suico_criadas: 0,
+          rodada_cut: 0,
+          cut_size: 0,
+          participantes_count: 0,
+          regra_insignias: "minimo_8",
+          createdAt: Date.now(),
+          createdBy: auth.currentUser?.uid || "",
+          inscricoes_abertas_em: Date.now(),
+        });
       });
-      for (let offset = 0; offset < users.length; offset += 450) {
-        const batch = writeBatch(db);
-        users.slice(offset, offset + 450).forEach((p, index) => batch.set(
-          doc(db, "campeonatos_liga_ro", created.id, "participantes", p.uid),
-          { usuario_uid: p.uid, nome: p.nome, insignias_count: p.badges, pontos: 0,
-            vitorias: 0, empates: 0, derrotas: 0, seed: offset + index + 1,
-            opponents: [], byes: 0, createdAt: Date.now() }
-        ));
-        await batch.commit();
-      }
-      setTorneioId(created.id);
-      setMessage(`${users.length} classificados. Campeonato criado com ${users.length >= 16 ? 5 : 4} rodadas suíças e Top Cut.`);
+      setTorneioId(id);
+      setMessage("Inscrições abertas. Jogadores com pelo menos 8 insígnias válidas da temporada podem se cadastrar.");
     } catch (e) { setMessage(`Não foi possível iniciar: ${errorText(e)}`); }
+    finally { setBusy(false); }
+  }
+
+  async function salvarDataInicio() {
+    if (!torneio || !dataInicio) { setMessage("Escolha a data e o horário das batalhas."); return; }
+    const timestamp = new Date(dataInicio).getTime();
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) { setMessage("A data de início precisa estar no futuro."); return; }
+    setBusy(true); setMessage("");
+    try {
+      await updateDoc(doc(db, "campeonatos_liga_ro", torneio.id), { inicio_batalhas_em: timestamp });
+      setMessage("Data de início das batalhas salva.");
+    } catch (e) { setMessage(errorText(e)); }
+    finally { setBusy(false); }
+  }
+
+  async function iniciarBatalhas() {
+    if (!torneio || torneio.status !== "inscricoes") return;
+    if (participantes.length < 2) { setMessage("São necessários pelo menos 2 inscritos para iniciar."); return; }
+    const startAt = torneio.inicio_batalhas_em || 0;
+    if (!startAt || Date.now() < startAt || Date.now() > startAt + 7 * 86400000) {
+      setMessage("As batalhas só podem começar na semana definida para o torneio."); return;
+    }
+    setBusy(true); setMessage("");
+    try {
+      const rounds = participantes.length >= 16 ? 5 : 4;
+      const result = swissPairings(participantes, 1);
+      await createRound("suico_1", "suico", 1, result.pairings, result.bye, participantes);
+      await updateDoc(doc(db, "campeonatos_liga_ro", torneio.id), {
+        status: "suico", rodadas_suico: rounds, inscricoes_encerradas_em: Date.now(),
+      });
+      setMessage(`Inscrições encerradas. Rodada 1 iniciada com ${result.pairings.length} partida(s).`);
+    } catch (e) { setMessage(errorText(e)); }
     finally { setBusy(false); }
   }
 
@@ -175,7 +206,7 @@ export default function DevCampeonatoROPage() {
       });
     }
     batch.update(doc(db, "campeonatos_liga_ro", torneio.id), type === "suico"
-      ? { rodadas_suico_criadas: number }
+      ? { rodadas_suico_criadas: number, status: "suico" }
       : { rodada_cut: number, cut_size: torneio.cut_size || pairings.length * 2, status: "top_cut" });
     await batch.commit();
   }
@@ -358,14 +389,14 @@ export default function DevCampeonatoROPage() {
   return <main className="max-w-6xl mx-auto p-6 space-y-6">
     <header className="flex items-center justify-between gap-4">
       <div><h1 className="text-2xl font-bold">Campeonato Great Plateau — Liga RO</h1>
-        <p className="text-sm text-gray-600">Classificação automática por mais de 8 insígnias da temporada, suíço e Top Cut.</p></div>
+        <p className="text-sm text-gray-600">Inscrições para quem tem pelo menos 8 insígnias válidas da temporada, com chaveamento atualizado durante as inscrições.</p></div>
       <button onClick={() => router.push("/dev")} className="text-sm text-blue-700 underline">Painel admin</button>
     </header>
     {message && <p role="status" className="rounded border border-blue-200 bg-blue-50 p-3 text-sm">{message}</p>}
 
     <section className="rounded border bg-white p-4 space-y-3">
-      <h2 className="font-semibold">Iniciar campeonato da temporada</h2>
-      <p className="text-sm text-gray-600">No início, todos os jogadores com 9 ou mais insígnias distintas da temporada ativa entram automaticamente.</p>
+      <h2 className="font-semibold">Inscrições da temporada</h2>
+      <p className="text-sm text-gray-600">O campeonato abre para inscrições quando a temporada começa. Cada jogador elegível precisa se cadastrar na página pública; a classificação exige pelo menos 8 insígnias válidas e distintas da temporada.</p>
       <div className="flex flex-wrap items-end gap-3">
         <label className="text-sm">Liga de batalha
           <select value={liga} onChange={(e) => setLiga(e.target.value)} className="ml-2 rounded border px-2 py-1">
@@ -373,10 +404,10 @@ export default function DevCampeonatoROPage() {
           </select>
         </label>
         <span className="text-sm text-gray-600">Temporada ativa: {temporada?.nome || "nenhuma"}</span>
-        <button onClick={iniciarTorneio} disabled={busy || !temporada || Boolean(torneios.find((t) => t.temporada_id === temporada.id && t.status !== "finalizado"))}
-          className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? "Processando..." : "Iniciar e classificar jogadores"}</button>
+        <button onClick={abrirInscricoes} disabled={busy || !temporada || Boolean(torneios.find((t) => t.temporada_id === temporada.id && t.liga === liga && t.status !== "finalizado"))}
+          className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? "Processando..." : "Abrir inscrições"}</button>
       </div>
-      {torneios.find((t) => temporada && t.temporada_id === temporada.id && t.status !== "finalizado") &&
+      {torneios.find((t) => temporada && t.temporada_id === temporada.id && t.liga === liga && t.status !== "finalizado") &&
         <p className="text-xs text-amber-700">Já existe um campeonato ativo nesta temporada. Selecione-o abaixo para administrar.</p>}
     </section>
 
@@ -390,11 +421,23 @@ export default function DevCampeonatoROPage() {
       {torneio ? <>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="rounded bg-slate-100 px-2 py-1">{torneio.status.replaceAll("_", " ").toUpperCase()}</span>
-          <span>{torneio.temporada_nome}</span><span>•</span><span>{torneio.participantes_count} classificados</span>
+          <span>{torneio.temporada_nome}</span><span>•</span><span>{participantes.length} inscritos</span>
           <span>•</span><span>{torneio.liga}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          {torneio.rodadas_suico_criadas === 0 && torneio.status === "suico" && <button disabled={busy || !participantes.length} onClick={iniciarProximaSuica} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-50">Sortear rodada 1</button>}
+          {torneio.status === "inscricoes" && <div className="w-full rounded border bg-slate-50 p-3 space-y-3">
+            <p className="text-sm">As inscrições seguem abertas. Defina a data da semana do torneio; as batalhas só poderão começar nesse período.</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-sm">Início das batalhas
+                <input type="datetime-local" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="ml-2 rounded border px-2 py-1" />
+              </label>
+              <button disabled={busy || !dataInicio} onClick={salvarDataInicio} className="rounded border px-3 py-2 text-sm disabled:opacity-50">Salvar data</button>
+              <button disabled={busy || participantes.length < 2 || !torneio.inicio_batalhas_em || agora < torneio.inicio_batalhas_em || agora > torneio.inicio_batalhas_em + 7 * 86400000} onClick={iniciarBatalhas} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-50">Encerrar inscrições e iniciar batalhas</button>
+            </div>
+            {torneio.inicio_batalhas_em && <p className="text-xs text-gray-600">Data programada: {new Date(torneio.inicio_batalhas_em).toLocaleString("pt-BR")}</p>}
+            {participantes.length < 2 && <p className="text-xs text-amber-700">São necessários pelo menos 2 inscritos para iniciar as batalhas.</p>}
+          </div>}
+          {torneio.status === "suico" && torneio.rodadas_suico_criadas === 0 && <button disabled={busy || !participantes.length} onClick={iniciarProximaSuica} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-50">Sortear rodada 1</button>}
           {canNextSwiss && torneio.rodadas_suico_criadas > 0 && <button disabled={busy} onClick={iniciarProximaSuica} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-50">Confirmar resultados e sortear próxima suíça</button>}
           {canStartCut && <button disabled={busy} onClick={iniciarTopCut} className="rounded bg-purple-700 px-3 py-2 text-sm text-white disabled:opacity-50">Fechar suíço e gerar Top Cut</button>}
           {canAdvanceCut && <button disabled={busy} onClick={avançarTopCut} className="rounded bg-purple-700 px-3 py-2 text-sm text-white disabled:opacity-50">Confirmar fase e avançar Top Cut</button>}
@@ -405,6 +448,12 @@ export default function DevCampeonatoROPage() {
           <ul className="mt-2 divide-y text-sm">{partidas.map((m) => <li key={m.id} className="py-2 flex flex-wrap justify-between gap-2">
             <span>{m.nome_a} × {m.nome_b}</span><span>{m.id === "bye" ? "Folga (+3 pontos)" : m.report_a === m.report_b && m.report_a ? `Resultado confirmado: ${m.report_a === "empate" ? "empate" : m.report_a === m.uid_a ? m.nome_a : m.nome_b}` : m.report_a && m.report_b ? "Divergência: admin precisa revisar" : "Aguardando os dois jogadores"}</span>
           </li>)}</ul></div>}
+        {torneio.status === "inscricoes" && participantes.length > 0 && <div className="rounded border border-blue-200 bg-blue-50 p-4">
+          <h3 className="font-medium">Prévia do chaveamento inicial</h3>
+          <p className="mt-1 text-xs text-gray-600">Atualizada automaticamente a cada inscrição. Será confirmada quando as batalhas começarem.</p>
+          <ol className="mt-2 grid gap-1 text-sm sm:grid-cols-2">{chaveamentoPrevio.pairings.map(({ a, b }) => <li key={`${a.uid}-${b.uid}`} className="rounded bg-white px-3 py-2">{a.nome} × {b.nome}</li>)}</ol>
+          {chaveamentoPrevio.bye && <p className="mt-2 text-sm">Folga prevista: {chaveamentoPrevio.bye.nome}</p>}
+        </div>}
         {active && <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="py-2">#</th><th>Jogador</th><th>Insígnias</th><th>Pontos</th><th>V-E-D</th></tr></thead><tbody>
           {ranking.map((p, i) => <tr key={p.uid} className="border-b"><td className="py-2">{i + 1}</td><td>{p.nome}</td><td>{p.insignias_count}</td><td>{p.pontos}</td><td>{p.vitorias}-{p.empates}-{p.derrotas}</td></tr>)}
         </tbody></table></div>}

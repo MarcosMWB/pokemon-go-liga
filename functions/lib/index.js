@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.processExpiredGymChallenges = exports.onVitoriaDeclaradaPeloDesafiante = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.processExpiredGymChallenges = exports.onVitoriaDeclaradaPeloDesafiante = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.registerGreatPlateauParticipant = exports.openGreatPlateauRegistrationsOnSeasonStart = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -23,6 +23,9 @@ Object.defineProperty(exports, "onGymDisputeBattleNotification", { enumerable: t
 Object.defineProperty(exports, "onTournamentBattleNotification", { enumerable: true, get: function () { return notifications_1.onTournamentBattleNotification; } });
 Object.defineProperty(exports, "onBadgeEarnedNotification", { enumerable: true, get: function () { return notifications_1.onBadgeEarnedNotification; } });
 Object.defineProperty(exports, "onElite4ChallengeNotification", { enumerable: true, get: function () { return notifications_1.onElite4ChallengeNotification; } });
+var greatPlateau_1 = require("./greatPlateau");
+Object.defineProperty(exports, "openGreatPlateauRegistrationsOnSeasonStart", { enumerable: true, get: function () { return greatPlateau_1.openGreatPlateauRegistrationsOnSeasonStart; } });
+Object.defineProperty(exports, "registerGreatPlateauParticipant", { enumerable: true, get: function () { return greatPlateau_1.registerGreatPlateauParticipant; } });
 const adminSdk_1 = require("./adminSdk");
 const elite4Plan_1 = require("./elite4Plan");
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";

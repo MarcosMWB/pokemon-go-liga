@@ -20,7 +20,7 @@ type Desafio = {
   disputa_id?: string;
   ginasio_id?: string;
   liga?: string;
-  status?: "pendente" | "conflito" | "concluido";
+  status?: "pendente" | "conflito" | "concluido" | "encerrado_sem_resultado";
   lider_uid?: string;
   desafiante_uid?: string;
   createdAt?: number;
@@ -117,7 +117,10 @@ export default function DevDesafiosPage() {
   // filtro aplicado
   const filtered = useMemo(() => {
     return desafios.filter((d) => {
-      if (statusSel === "abertos" && (d.status === "concluido")) return false;
+      if (
+        statusSel === "abertos" &&
+        (d.status === "concluido" || d.status === "encerrado_sem_resultado")
+      ) return false;
       if (ligaSel && d.liga && d.liga !== ligaSel) return false;
       if (ligaSel && !d.liga) return false; // quando filtro por liga, exige liga definida
       return true;
