@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Evita que o servidor `next dev` mantenha arquivos abertos durante `next build` no Windows.
+  // A Vercel e os builds locais continuam usando o diretório padrão `.next`.
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   images: {
     remotePatterns: [
       // GitHub raw (loja)
