@@ -274,7 +274,7 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         });
     });
 });
-/** A vitória declarada pelo desafiante encerra o desafio sem exigir resposta do líder. */
+/** A declaração isolada do desafiante nunca encerra o desafio antes do prazo. */
 exports.onVitoriaDeclaradaPeloDesafiante = (0, firestore_1.onDocumentWritten)({ document: "desafios_ginasio/{desafioId}", region: "southamerica-east1" }, async (event) => {
     const before = event.data?.before?.data();
     const after = event.data?.after?.data();
@@ -288,17 +288,33 @@ exports.onVitoriaDeclaradaPeloDesafiante = (0, firestore_1.onDocumentWritten)({ 
         if (!snap.exists || snap.get("status") !== "pendente" || snap.get("disputa_id") || snap.get("resultado_desafiante") !== "desafiante")
             return;
         const createdAtMs = toMillisAny(snap.get("server_created_at_ms")) ?? toMillisAny(snap.createTime);
-        if (!createdAtMs || Date.now() - createdAtMs > GYM_CHALLENGE_RESPONSE_MS)
+        if (!createdAtMs)
             return;
+        const deadlinePassed = Date.now() - createdAtMs >= GYM_CHALLENGE_RESPONSE_MS;
         const liderReportou = snap.get("resultado_lider");
-        if (liderReportou === "lider") {
+        const desafianteReportou = snap.get("resultado_desafiante");
+        // Se ambos declararam resultados diferentes, encerra como divergência.
+        if (liderReportou && desafianteReportou && liderReportou !== desafianteReportou) {
             tx.update(ref, { status: "conflito", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(), encerramento_motivo: "relatos_divergentes" });
             return;
         }
+        // Antes de uma semana, só um resultado concordante dos dois pode concluir.
+        if (liderReportou && desafianteReportou && liderReportou === desafianteReportou) {
+            tx.update(ref, {
+                status: "concluido", vencedor: desafianteReportou,
+                vencedor_uid: desafianteReportou === "lider" ? snap.get("lider_uid") : snap.get("desafiante_uid"),
+                fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                encerramento_motivo: "resultado_concordante",
+            });
+            return;
+        }
+        // Uma declaração de vitória unilateral só vale como W.O. depois de sete dias.
+        if (!deadlinePassed || desafianteReportou !== "desafiante" || liderReportou)
+            return;
         tx.update(ref, {
             status: "concluido", vencedor: "desafiante", vencedor_uid: snap.get("desafiante_uid"),
             fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
-            autoVictoryByChallenger: true, encerramento_motivo: "vitoria_declarada_pelo_desafiante",
+            autoVictoryByChallenger: true, encerramento_motivo: "wo_desafiante_apos_prazo",
         });
     });
 });
@@ -327,15 +343,24 @@ exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "e
                 return;
             const challengerResult = current.get("resultado_desafiante");
             const leaderResult = current.get("resultado_lider");
-            if (challengerResult === "desafiante" && leaderResult !== "lider") {
+            if (challengerResult && leaderResult && challengerResult === leaderResult) {
                 tx.update(ref, {
-                    status: "concluido", vencedor: "desafiante", vencedor_uid: current.get("desafiante_uid"),
+                    status: "concluido", vencedor: challengerResult,
+                    vencedor_uid: challengerResult === "lider" ? current.get("lider_uid") : current.get("desafiante_uid"),
                     fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
-                    autoVictoryByChallenger: true, encerramento_motivo: "vitoria_declarada_pelo_desafiante",
+                    encerramento_motivo: "resultado_concordante",
                 });
                 return;
             }
-            if (challengerResult === "desafiante" && leaderResult === "lider") {
+            if (challengerResult === "desafiante" && !leaderResult) {
+                tx.update(ref, {
+                    status: "concluido", vencedor: "desafiante", vencedor_uid: current.get("desafiante_uid"),
+                    fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                    autoVictoryByChallenger: true, encerramento_motivo: "wo_desafiante_apos_prazo",
+                });
+                return;
+            }
+            if (challengerResult && leaderResult && challengerResult !== leaderResult) {
                 tx.update(ref, { status: "conflito", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(), encerramento_motivo: "relatos_divergentes" });
                 return;
             }
@@ -364,7 +389,7 @@ exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "e
             }
             tx.update(ref, {
                 status: "encerrado_sem_resultado", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
-                encerramento_motivo: penaltyApplies ? "lider_sem_resposta" : "sem_resultado_confirmado",
+                encerramento_motivo: penaltyApplies ? "lider_sem_resposta" : leaderResult ? "empate_tecnico_sem_confirmacao" : "sem_resultado_confirmado",
                 derrota_lider_aplicada: penaltyApplies,
             });
         });

@@ -1380,7 +1380,7 @@ export default function GinasioOverviewPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                <p className="text-xs text-slate-600">O líder tem sete dias para responder. Se você declarar vitória, a insígnia é registrada mesmo sem batalha presencial. Se o líder não responder e ninguém declarar vitória, ele recebe uma derrota; três derrotas seguidas abrem a liderança.</p>
+                <p className="text-xs text-slate-600">Antes do prazo, o resultado só vale quando os dois lados concordam. Relatos diferentes encaminham o desafio para análise. Após sete dias, o sistema aplica W.O. ou empate técnico conforme as declarações; sem vitória do desafiante, não há insígnia. Se o líder não responder e ninguém declarar vitória, ele recebe uma derrota; três derrotas seguidas abrem a liderança.</p>
               </div>
               <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={closeDesafioChat}>
                 Fechar

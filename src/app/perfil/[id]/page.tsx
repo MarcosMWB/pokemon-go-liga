@@ -1639,7 +1639,7 @@ export default function PerfilPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                <p className="text-sm text-slate-600">O líder tem sete dias para responder. Uma vitória declarada pelo desafiante concede a insígnia sem exigir batalha presencial.</p>
+                <p className="text-sm text-slate-600">Antes de sete dias, os dois lados precisam concordar com o resultado. Declarações divergentes encaminham o desafio para análise. Depois do prazo, o sistema aplica W.O. ou empate técnico; só uma vitória confirmada do desafiante concede a insígnia, mesmo sem batalha presencial.</p>
               </div>
               <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={closeDesafioChat}>
                 Fechar
