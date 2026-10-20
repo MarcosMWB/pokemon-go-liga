@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
+exports.processDisputeJobs = exports.onResultadoWrite = exports.registerPresence = exports.adminDeleteUser = exports.processExpiredGymChallenges = exports.onVitoriaDeclaradaPeloDesafiante = exports.onDesafioConcluido = exports.onDesafioCriadoCriarBloqueio = exports.onElite4ChallengeNotification = exports.onBadgeEarnedNotification = exports.onTournamentBattleNotification = exports.onGymDisputeBattleNotification = exports.onGymChallengeNotification = exports.adminResolveElite4Challenge = exports.claimElite4Walkover = exports.reportElite4ChallengeResult = exports.acceptElite4Challenge = exports.createElite4Challenge = exports.setElite4Participation = exports.adminFinalizeElite4 = exports.onDesafioResultadosWrite = void 0;
 // functions/src/index.ts
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -28,6 +28,7 @@ const elite4Plan_1 = require("./elite4Plan");
 const BLOQUEIOS_COLLECTION = "bloqueios_ginasio";
 const COOLDOWN_DIAS = 7;
 const COOLDOWN_MS = COOLDOWN_DIAS * 24 * 60 * 60 * 1000;
+const GYM_CHALLENGE_RESPONSE_MS = 7 * 24 * 60 * 60 * 1000;
 function asInt(n) {
     const v = Number(n);
     return Number.isFinite(v) ? Math.trunc(v) : 0;
@@ -60,18 +61,9 @@ exports.onDesafioCriadoCriarBloqueio = (0, firestore_1.onDocumentWritten)({ docu
     const liga = after.liga || "";
     if (!desafioId || !ginasioId || !desafiante)
         return;
-    // pega createdAt do próprio doc (number ou Timestamp)
-    let createdAtMs = toMillisAny(after.createdAt) ??
-        toMillisAny(after.criadoEm) ??
-        toMillisAny(after.created_at);
-    // fallback: createTime do documento (servidor)
-    const createTime = event.data?.after?.createTime;
-    if (!createdAtMs && createTime && typeof createTime.toMillis === "function") {
-        createdAtMs = createTime.toMillis();
-    }
-    // último fallback (não ideal, mas não quebra)
-    if (!createdAtMs)
-        createdAtMs = Date.now();
+    // O prazo começa no horário de criação confiável do Firestore, não no relógio enviado pelo navegador.
+    const serverCreatedAtMs = toMillisAny(event.data?.after?.createTime) ?? Date.now();
+    const createdAtMs = serverCreatedAtMs;
     const blockedUntilMs = createdAtMs + COOLDOWN_MS;
     const blockedUntil = adminSdk_1.admin.firestore.Timestamp.fromMillis(blockedUntilMs);
     // chave determinística: (ginasio + desafiante) = seu requisito
@@ -102,6 +94,7 @@ exports.onDesafioCriadoCriarBloqueio = (0, firestore_1.onDocumentWritten)({ docu
         tx.update(desafioRef, {
             cooldownApplied: true,
             cooldownAppliedAt: adminSdk_1.FieldValue.serverTimestamp(),
+            server_created_at_ms: serverCreatedAtMs,
         });
     });
 });
@@ -145,8 +138,15 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
         const gymRef = adminSdk_1.db.doc(`ginasios/${ginasioId}`);
         const gymSnap = await tx.get(gymRef);
         const gymData = gymSnap.exists ? gymSnap.data() : null;
-        const seasonId = dNow.temporada_id || "";
-        const seasonName = dNow.temporada_nome || "";
+        let seasonId = dNow.temporada_id || "";
+        let seasonName = dNow.temporada_nome || "";
+        if (vencedorTag === "desafiante" && !seasonId) {
+            const activeSeason = await tx.get(adminSdk_1.db.collection("temporadas").where("ativa", "==", true).limit(1));
+            if (!activeSeason.empty) {
+                seasonId = activeSeason.docs[0].id;
+                seasonName = seasonName || String(activeSeason.docs[0].get("nome") || "");
+            }
+        }
         const blockRef = adminSdk_1.db.doc(`${BLOQUEIOS_COLLECTION}/${ginasioId}__${desafiante}`);
         const badgeRef = seasonId
             ? adminSdk_1.db.doc(`insignias/${seasonId}__${ginasioId}__${desafiante}`)
@@ -273,6 +273,102 @@ exports.onDesafioConcluido = (0, firestore_1.onDocumentWritten)({
             statsAppliedAt: adminSdk_1.FieldValue.serverTimestamp(),
         });
     });
+});
+/** A vitória declarada pelo desafiante encerra o desafio sem exigir resposta do líder. */
+exports.onVitoriaDeclaradaPeloDesafiante = (0, firestore_1.onDocumentWritten)({ document: "desafios_ginasio/{desafioId}", region: "southamerica-east1" }, async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!after || after.disputa_id || after.status !== "pendente")
+        return;
+    if (after.resultado_desafiante !== "desafiante" || before?.resultado_desafiante === "desafiante")
+        return;
+    const ref = adminSdk_1.db.doc(`desafios_ginasio/${event.params.desafioId}`);
+    await adminSdk_1.db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.get("status") !== "pendente" || snap.get("disputa_id") || snap.get("resultado_desafiante") !== "desafiante")
+            return;
+        const createdAtMs = toMillisAny(snap.get("server_created_at_ms")) ?? toMillisAny(snap.createTime);
+        if (!createdAtMs || Date.now() - createdAtMs > GYM_CHALLENGE_RESPONSE_MS)
+            return;
+        const liderReportou = snap.get("resultado_lider");
+        if (liderReportou === "lider") {
+            tx.update(ref, { status: "conflito", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(), encerramento_motivo: "relatos_divergentes" });
+            return;
+        }
+        tx.update(ref, {
+            status: "concluido", vencedor: "desafiante", vencedor_uid: snap.get("desafiante_uid"),
+            fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+            autoVictoryByChallenger: true, encerramento_motivo: "vitoria_declarada_pelo_desafiante",
+        });
+    });
+});
+/** Encerra desafios sem resultado após sete dias e aplica derrota por silêncio ao líder. */
+exports.processExpiredGymChallenges = (0, scheduler_1.onSchedule)({ schedule: "every 5 minutes", timeZone: "America/Sao_Paulo", region: "southamerica-east1", maxInstances: 1 }, async () => {
+    const now = Date.now();
+    const cutoff = now - GYM_CHALLENGE_RESPONSE_MS;
+    const pending = await adminSdk_1.db.collection("desafios_ginasio")
+        .where("status", "==", "pendente")
+        .where("disputa_id", "==", null)
+        .where("server_created_at_ms", "<=", cutoff)
+        .orderBy("server_created_at_ms", "asc")
+        .limit(100)
+        .get();
+    for (const challenge of pending.docs) {
+        const createdAtMs = toMillisAny(challenge.get("server_created_at_ms")) ?? toMillisAny(challenge.createTime) ?? 0;
+        if (!createdAtMs || createdAtMs > cutoff)
+            continue;
+        await adminSdk_1.db.runTransaction(async (tx) => {
+            const ref = challenge.ref;
+            const current = await tx.get(ref);
+            if (!current.exists || current.get("status") !== "pendente" || current.get("disputa_id"))
+                return;
+            const currentCreatedAt = toMillisAny(current.get("server_created_at_ms")) ?? toMillisAny(current.createTime) ?? 0;
+            if (!currentCreatedAt || currentCreatedAt > cutoff)
+                return;
+            const challengerResult = current.get("resultado_desafiante");
+            const leaderResult = current.get("resultado_lider");
+            if (challengerResult === "desafiante" && leaderResult !== "lider") {
+                tx.update(ref, {
+                    status: "concluido", vencedor: "desafiante", vencedor_uid: current.get("desafiante_uid"),
+                    fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                    autoVictoryByChallenger: true, encerramento_motivo: "vitoria_declarada_pelo_desafiante",
+                });
+                return;
+            }
+            if (challengerResult === "desafiante" && leaderResult === "lider") {
+                tx.update(ref, { status: "conflito", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(), encerramento_motivo: "relatos_divergentes" });
+                return;
+            }
+            const gymId = String(current.get("ginasio_id") || "");
+            const leaderUid = String(current.get("lider_uid") || "");
+            const gymRef = gymId ? adminSdk_1.db.doc(`ginasios/${gymId}`) : null;
+            const gym = gymRef ? await tx.get(gymRef) : null;
+            const leaderSilent = !leaderResult;
+            const penaltyApplies = Boolean(leaderSilent && gym?.exists && gym.get("lider_uid") === leaderUid && gym.get("em_disputa") !== true);
+            if (penaltyApplies && gymRef && gym) {
+                const nextLosses = asInt(gym.get("derrotas_seguidas")) + 1;
+                tx.set(adminSdk_1.db.doc(`usuarios/${leaderUid}`), { statsDerrotas: adminSdk_1.FieldValue.increment(1) }, { merge: true });
+                if (nextLosses >= 3) {
+                    tx.update(gymRef, { lider_uid: "", em_disputa: true, derrotas_seguidas: 0 });
+                    tx.set(adminSdk_1.db.doc(`jobs_disputas/criar_${gymId}_${challenge.id}`), {
+                        acao: "criar_disputa", status: "pendente", ginasio_id: gymId,
+                        tipo_original: gym.get("tipo") || "", lider_anterior_uid: leaderUid,
+                        temporada_id: current.get("temporada_id") || "", temporada_nome: current.get("temporada_nome") || "",
+                        liga: gym.get("liga") || current.get("liga") || "", origem: "3_derrotas_sem_resposta",
+                        runAtMs: now, createdAt: adminSdk_1.FieldValue.serverTimestamp(),
+                    });
+                }
+                else {
+                    tx.update(gymRef, { derrotas_seguidas: nextLosses });
+                }
+            }
+            tx.update(ref, {
+                status: "encerrado_sem_resultado", fechadoEm: adminSdk_1.FieldValue.serverTimestamp(), updatedAt: adminSdk_1.FieldValue.serverTimestamp(),
+                encerramento_motivo: penaltyApplies ? "lider_sem_resposta" : "sem_resultado_confirmado",
+                derrota_lider_aplicada: penaltyApplies,
+            });
+        });
+    }
 });
 // ---- CALLABLE: adminDeleteUser ------------------------------------------------
 exports.adminDeleteUser = (0, https_1.onCall)({ region: "southamerica-east1" }, async (req) => {

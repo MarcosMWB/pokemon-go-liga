@@ -73,7 +73,7 @@ type Desafio = {
   ginasio_id: string;
   lider_uid: string;
   desafiante_uid: string;
-  status: "pendente" | "concluido" | "conflito";
+  status: "pendente" | "concluido" | "conflito" | "encerrado_sem_resultado";
   resultado_lider: "lider" | "desafiante" | null;
   resultado_desafiante: "lider" | "desafiante" | null;
   createdAt: number;
@@ -317,7 +317,7 @@ export default function GinasioOverviewPage() {
   const [souLiderNoChat, setSouLiderNoChat] = useState(false);
   const [chatResultadoEnviado, setChatResultadoEnviado] = useState<"vitoria" | "derrota" | null>(null);
   const [chatResultadoEnviando, setChatResultadoEnviando] = useState<"vitoria" | "derrota" | null>(null);
-  const [chatResultadoFinal, setChatResultadoFinal] = useState<"concluido" | "conflito" | null>(null);
+  const [chatResultadoFinal, setChatResultadoFinal] = useState<"concluido" | "conflito" | "encerrado_sem_resultado" | "vitoria_desafiante_declarada" | null>(null);
   const [chatErroResultado, setChatErroResultado] = useState<string | null>(null);
   const [showChatInfo, setShowChatInfo] = useState(false);
   const chatUnsubRef = useRef<Unsubscribe | null>(null);
@@ -852,7 +852,7 @@ export default function GinasioOverviewPage() {
   }, [ginasio, disputaAberta?.status]);
 
   async function handleDesafiar() {
-    if (!uid || !ginasio || !ginasio.lider_uid) return;
+    if (!uid || !ginasio || !ginasio.lider_uid || !temporada?.id) return;
 
     const existe = meusPendentesComoDesafiante.find((d) => d.ginasio_id === ginasio.id);
     if (existe) return;
@@ -867,6 +867,8 @@ export default function GinasioOverviewPage() {
       resultado_desafiante: null,
       createdAt: Date.now(),
       disputa_id: null,
+      temporada_id: temporada?.id || "",
+      temporada_nome: temporada?.nome || "",
     });
   }
 
@@ -947,7 +949,9 @@ export default function GinasioOverviewPage() {
         if (minhaDeclaracao) {
           setChatResultadoEnviado(minhaDeclaracao === resultadoEsperado ? "vitoria" : "derrota");
         }
-        if (dd.status === "concluido" || dd.status === "conflito") {
+        if (dd.status === "concluido" && dd.autoVictoryByChallenger === true) {
+          setChatResultadoFinal("vitoria_desafiante_declarada");
+        } else if (dd.status === "concluido" || dd.status === "conflito" || dd.status === "encerrado_sem_resultado") {
           setChatResultadoFinal(dd.status);
         }
       },
@@ -1205,7 +1209,7 @@ export default function GinasioOverviewPage() {
                 <button
                   onClick={handleDesafiar}
                   disabled={
-                    !ginasio.lider_uid || ginasio.lider_uid === uid || bloqueado || jaTemInsignia
+                    !ginasio.lider_uid || ginasio.lider_uid === uid || !temporada?.id || bloqueado || jaTemInsignia
                   }
                   className="px-4 py-2 rounded bg-yellow-500 text-white text-sm disabled:opacity-50"
                 >
@@ -1215,6 +1219,8 @@ export default function GinasioOverviewPage() {
                       ? "Sem líder"
                       : jaTemInsignia
                         ? "Já ganhou na temporada"
+                        : !temporada?.id
+                          ? "Sem temporada ativa"
                         : bloqueado
                           ? `Aguarde até ${bloqueioAte?.toLocaleString("pt-BR")}`
                           : "Desafiar este ginásio"
@@ -1374,7 +1380,7 @@ export default function GinasioOverviewPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                <p className="text-xs text-slate-600">Combine a batalha e depois declare o resultado.</p>
+                <p className="text-xs text-slate-600">O líder tem sete dias para responder. Se você declarar vitória, a insígnia é registrada mesmo sem batalha presencial. Se o líder não responder e ninguém declarar vitória, ele recebe uma derrota; três derrotas seguidas abrem a liderança.</p>
               </div>
               <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={closeDesafioChat}>
                 Fechar
@@ -1481,13 +1487,17 @@ export default function GinasioOverviewPage() {
                 </button>
               </div>
 
-              {chatResultadoEnviado ? (
+              {chatResultadoFinal === "encerrado_sem_resultado" ? (
+                <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">O desafio foi encerrado após sete dias sem resultado. Nenhuma insígnia foi concedida.</p>
+              ) : chatResultadoEnviado ? (
                 <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
                   <p className="font-semibold">
                     ✓ Declaração enviada: você informou que {chatResultadoEnviado === "vitoria" ? "venceu" : "foi derrotado"}.
                   </p>
                   {chatResultadoFinal === "conflito" ? (
                     <p className="mt-1">Os relatos foram diferentes. A equipe de moderação precisa analisar o resultado.</p>
+                  ) : chatResultadoFinal === "vitoria_desafiante_declarada" ? (
+                    <p className="mt-1">Vitória do desafiante registrada. A insígnia será adicionada ao perfil.</p>
                   ) : chatResultadoFinal === "concluido" ? (
                     <p className="mt-1">Resultado confirmado pelos dois participantes.</p>
                   ) : (

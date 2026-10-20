@@ -51,6 +51,29 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "disputa_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "server_created_at_ms",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "desafios_ginasio",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "createdAt",
           "order": "DESCENDING"
         },

@@ -923,6 +923,15 @@ export default function PerfilPage() {
         closeDesafioChat();
         return;
       }
+      if (dd.status === 'encerrado_sem_resultado') {
+        const souLider = dd.lider_uid === logadoUid;
+        setSouLiderNoChat(souLider);
+        setJaDeclarei(true);
+        setJaDeclareiMsg(souLider
+          ? 'O prazo terminou sem declaração do líder. A derrota foi registrada quando aplicável.'
+          : 'O prazo terminou sem vitória declarada. Nenhuma insígnia foi concedida.');
+        return;
+      }
 
       // mantenha o papel ALWAYS atualizado (caso mude no doc)
       const souLider = dd.lider_uid === logadoUid;
@@ -1630,7 +1639,7 @@ export default function PerfilPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Desafio & Chat</h3>
-                <p className="text-sm text-slate-600">Converse e finalize o resultado.</p>
+                <p className="text-sm text-slate-600">O líder tem sete dias para responder. Uma vitória declarada pelo desafiante concede a insígnia sem exigir batalha presencial.</p>
               </div>
               <button className="text-slate-500 hover:text-slate-800 text-sm" onClick={closeDesafioChat}>
                 Fechar
