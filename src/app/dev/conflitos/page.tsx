@@ -12,7 +12,8 @@ import {
   onSnapshot,
   getDoc,
   doc,
-  getDocs,
+  runTransaction,
+  serverTimestamp,
 } from "firebase/firestore";
 
 type Desafio = {
@@ -59,6 +60,8 @@ export default function DevConflitosPage() {
   const [pendentes, setPendentes] = useState<Desafio[]>([]);
   const [userNameMap, setUserNameMap] = useState<Record<string, string>>({});
   const [ginasioNameMap, setGinasioNameMap] = useState<Record<string, string>>({});
+  const [resolvendoId, setResolvendoId] = useState<string | null>(null);
+  const [resolucaoFeedback, setResolucaoFeedback] = useState<{ id: string; texto: string; erro?: boolean } | null>(null);
 
   // Auth + superuser
   useEffect(() => {
@@ -69,12 +72,8 @@ export default function DevConflitosPage() {
       }
 
       try {
-        const qSup = query(
-          collection(db, "superusers"),
-          where("uid", "==", current.uid)
-        );
-        const snap = await getDocs(qSup);
-        if (snap.empty) {
+        const snap = await getDoc(doc(db, "superusers", current.uid));
+        if (!snap.exists()) {
           setIsAdmin(false);
           router.replace("/");
           return;
@@ -99,7 +98,7 @@ export default function DevConflitosPage() {
     );
 
     const unsub = onSnapshot(qConf, (snap) => {
-      const list: Desafio[] = snap.docs.map((d) => {
+      const list: Desafio[] = snap.docs.filter((d) => !d.data().disputa_id).map((d) => {
         const x = d.data() as any;
         const created = toMillis(
           x.criadoEm ?? x.createdAt ?? x.criado_em ?? x.created_at
@@ -210,16 +209,97 @@ export default function DevConflitosPage() {
     return pendentes.filter((d) => (d.criadoEmMs ?? 0) < limite);
   }, [pendentes]);
 
+  async function resolverConflito(desafio: Desafio, vencedor: "lider" | "desafiante" | null) {
+    const currentUser = auth.currentUser;
+    if (!currentUser || resolvendoId) return;
+
+    const nomeVencedor = vencedor === "lider"
+      ? userNameMap[desafio.lider_uid] || "o líder"
+      : vencedor === "desafiante"
+        ? userNameMap[desafio.desafiante_uid] || "o desafiante"
+        : null;
+    const acao = vencedor
+      ? `registrar a vitória para ${nomeVencedor}`
+      : "anular o desafio, sem vencedor, insígnia, derrota ou bloqueio de novo desafio";
+    if (!window.confirm(`Confirma ${acao}? Essa decisão será aplicada ao desafio.`)) return;
+
+    setResolvendoId(desafio.id);
+    setResolucaoFeedback(null);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const ref = doc(db, "desafios_ginasio", desafio.id);
+        const snap = await transaction.get(ref);
+        if (!snap.exists() || snap.data().status !== "conflito") {
+          throw new Error("Este conflito já foi resolvido ou não está mais disponível.");
+        }
+        const atual = snap.data();
+        if (atual.disputa_id) {
+          throw new Error("Este registro pertence a uma disputa interna e não pode ser resolvido por aqui.");
+        }
+        if (atual.statsApplied === true) {
+          throw new Error("Este desafio já teve os efeitos aplicados. Verifique o histórico antes de alterar.");
+        }
+
+        const bloqueioRef = doc(db, "bloqueios_ginasio", `${atual.ginasio_id}__${atual.desafiante_uid}`);
+        const bloqueioSnap = vencedor ? null : await transaction.get(bloqueioRef);
+
+        const comum = {
+          relato_lider_original: atual.resultado_lider ?? null,
+          relato_desafiante_original: atual.resultado_desafiante ?? null,
+          resolvidoPorUid: currentUser.uid,
+          resolvidoEm: serverTimestamp(),
+          fechadoEm: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedBy: currentUser.uid,
+        };
+
+        if (vencedor) {
+          transaction.update(ref, {
+            ...comum,
+            status: "concluido",
+            resultado_lider: vencedor,
+            resultado_desafiante: vencedor,
+            vencedor,
+            vencedor_uid: vencedor === "lider" ? atual.lider_uid : atual.desafiante_uid,
+            encerramento_motivo: "decisao_admin_conflito",
+          });
+        } else {
+          transaction.update(ref, {
+            ...comum,
+            status: "encerrado_sem_resultado",
+            encerramento_motivo: "anulado_admin",
+            canceladoPorUid: currentUser.uid,
+          });
+          if (bloqueioSnap?.exists() && bloqueioSnap.data().desafio_id === desafio.id) {
+            transaction.delete(bloqueioRef);
+          }
+        }
+      });
+
+      setResolucaoFeedback({
+        id: desafio.id,
+        texto: vencedor
+          ? `Vitória de ${nomeVencedor} registrada. O sistema atualizará os pontos e a insígnia, quando aplicável.`
+          : "Desafio anulado. Nenhuma vitória, insígnia ou derrota será aplicada, e o bloqueio deste desafio foi removido.",
+      });
+    } catch (error) {
+      const texto = error instanceof Error ? error.message : "Não foi possível resolver este conflito.";
+      setResolucaoFeedback({ id: desafio.id, texto, erro: true });
+    } finally {
+      setResolvendoId(null);
+    }
+  }
+
   if (isAdmin === null) return <p className="p-6">Carregando…</p>;
   if (isAdmin === false) return null;
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-8">
+    <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 sm:px-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Dev / Conflitos</h1>
-          <p className="text-sm text-gray-500">
-            Interpretação de conflitos e pendentes +7 dias.
+          <h1 className="text-2xl font-bold text-slate-900">Análise de desafios</h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-600">
+            Compare o relato dos dois jogadores e registre a decisão administrativa. Se não houver acordo, você também pode anular o desafio.
           </p>
         </div>
         <button
@@ -232,7 +312,12 @@ export default function DevConflitosPage() {
 
       {/* Conflitos */}
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold">Conflitos</h2>
+        <h2 className="text-xl font-semibold text-slate-900">Desafios com relatos diferentes</h2>
+        {resolucaoFeedback && (
+          <p role="status" className={`rounded-xl px-4 py-3 text-sm ${resolucaoFeedback.erro ? "bg-rose-50 text-rose-800" : "bg-emerald-50 text-emerald-800"}`}>
+            {resolucaoFeedback.texto}
+          </p>
+        )}
         {conflitos.length === 0 ? (
           <p className="text-sm text-gray-500">Nenhum conflito no momento.</p>
         ) : (
@@ -254,27 +339,50 @@ export default function DevConflitosPage() {
             return (
               <div
                 key={d.id}
-                className="bg-white rounded shadow p-4 flex items-center justify-between"
+                className="space-y-4 rounded-2xl border border-amber-200 bg-white p-4 shadow-sm sm:p-5"
               >
-                <div className="space-y-1">
-                  <p className="text-sm">
-                    <strong>{desafiante}</strong> {parteDesafiante}, mas{" "}
-                    <strong>{lider}</strong> {parteLider}.
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Ginásio: {ginasio} • Criado {tempoRelativo(d.criadoEmMs)}
-                  </p>
-                  <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">Precisa de decisão</span>
+                    <span className="text-sm text-slate-600">Ginásio: <strong className="text-slate-900">{ginasio}</strong> · {tempoRelativo(d.criadoEmMs)}</span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Relato do desafiante</p>
+                      <p className="mt-1 text-sm text-slate-800"><strong>{desafiante}</strong> {parteDesafiante}.</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Relato do líder</p>
+                      <p className="mt-1 text-sm text-slate-800"><strong>{lider}</strong> {parteLider}.</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400">Referência do desafio: {d.id}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-2 border-t border-slate-100 pt-4">
+                  <p className="text-sm font-semibold text-slate-800">Como deseja resolver?</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                   <button
-                    onClick={() =>
-                      router.push(`/ginasios/${d.ginasio_id}/disputa`)
-                    }
-                    className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
+                    disabled={resolvendoId !== null}
+                    onClick={() => void resolverConflito(d, "lider")}
+                    className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60"
                   >
-                    Abrir disputa
+                    {resolvendoId === d.id ? "Salvando…" : `Dar vitória ao líder · ${lider}`}
                   </button>
+                  <button
+                    disabled={resolvendoId !== null}
+                    onClick={() => void resolverConflito(d, "desafiante")}
+                    className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {resolvendoId === d.id ? "Salvando…" : `Dar vitória ao desafiante · ${desafiante}`}
+                  </button>
+                  <button
+                    disabled={resolvendoId !== null}
+                    onClick={() => void resolverConflito(d, null)}
+                    className="rounded-xl border border-rose-300 bg-white px-4 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-50 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Anular desafio
+                  </button>
+                  </div>
                 </div>
               </div>
             );
@@ -310,15 +418,8 @@ export default function DevConflitosPage() {
                   </p>
                   <p className="text-xs text-gray-400">ID desafio: {d.id}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      router.push(`/ginasios/${d.ginasio_id}/disputa`)
-                    }
-                    className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
-                  >
-                    Abrir disputa
-                  </button>
+                <div className="text-sm text-slate-600">
+                  O prazo expirado será encerrado automaticamente pelo sistema.
                 </div>
               </div>
             );

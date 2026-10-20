@@ -227,7 +227,7 @@ service cloud.firestore {
       function canSetResultadoLider() {
         return isSignedIn()
           && request.auth.uid == resource.data.lider_uid
-          && !(resource.data.status in ['concluido','conflito'])
+          && !(resource.data.status in ['concluido','conflito','encerrado_sem_resultado'])
           && (!resource.data.keys().hasAny(['resultado_lider']) || resource.data.resultado_lider == null)
           && (request.resource.data.resultado_lider in ['lider','desafiante'])
           && !changedKeys().hasAny(['resultado_desafiante'])
@@ -239,7 +239,7 @@ service cloud.firestore {
       function canSetResultadoDesafiante() {
         return isSignedIn()
           && request.auth.uid == resource.data.desafiante_uid
-          && !(resource.data.status in ['concluido','conflito'])
+          && !(resource.data.status in ['concluido','conflito','encerrado_sem_resultado'])
           && (!resource.data.keys().hasAny(['resultado_desafiante']) || resource.data.resultado_desafiante == null)
           && (request.resource.data.resultado_desafiante in ['lider','desafiante'])
           && !changedKeys().hasAny(['resultado_lider'])

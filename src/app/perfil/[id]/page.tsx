@@ -927,9 +927,11 @@ export default function PerfilPage() {
         const souLider = dd.lider_uid === logadoUid;
         setSouLiderNoChat(souLider);
         setJaDeclarei(true);
-        setJaDeclareiMsg(souLider
-          ? 'O prazo terminou sem declaração do líder. A derrota foi registrada quando aplicável.'
-          : 'O prazo terminou sem vitória declarada. Nenhuma insígnia foi concedida.');
+        setJaDeclareiMsg(dd.encerramento_motivo === 'anulado_admin'
+          ? 'Este desafio foi anulado pela administração. Nenhuma vitória, insígnia ou derrota foi aplicada.'
+          : souLider
+            ? 'O prazo terminou sem declaração do líder. A derrota foi registrada quando aplicável.'
+            : 'O prazo terminou sem vitória declarada. Nenhuma insígnia foi concedida.');
         return;
       }
 

@@ -28,7 +28,7 @@ export async function setResultadoEFecharSePossivel(
   if (!snap.exists()) return { closed: false };
 
   const d = snap.data() as any;
-  if (d.status === "concluido" || d.status === "conflito") return { closed: false };
+  if (d.status === "concluido" || d.status === "conflito" || d.status === "encerrado_sem_resultado") return { closed: false };
 
   const isLider = actor === "lider";
   const myField = isLider ? "resultado_lider" : "resultado_desafiante";

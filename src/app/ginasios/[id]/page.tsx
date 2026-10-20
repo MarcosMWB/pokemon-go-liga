@@ -1488,7 +1488,7 @@ export default function GinasioOverviewPage() {
               </div>
 
               {chatResultadoFinal === "encerrado_sem_resultado" ? (
-                <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">O desafio foi encerrado após sete dias sem resultado. Nenhuma insígnia foi concedida.</p>
+                <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">O desafio foi encerrado sem vencedor. Nenhuma insígnia ou derrota foi aplicada.</p>
               ) : chatResultadoEnviado ? (
                 <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
                   <p className="font-semibold">
