@@ -44,6 +44,10 @@ const TIPOS = [
   "fairy",
 ];
 
+function normalizarTipo(tipo: unknown) {
+  return String(tipo || "").trim().toLowerCase();
+}
+
 type Ginasio = {
   id: string;
   nome: string;
@@ -485,12 +489,16 @@ export default function DisputaGinasioPage() {
       const v: string[] = [];
       snap.forEach((g) => {
         const d = g.data() as any;
+        // O tipo anterior do próprio ginásio não ocupa vaga durante a disputa.
+        // Ginásios vagos ou já em disputa também não reservam um tipo.
+        if (g.id === disputa.ginasio_id || !String(d.lider_uid || "").trim() || d.em_disputa === true) return;
         const ligaDoGinasio = d.liga || d.liga_nome || "";
         if (ligaDaDisputa) {
           if (!ligaDoGinasio) return;
           if (ligaDoGinasio !== ligaDaDisputa) return;
         }
-        if (d.tipo) v.push(d.tipo);
+        const tipo = normalizarTipo(d.tipo);
+        if (tipo) v.push(tipo);
       });
       setOcupados(v);
     });
@@ -498,7 +506,7 @@ export default function DisputaGinasioPage() {
       ? query(collection(db, "elite4"), where("liga", "==", ligaDaDisputa))
       : collection(db, "elite4");
     const unsubElite = onSnapshot(qElite, (snap) => {
-      setTiposEliteOcupados(snap.docs.map((m) => String(m.data().tipo || "")).filter(Boolean));
+      setTiposEliteOcupados(snap.docs.map((m) => normalizarTipo(m.data().tipo)).filter(Boolean));
     });
 
     return () => { unsubGinasios(); unsubElite(); };
@@ -623,7 +631,7 @@ export default function DisputaGinasioPage() {
       )
         return;
 
-      const escolhido = meuParticipante.tipo_escolhido;
+      const escolhido = normalizarTipo(meuParticipante.tipo_escolhido);
       const ocupou = ocupados.includes(escolhido) || tiposEliteOcupados.includes(escolhido);
       if (ocupou) {
         try {
@@ -934,7 +942,8 @@ export default function DisputaGinasioPage() {
 
   const tiposPermitidos = TIPOS.filter((t) => {
     if (!disputa) return true;
-    return !ocupados.includes(t) && !tiposEliteOcupados.includes(t);
+    const tipo = normalizarTipo(t);
+    return !ocupados.includes(tipo) && !tiposEliteOcupados.includes(tipo);
   });
 
   const pendentesParaMim =
