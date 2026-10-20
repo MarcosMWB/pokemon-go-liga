@@ -94,6 +94,43 @@ type Insignia = {
   usuario_uid?: string;
 };
 
+function timestampToMillis(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  if (typeof value === 'string') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+
+  const timestamp = value as {
+    toMillis?: () => number;
+    toDate?: () => Date;
+    seconds?: number;
+    nanoseconds?: number;
+  };
+  try {
+    if (typeof timestamp.toMillis === 'function') {
+      const millis = timestamp.toMillis();
+      return Number.isFinite(millis) && millis > 0 ? millis : null;
+    }
+    if (typeof timestamp.toDate === 'function') {
+      const millis = timestamp.toDate().getTime();
+      return Number.isFinite(millis) && millis > 0 ? millis : null;
+    }
+    if (typeof timestamp.seconds === 'number' && Number.isFinite(timestamp.seconds)) {
+      const millis = timestamp.seconds * 1000 + Math.floor((timestamp.nanoseconds || 0) / 1e6);
+      return Number.isFinite(millis) && millis > 0 ? millis : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 type Liga = {
   id?: string;
   nome: string;
@@ -336,7 +373,7 @@ export default function PerfilPage() {
           id: d.id,
           nome: data.nome || d.id,
           ativa: !!data.ativa,
-          createdAt: data.createdAt || 0,
+          createdAt: timestampToMillis(data.createdAt) ?? 0,
         };
       });
 
@@ -779,18 +816,16 @@ export default function PerfilPage() {
     return entries;
   }, [insigniasFiltradasLiga, temporadaAtiva]);
 
-  function formatDate(ts?: number) {
-    if (!ts) return '';
-    try {
-      const d = new Date(ts);
-      return d.toLocaleDateString('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      });
-    } catch {
-      return '';
-    }
+  function formatDate(value?: unknown) {
+    const millis = timestampToMillis(value);
+    if (millis === null) return '';
+    const date = new Date(millis);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
   }
 
   const nowRef = Date.now();
